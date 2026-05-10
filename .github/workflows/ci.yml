@@ -1,0 +1,148 @@
+name: CI / Build
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # テスト（Linux・高速）
+  # ------------------------------------------------------------------ #
+  test:
+    name: Test (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libhamlib-dev python3-hamlib \
+            libgl1 libegl1 xvfb
+
+      - name: Install Python dependencies
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check src/ tests/
+
+      - name: Format check (ruff)
+        run: ruff format --check src/ tests/
+
+      - name: Type check (mypy)
+        run: mypy src/
+
+      - name: Run tests
+        run: |
+          xvfb-run -a pytest tests/ -v --tb=short
+        env:
+          DISPLAY: ":99"
+
+  # ------------------------------------------------------------------ #
+  # ビルド（タグpush時のみ）
+  # ------------------------------------------------------------------ #
+  build-linux:
+    name: Build Linux (AppImage + deb)
+    runs-on: ubuntu-22.04
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # setuptools-scm用
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhamlib-dev python3-hamlib libgl1 libegl1
+          pip install -e ".[packaging]"
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller scripts/gpredict-improved.spec
+
+      - name: Create AppImage
+        run: |
+          bash scripts/build-appimage.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: dist/*.AppImage
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.AppImage
+
+  build-windows:
+    name: Build Windows (.exe)
+    runs-on: windows-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[packaging]"
+
+      - name: Build
+        run: pyinstaller scripts/gpredict-improved.spec
+
+      - name: Upload & Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
+
+  build-macos:
+    name: Build macOS (.dmg)
+    runs-on: macos-14
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          brew install hamlib
+          pip install -e ".[packaging]"
+
+      - name: Build
+        run: pyinstaller scripts/gpredict-improved.spec
+
+      - name: Create DMG
+        run: bash scripts/build-dmg.sh
+
+      - name: Upload & Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg

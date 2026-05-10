@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# 仮想環境
+.venv/
+venv/
+env/
+
+# テスト・カバレッジ
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# アプリデータ（ユーザー固有）
+*.db
+*.sqlite
+*.sqlite3
+
+# ビルド成果物
+*.spec.bak
+*.AppImage
+*.dmg
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 秘密情報
+.env
+secrets.toml
+space_track_credentials.json
