@@ -15,31 +15,35 @@ import httpx
 from skyfield.api import EarthSatellite, load
 
 # TLEソース定義 (優先度順)
+# CelesTrak GP API: https://celestrak.org/NORAD/documentation/gp-data-formats.php
 TLE_SOURCES: list[dict[str, Any]] = [
     {
         "name": "celestrak-amateur",
-        "url": "https://celestrak.org/SOCRATES/query.php",
-        "params": {"GROUP": "amateur", "FORMAT": "tle"},
+        "url": "https://celestrak.org/NORAD/elements/gp.php",
+        "params": {"GROUP": "AMATEUR", "FORMAT": "TLE"},
         "priority": 1,
         "update_interval_hours": 2,
     },
     {
         "name": "celestrak-stations",
-        "url": "https://celestrak.org/SOCRATES/query.php",
-        "params": {"GROUP": "stations", "FORMAT": "tle"},
+        "url": "https://celestrak.org/NORAD/elements/gp.php",
+        "params": {"GROUP": "STATIONS", "FORMAT": "TLE"},
         "priority": 0,
         "update_interval_hours": 1,
     },
-    # CelesTrak GP data (JSON/OMM形式、より安定)
-    {
-        "name": "celestrak-gp-amateur",
-        "url": "https://celestrak.org/SOCRATES/query.php",
-        "params": {"GROUP": "amateur", "FORMAT": "json"},
-        "priority": 2,
-        "update_interval_hours": 2,
-        "format": "json",
-    },
 ]
+
+
+_SOURCE_DB_VALUE: dict[str, str] = {
+    "celestrak-amateur": "celestrak",
+    "celestrak-stations": "celestrak",
+    "celestrak-single": "celestrak",
+}
+
+
+def _to_db_source(source_name: str) -> str:
+    """ソース名をDBのCHECK制約に合った値に変換する"""
+    return _SOURCE_DB_VALUE.get(source_name, source_name)
 
 
 def _calc_quality(epoch_dt: datetime) -> str:
@@ -148,6 +152,7 @@ class TLEManager:
                 i += 1
 
         now = datetime.now(UTC).isoformat()
+        db_source = _to_db_source(source_name)
         for idx, (name, line1, line2) in enumerate(tle_triples):
             if progress_callback:
                 progress_callback(idx + 1, len(tle_triples))
@@ -194,7 +199,7 @@ class TLEManager:
                             line1,
                             line2,
                             epoch_dt.isoformat(),
-                            source_name,
+                            db_source,
                             now,
                             quality,
                             norad,
@@ -215,7 +220,7 @@ class TLEManager:
                             line1,
                             line2,
                             epoch_dt.isoformat(),
-                            source_name,
+                            db_source,
                             now,
                             quality,
                         ),
@@ -235,8 +240,8 @@ class TLEManager:
         1衛星のTLEをSpace-TrackまたはCelesTrakから取得する。
         特定衛星だけ手動更新したいときに使用。
         """
-        url = "https://celestrak.org/SOCRATES/query.php"
-        params = {"CATNR": str(norad_cat_id), "FORMAT": "tle"}
+        url = "https://celestrak.org/NORAD/elements/gp.php"
+        params = {"CATNR": str(norad_cat_id), "FORMAT": "TLE"}
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 r = await client.get(url, params=params)
