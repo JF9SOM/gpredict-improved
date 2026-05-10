@@ -13,7 +13,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from skyfield.api import EarthSatellite, Time, load, wgs84
@@ -188,10 +188,10 @@ class SatelliteEngine:
         return self._ts.from_datetime(dt)
 
     @staticmethod
-    def _calc_range_rate(topo: object) -> float:
+    def _calc_range_rate(topo: Any) -> float:
         """視線方向速度 (km/s) を計算する。正値=離遠、負値=接近。"""
-        pos = topo.position.km  # type: ignore[union-attr]
-        vel = topo.velocity.km_per_s  # type: ignore[union-attr]
+        pos = topo.position.km
+        vel = topo.velocity.km_per_s
         range_km = float(np.linalg.norm(pos))
         if range_km < 1e-9:
             return 0.0
@@ -299,24 +299,24 @@ class PassPredictor:
         self,
         norad_cat_id: int,
         sat: EarthSatellite,
-        ev: dict[str, object],
+        ev: dict[str, Any],
     ) -> PassInfo | None:
         try:
             aos_t = ev["aos"]
             tca_t = ev["tca"]
             los_t = ev["los"]
 
-            topo_aos = (sat - self._ground_station).at(aos_t)  # type: ignore[arg-type]
-            topo_tca = (sat - self._ground_station).at(tca_t)  # type: ignore[arg-type]
-            topo_los = (sat - self._ground_station).at(los_t)  # type: ignore[arg-type]
+            topo_aos = (sat - self._ground_station).at(aos_t)
+            topo_tca = (sat - self._ground_station).at(tca_t)
+            topo_los = (sat - self._ground_station).at(los_t)
 
             alt_tca, _, _ = topo_tca.altaz()
             _, az_aos, _ = topo_aos.altaz()
             _, az_los, _ = topo_los.altaz()
 
-            aos_dt: datetime = aos_t.utc_datetime()  # type: ignore[union-attr]
-            tca_dt: datetime = tca_t.utc_datetime()  # type: ignore[union-attr]
-            los_dt: datetime = los_t.utc_datetime()  # type: ignore[union-attr]
+            aos_dt: datetime = aos_t.utc_datetime()
+            tca_dt: datetime = tca_t.utc_datetime()
+            los_dt: datetime = los_t.utc_datetime()
 
             return PassInfo(
                 norad_cat_id=norad_cat_id,

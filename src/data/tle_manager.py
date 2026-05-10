@@ -15,7 +15,7 @@ import httpx
 from skyfield.api import EarthSatellite, load
 
 # TLEソース定義 (優先度順)
-TLE_SOURCES = [
+TLE_SOURCES: list[dict[str, Any]] = [
     {
         "name": "celestrak-amateur",
         "url": "https://celestrak.org/SOCRATES/query.php",
@@ -246,7 +246,7 @@ class TLEManager:
                     result = await self.fetch_and_update.__func__(  # type: ignore[attr-defined]
                         self, "celestrak-single"
                     )
-                    return result["errors"] == 0
+                    return bool(result["errors"] == 0)
         except httpx.HTTPError:
             pass
         return False
