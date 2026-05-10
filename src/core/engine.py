@@ -155,6 +155,42 @@ class SatelliteEngine:
                 result[norad] = obs
         return result
 
+    def subpoint(
+        self,
+        norad_cat_id: int,
+        at: datetime | None = None,
+    ) -> tuple[float, float] | None:
+        """
+        衛星の直下点（緯度・経度）を返す。
+
+        Args:
+            norad_cat_id: NORAD 衛星番号
+            at: 計算基準時刻（UTC）。None なら現在時刻。
+
+        Returns:
+            (latitude_deg, longitude_deg)。TLE が存在しない場合は None。
+        """
+        sat = self._get_satellite(norad_cat_id)
+        if sat is None:
+            return None
+        t = self._to_skyfield_time(at)
+        geocentric = sat.at(t)
+        sp = wgs84.subpoint_of(geocentric)
+        return float(sp.latitude.degrees), float(sp.longitude.degrees)
+
+    def subpoints(
+        self,
+        norad_cat_ids: list[int],
+        at: datetime | None = None,
+    ) -> dict[int, tuple[float, float]]:
+        """複数衛星の直下点を一括取得する。TLE が存在しない衛星はスキップ。"""
+        result: dict[int, tuple[float, float]] = {}
+        for norad in norad_cat_ids:
+            sp = self.subpoint(norad, at)
+            if sp is not None:
+                result[norad] = sp
+        return result
+
     def invalidate_cache(self, norad_cat_id: int | None = None) -> None:
         """TLE更新後にキャッシュをクリアする。Noneで全件クリア。"""
         with self._cache_lock:
