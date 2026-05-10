@@ -49,6 +49,7 @@ jobs:
           xvfb-run -a pytest tests/ -v --tb=short
         env:
           DISPLAY: ":99"
+          QT_QPA_PLATFORM: "offscreen"
 
   # ------------------------------------------------------------------ #
   # ビルド（タグpush時のみ）

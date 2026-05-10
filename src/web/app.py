@@ -79,9 +79,12 @@ class PassOut(BaseModel):
     tca: str
     los: str
     max_elevation_deg: float
+    max_elevation_time: str  # TCA と同値（API 利便性のための別名）
     aos_azimuth_deg: float
     los_azimuth_deg: float
     duration_s: float
+    duration_seconds: float  # duration_s と同値（フロントエンド利便性のための別名）
+    quality: str  # "excellent" | "good" | "fair" | "low"
 
 
 class TLEStatusOut(BaseModel):
@@ -108,6 +111,22 @@ class ServerStatusOut(BaseModel):
 # ---------------------------------------------------------------------------
 # ユーティリティ
 # ---------------------------------------------------------------------------
+
+
+def pass_quality(max_elevation_deg: float) -> str:
+    """
+    最大仰角からパスの品質ランクを返す。
+
+    Returns:
+        "excellent" (>=60°) / "good" (>=30°) / "fair" (>=10°) / "low" (<10°)
+    """
+    if max_elevation_deg >= 60.0:
+        return "excellent"
+    if max_elevation_deg >= 30.0:
+        return "good"
+    if max_elevation_deg >= 10.0:
+        return "fair"
+    return "low"
 
 
 def _parse_alt_names(raw: Any) -> list[str]:
@@ -284,9 +303,12 @@ def create_app(
                 tca=p.tca.isoformat(),
                 los=p.los.isoformat(),
                 max_elevation_deg=p.max_elevation_deg,
+                max_elevation_time=p.tca.isoformat(),
                 aos_azimuth_deg=p.aos_azimuth_deg,
                 los_azimuth_deg=p.los_azimuth_deg,
                 duration_s=p.duration_s,
+                duration_seconds=p.duration_s,
+                quality=pass_quality(p.max_elevation_deg),
             )
             for p in passes
         ]

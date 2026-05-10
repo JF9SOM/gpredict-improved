@@ -204,9 +204,33 @@ CREATE TABLE tle_history (
 ### Web API (src/web/)
 - `GET /api/satellites` — 衛星一覧
 - `GET /api/satellites/{norad}/transmitters` — トランスポンダ一覧
-- `GET /api/satellites/{norad}/passes` — パス予測
+- `GET /api/satellites/{norad}/passes` — パス予測（以下フィールドを含む）
+  - `max_elevation_deg`: 最大仰角（度）
+  - `max_elevation_time`: 最大仰角に達する時刻（ISO 8601 UTC）
+  - `duration_seconds`: パス継続時間（秒）
+  - `quality`: 品質ランク（excellent/good/fair/low）
 - `WebSocket /ws/tracking` — リアルタイム仰角/方位角/ドップラー
 - `GET /api/tle/status` — TLE品質情報
+
+#### パス品質ランク定義
+| ランク | 最大仰角 | 表示色 |
+|--------|----------|--------|
+| excellent | 60度以上 | 緑 (#2ecc71) |
+| good | 30度以上60度未満 | 青 (#3498db) |
+| fair | 10度以上30度未満 | 黄 (#f1c40f) |
+| low | 10度未満 | グレー (#95a5a6) |
+
+### グラフィカルパス予測表示 (src/ui/)
+- `PassChartView` (src/ui/pass_chart.py): PySide6 + QtCharts ウィジェット
+  - 横軸: 時刻（AOS〜LOS）、縦軸: 仰角（0〜90度）
+  - 各パスをサイン近似の山型曲線で描画
+  - 品質ランクで色分け
+  - 現在時刻を赤い縦線で表示
+  - パスクリック時に詳細情報を `pass_clicked` Signal で通知
+- `pass_chart.js` (src/web/static/pass_chart.js): Chart.js によるブラウザ向け同等実装
+  - `renderPassChart(canvasId, passes, satName)` — キャンバスにチャート描画
+  - `fetchAndRenderPasses(canvasId, noradId, satName, options)` — APIから自動取得して描画
+  - `showPassDetail(pass)` — クリック時の詳細ポップアップ
 
 ### i18n (src/i18n/)
 
