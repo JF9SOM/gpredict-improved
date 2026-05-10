@@ -326,8 +326,11 @@ class TestLocationManagerDetect:
             return_value=Response(
                 200,
                 json={
-                    "status": "success", "lat": 35.0, "lon": 139.0,
-                    "city": "Tokyo", "country": "Japan",
+                    "status": "success",
+                    "lat": 35.0,
+                    "lon": 139.0,
+                    "city": "Tokyo",
+                    "country": "Japan",
                 },
             )
         )

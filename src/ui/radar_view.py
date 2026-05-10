@@ -249,16 +249,16 @@ class RadarView(QWidget):
         for label, az in _CARDINALS:
             x, y = az_el_to_xy(float(az), 0.0, cx, cy, r)
             offset = 14
-            if az == 0:      # N — 上
+            if az == 0:  # N — 上
                 x -= 4.0
                 y -= float(offset - 4)
-            elif az == 90:   # E — 右
+            elif az == 90:  # E — 右
                 x += 4.0
                 y += 4.0
             elif az == 180:  # S — 下
                 x -= 4.0
                 y += float(offset)
-            else:            # W — 左
+            else:  # W — 左
                 x -= float(offset + 2)
                 y += 4.0
             color = QColor("#e74c3c") if label == "N" else QColor("#bdc3c7")
@@ -337,8 +337,7 @@ class RadarView(QWidget):
         p.setPen(QColor("#ecf0f1"))
 
         text = "  |  ".join(
-            f"{t.name}: EL {t.elevation_deg:.1f}°  AZ {t.azimuth_deg:.1f}°"
-            for t in visible
+            f"{t.name}: EL {t.elevation_deg:.1f}°  AZ {t.azimuth_deg:.1f}°" for t in visible
         )
         y = int(cy + r + 20)
         p.drawText(

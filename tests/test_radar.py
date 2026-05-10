@@ -35,7 +35,7 @@ class TestAzElToXY:
     def test_north_horizon_is_above_center(self) -> None:
         """方位角 0°（北）仰角 0° は中心の真上。"""
         x, y = az_el_to_xy(0.0, 0.0, self.CX, self.CY, self.R)
-        assert abs(x - self.CX) < 1e-9        # X は中心と同じ
+        assert abs(x - self.CX) < 1e-9  # X は中心と同じ
         assert abs(y - (self.CY - self.R)) < 1e-9  # Y は中心より上（R 分）
 
     def test_east_horizon_is_right_of_center(self) -> None:

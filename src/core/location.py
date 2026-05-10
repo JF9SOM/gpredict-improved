@@ -119,7 +119,7 @@ def grid_to_latlon(grid: str) -> tuple[float, float]:
         if ss0 > 23 or ss1 > 23:
             raise ValueError(f"サブスクエア文字が範囲外（A–X のみ有効）: {grid!r}")
         # サブスクエア解像度: 経度 5′、緯度 2.5′
-        lon += ss0 * (5.0 / 60.0) + (2.5 / 60.0)   # + 中心オフセット
+        lon += ss0 * (5.0 / 60.0) + (2.5 / 60.0)  # + 中心オフセット
         lat += ss1 * (2.5 / 60.0) + (1.25 / 60.0)
     else:
         # スクエア中心
