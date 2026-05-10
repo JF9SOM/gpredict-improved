@@ -19,7 +19,6 @@ from httpx import Response
 from core.location import Location, LocationManager, LocationSource, grid_to_latlon
 from data.database import SCHEMA_SQL
 
-
 # ---------------------------------------------------------------------------
 # フィクスチャ
 # ---------------------------------------------------------------------------
@@ -163,7 +162,9 @@ class TestLocationManagerSync:
         assert manager.current.latitude_deg == pytest.approx(35.6895)
         assert loc.source == LocationSource.MANUAL
 
-    def test_from_manual_saves_to_db(self, manager: LocationManager, db: sqlite3.Connection) -> None:
+    def test_from_manual_saves_to_db(
+        self, manager: LocationManager, db: sqlite3.Connection
+    ) -> None:
         manager.from_manual(35.0, 139.0)
         row = db.execute(
             "SELECT value FROM app_settings WHERE key = 'observer_location'"
@@ -201,7 +202,9 @@ class TestLocationManagerSync:
     def test_load_saved_none_when_empty(self, manager: LocationManager) -> None:
         assert manager.load_saved() is None
 
-    def test_load_saved_sets_current(self, manager: LocationManager, db: sqlite3.Connection) -> None:
+    def test_load_saved_sets_current(
+        self, manager: LocationManager, db: sqlite3.Connection
+    ) -> None:
         manager.from_manual(35.0, 139.0)
         mgr2 = LocationManager(db)
         mgr2.load_saved()
@@ -282,7 +285,9 @@ class TestLocationManagerIpGeo:
 
     @pytest.mark.asyncio()
     @respx.mock
-    async def test_from_ip_saves_to_db(self, manager: LocationManager, db: sqlite3.Connection) -> None:
+    async def test_from_ip_saves_to_db(
+        self, manager: LocationManager, db: sqlite3.Connection
+    ) -> None:
         respx.get("http://ip-api.com/json/").mock(
             return_value=Response(
                 200,
@@ -320,7 +325,10 @@ class TestLocationManagerDetect:
         respx.get("http://ip-api.com/json/").mock(
             return_value=Response(
                 200,
-                json={"status": "success", "lat": 35.0, "lon": 139.0, "city": "Tokyo", "country": "Japan"},
+                json={
+                    "status": "success", "lat": 35.0, "lon": 139.0,
+                    "city": "Tokyo", "country": "Japan",
+                },
             )
         )
         loc = await manager.detect()
