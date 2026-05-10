@@ -2,6 +2,7 @@
 データベーススキーマ定義と初期化
 SQLite + alembic によるマイグレーション管理
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -105,6 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_tle_history_epoch
 def get_db_path() -> Path:
     """プラットフォーム別のデータベースファイルパスを返す"""
     from platformdirs import user_data_dir
+
     data_dir = Path(user_data_dir("gpredict-improved", "gpredict-improved"))
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "gpredict-improved.db"

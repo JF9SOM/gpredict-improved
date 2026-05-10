@@ -3,6 +3,7 @@ SatelliteEngine / PassPredictor / DopplerCalculator のユニットテスト
 
 ISSのサンプルTLEを使い、ネットワーク接続なしで実行できる。
 """
+
 from __future__ import annotations
 
 import math
@@ -40,6 +41,7 @@ _ALT_M = 40.0
 # フィクスチャ
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def ts():
     return load.timescale()
@@ -69,6 +71,7 @@ def predictor(tle_manager_mock):
 # ---------------------------------------------------------------------------
 # SatelliteEngine テスト
 # ---------------------------------------------------------------------------
+
 
 class TestSatelliteEngine:
     def test_observe_returns_observation_type(self, engine: SatelliteEngine) -> None:
@@ -194,9 +197,10 @@ class TestSatelliteEngine:
 # PassPredictor テスト
 # ---------------------------------------------------------------------------
 
+
 class TestPassPredictor:
     _START = datetime(2024, 1, 2, 0, 0, 0, tzinfo=UTC)
-    _END   = datetime(2024, 1, 3, 0, 0, 0, tzinfo=UTC)
+    _END = datetime(2024, 1, 3, 0, 0, 0, tzinfo=UTC)
 
     def test_returns_list(self, predictor: PassPredictor) -> None:
         passes = predictor.get_passes(_ISS_NORAD, self._START, self._END)
@@ -228,7 +232,7 @@ class TestPassPredictor:
             assert p.max_elevation_deg >= min_el - 0.5  # Skyfield境界の微小誤差を許容
 
     def test_higher_min_elevation_fewer_passes(self, predictor: PassPredictor) -> None:
-        passes_5  = predictor.get_passes(_ISS_NORAD, self._START, self._END, min_elevation_deg=5.0)
+        passes_5 = predictor.get_passes(_ISS_NORAD, self._START, self._END, min_elevation_deg=5.0)
         passes_30 = predictor.get_passes(_ISS_NORAD, self._START, self._END, min_elevation_deg=30.0)
         assert len(passes_30) <= len(passes_5)
 
@@ -256,10 +260,11 @@ class TestPassPredictor:
 # DopplerCalculator テスト
 # ---------------------------------------------------------------------------
 
+
 class TestDopplerCalculator:
     # ISS VHF FM ダウンリンク
-    _DL_HZ  = 145_800_000.0   # 145.800 MHz
-    _UL_HZ  = 144_200_000.0   # 144.200 MHz (仮)
+    _DL_HZ = 145_800_000.0  # 145.800 MHz
+    _UL_HZ = 144_200_000.0  # 144.200 MHz (仮)
 
     def test_shift_zero_at_rest(self) -> None:
         assert DopplerCalculator.shift_hz(self._DL_HZ, 0.0) == pytest.approx(0.0)
@@ -280,7 +285,7 @@ class TestDopplerCalculator:
 
     def test_correct_downlink_approaching(self) -> None:
         freq, shift = DopplerCalculator.correct_downlink(self._DL_HZ, range_rate_km_s=-7.0)
-        assert freq > self._DL_HZ   # 接近時は補正後周波数が高い
+        assert freq > self._DL_HZ  # 接近時は補正後周波数が高い
         assert shift > 0.0
 
     def test_correct_downlink_receding(self) -> None:

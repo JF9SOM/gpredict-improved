@@ -4,6 +4,7 @@ TLE（Two-Line Element）自動更新マネージャー
 複数ソース（CelesTrak・Space-Track・AMSAT）からTLEを取得し、
 品質スコアリングを行ってSQLiteに保存する。
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -43,8 +44,11 @@ TLE_SOURCES = [
 
 def _calc_quality(epoch_dt: datetime) -> str:
     """TLEエポックからの経過時間で品質スコアを返す"""
-    age = datetime.now(UTC) - epoch_dt.replace(tzinfo=UTC) \
-        if epoch_dt.tzinfo is None else datetime.now(UTC) - epoch_dt
+    age = (
+        datetime.now(UTC) - epoch_dt.replace(tzinfo=UTC)
+        if epoch_dt.tzinfo is None
+        else datetime.now(UTC) - epoch_dt
+    )
     hours = age.total_seconds() / 3600
     if hours < 6:
         return "excellent"
@@ -155,10 +159,13 @@ class TLEManager:
                 quality = _calc_quality(epoch_dt)
 
                 # 衛星レコード確保
-                self._conn.execute("""
+                self._conn.execute(
+                    """
                     INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)
                     VALUES (?, ?, ?)
-                """, (norad, name, now))
+                """,
+                    (norad, name, now),
+                )
 
                 existing = self._conn.execute(
                     "SELECT norad_cat_id FROM tle_data WHERE norad_cat_id = ?",
@@ -166,28 +173,53 @@ class TLEManager:
                 ).fetchone()
 
                 # 履歴に追加
-                self._conn.execute("""
+                self._conn.execute(
+                    """
                     INSERT INTO tle_history (norad_cat_id, name, line1, line2, epoch, source)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, (norad, name, line1, line2, epoch_dt.isoformat(), source_name))
+                """,
+                    (norad, name, line1, line2, epoch_dt.isoformat(), source_name),
+                )
 
                 if existing:
-                    self._conn.execute("""
+                    self._conn.execute(
+                        """
                         UPDATE tle_data SET
                             name=?, line1=?, line2=?, epoch=?,
                             source=?, fetched_at=?, quality_score=?
                         WHERE norad_cat_id=?
-                    """, (name, line1, line2, epoch_dt.isoformat(),
-                          source_name, now, quality, norad))
+                    """,
+                        (
+                            name,
+                            line1,
+                            line2,
+                            epoch_dt.isoformat(),
+                            source_name,
+                            now,
+                            quality,
+                            norad,
+                        ),
+                    )
                     stats["updated"] += 1
                 else:
-                    self._conn.execute("""
+                    self._conn.execute(
+                        """
                         INSERT INTO tle_data
                             (norad_cat_id, name, line1, line2, epoch,
                              source, fetched_at, quality_score)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (norad, name, line1, line2, epoch_dt.isoformat(),
-                          source_name, now, quality))
+                    """,
+                        (
+                            norad,
+                            name,
+                            line1,
+                            line2,
+                            epoch_dt.isoformat(),
+                            source_name,
+                            now,
+                            quality,
+                        ),
+                    )
                     stats["inserted"] += 1
 
             except Exception as e:
@@ -233,18 +265,23 @@ class TLEManager:
             quality = _calc_quality(epoch_dt)
             now = datetime.now(UTC).isoformat()
 
-            self._conn.execute("""
+            self._conn.execute(
+                """
                 INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)
                 VALUES (?, ?, ?)
-            """, (norad_cat_id, name, now))
+            """,
+                (norad_cat_id, name, now),
+            )
 
-            self._conn.execute("""
+            self._conn.execute(
+                """
                 INSERT OR REPLACE INTO tle_data
                     (norad_cat_id, name, line1, line2, epoch,
                      source, fetched_at, quality_score)
                 VALUES (?, ?, ?, ?, ?, 'manual', ?, ?)
-            """, (norad_cat_id, name, line1, line2,
-                  epoch_dt.isoformat(), now, quality))
+            """,
+                (norad_cat_id, name, line1, line2, epoch_dt.isoformat(), now, quality),
+            )
             self._conn.commit()
             return True
         except Exception as e:
@@ -253,10 +290,12 @@ class TLEManager:
 
     def _log_sync(self, sync_type: str, stats: dict[str, int]) -> None:
         now = datetime.now(UTC).isoformat()
-        self._conn.execute("""
+        self._conn.execute(
+            """
             INSERT INTO sync_log
                 (sync_type, started_at, finished_at, status, records_updated)
             VALUES (?, ?, ?, ?, ?)
-        """, (sync_type, now, now, "success",
-              stats.get("inserted", 0) + stats.get("updated", 0)))
+        """,
+            (sync_type, now, now, "success", stats.get("inserted", 0) + stats.get("updated", 0)),
+        )
         self._conn.commit()

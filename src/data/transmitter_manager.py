@@ -4,6 +4,7 @@
 SATNOGSからのデータ取得と、手動追加データの統合管理。
 manual_override=True のレコードはSATNOGS同期で上書きされない。
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -15,7 +16,7 @@ import httpx
 
 SATNOGS_API_BASE = "https://db.satnogs.org/api"
 SATNOGS_TRANSMITTERS_URL = f"{SATNOGS_API_BASE}/transmitters/"
-SATNOGS_SATELLITES_URL   = f"{SATNOGS_API_BASE}/satellites/"
+SATNOGS_SATELLITES_URL = f"{SATNOGS_API_BASE}/satellites/"
 
 
 class TransmitterManager:
@@ -90,12 +91,16 @@ class TransmitterManager:
         now = datetime.now(UTC).isoformat()
 
         # 衛星レコードがなければ仮登録
-        self._conn.execute("""
+        self._conn.execute(
+            """
             INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)
             VALUES (?, ?, ?)
-        """, (norad_cat_id, f"Satellite #{norad_cat_id}", now))
+        """,
+            (norad_cat_id, f"Satellite #{norad_cat_id}", now),
+        )
 
-        self._conn.execute("""
+        self._conn.execute(
+            """
             INSERT INTO transmitters (
                 uuid, norad_cat_id, description, type,
                 uplink_low, uplink_high, downlink_low, downlink_high,
@@ -109,13 +114,25 @@ class TransmitterManager:
                 ?, ?,
                 1, 'manual', 1, ?, ?
             )
-        """, (
-            new_uuid, norad_cat_id, description, xpdr_type,
-            uplink_low, uplink_high, downlink_low, downlink_high,
-            mode, int(invert), baud,
-            ctcss_tone, ctcss_tone_type,
-            notes, now,
-        ))
+        """,
+            (
+                new_uuid,
+                norad_cat_id,
+                description,
+                xpdr_type,
+                uplink_low,
+                uplink_high,
+                downlink_low,
+                downlink_high,
+                mode,
+                int(invert),
+                baud,
+                ctcss_tone,
+                ctcss_tone_type,
+                notes,
+                now,
+            ),
+        )
         self._conn.commit()
         return new_uuid
 
@@ -129,10 +146,18 @@ class TransmitterManager:
         SATNOGS由来でも編集した場合は manual_override=1 にする。
         """
         allowed = {
-            "description", "uplink_low", "uplink_high",
-            "downlink_low", "downlink_high", "mode", "invert",
-            "ctcss_tone", "ctcss_tone_type", "baud",
-            "alive", "notes",
+            "description",
+            "uplink_low",
+            "uplink_high",
+            "downlink_low",
+            "downlink_high",
+            "mode",
+            "invert",
+            "ctcss_tone",
+            "ctcss_tone_type",
+            "baud",
+            "alive",
+            "notes",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -151,9 +176,7 @@ class TransmitterManager:
 
     def delete_transmitter(self, xpdr_uuid: str) -> None:
         """トランスポンダを削除する（手動追加分のみ推奨）"""
-        self._conn.execute(
-            "DELETE FROM transmitters WHERE uuid = ?", (xpdr_uuid,)
-        )
+        self._conn.execute("DELETE FROM transmitters WHERE uuid = ?", (xpdr_uuid,))
         self._conn.commit()
 
     # ------------------------------------------------------------------ #
@@ -211,10 +234,13 @@ class TransmitterManager:
                 continue
 
             # 衛星レコード確保
-            self._conn.execute("""
+            self._conn.execute(
+                """
                 INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)
                 VALUES (?, ?, ?)
-            """, (sat_id, xpdr.get("description", f"#{sat_id}"), now))
+            """,
+                (sat_id, xpdr.get("description", f"#{sat_id}"), now),
+            )
 
             row = (
                 xpdr_uuid,
@@ -228,14 +254,15 @@ class TransmitterManager:
                 xpdr.get("mode"),
                 int(bool(xpdr.get("invert", False))),
                 xpdr.get("baud"),
-                xpdr.get("ctcss_tone"),        # SATNOGSがあれば
-                None,                           # tone_type: SATNOGSに無い場合
+                xpdr.get("ctcss_tone"),  # SATNOGSがあれば
+                None,  # tone_type: SATNOGSに無い場合
                 int(bool(xpdr.get("alive", True))),
                 now,
             )
 
             if existing:
-                self._conn.execute("""
+                self._conn.execute(
+                    """
                     UPDATE transmitters SET
                         description=?, type=?,
                         uplink_low=?, uplink_high=?,
@@ -243,10 +270,13 @@ class TransmitterManager:
                         mode=?, invert=?, baud=?,
                         ctcss_tone=?, alive=?, updated_at=?
                     WHERE uuid=?
-                """, row[2:] + (xpdr_uuid,))
+                """,
+                    row[2:] + (xpdr_uuid,),
+                )
                 stats["updated"] += 1
             else:
-                self._conn.execute("""
+                self._conn.execute(
+                    """
                     INSERT INTO transmitters (
                         uuid, norad_cat_id, description, type,
                         uplink_low, uplink_high, downlink_low, downlink_high,
@@ -254,7 +284,9 @@ class TransmitterManager:
                         ctcss_tone, ctcss_tone_type,
                         alive, source, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'satnogs', ?)
-                """, row)
+                """,
+                    row,
+                )
                 stats["inserted"] += 1
 
         self._conn.commit()
@@ -262,12 +294,18 @@ class TransmitterManager:
         return stats
 
     def _log_sync(self, sync_type: str, stats: dict[str, int]) -> None:
-        self._conn.execute("""
+        self._conn.execute(
+            """
             INSERT INTO sync_log (sync_type, started_at, finished_at, status, records_updated)
             VALUES (?, ?, ?, 'success', ?)
-        """, (sync_type, datetime.now(UTC).isoformat(),
-              datetime.now(UTC).isoformat(),
-              stats.get("inserted", 0) + stats.get("updated", 0)))
+        """,
+            (
+                sync_type,
+                datetime.now(UTC).isoformat(),
+                datetime.now(UTC).isoformat(),
+                stats.get("inserted", 0) + stats.get("updated", 0),
+            ),
+        )
         self._conn.commit()
 
     # ------------------------------------------------------------------ #

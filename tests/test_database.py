@@ -1,6 +1,7 @@
 """
 データベース初期化・基本CRUD動作確認テスト
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -30,19 +31,19 @@ def tmp_db(tmp_path: Path) -> sqlite3.Connection:
 class TestSchemaInit:
     def test_all_tables_created(self, db_conn: sqlite3.Connection) -> None:
         expected = {
-            "satellites", "transmitters", "tle_data",
-            "tle_history", "app_settings", "sync_log",
+            "satellites",
+            "transmitters",
+            "tle_data",
+            "tle_history",
+            "app_settings",
+            "sync_log",
         }
-        rows = db_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        rows = db_conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         created = {r["name"] for r in rows}
         assert expected <= created
 
     def test_indexes_created(self, db_conn: sqlite3.Connection) -> None:
-        rows = db_conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-        ).fetchall()
+        rows = db_conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
         names = {r["name"] for r in rows}
         assert "idx_transmitters_norad" in names
         assert "idx_tle_history_norad" in names
@@ -52,9 +53,7 @@ class TestSchemaInit:
         """同じDBに2回 init_database を呼んでもエラーにならない"""
         tmp_db.close()
         conn2 = init_database(tmp_path / "test.db")
-        rows = conn2.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        rows = conn2.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         assert len(rows) >= 6
         conn2.close()
 
@@ -66,9 +65,7 @@ class TestSatelliteCRUD:
             (25544, "ISS (ZARYA)", "alive"),
         )
         db_conn.commit()
-        row = db_conn.execute(
-            "SELECT * FROM satellites WHERE norad_cat_id = 25544"
-        ).fetchone()
+        row = db_conn.execute("SELECT * FROM satellites WHERE norad_cat_id = 25544").fetchone()
         assert row is not None
         assert row["name"] == "ISS (ZARYA)"
         assert row["status"] == "alive"
@@ -95,9 +92,7 @@ class TestTransmitterCRUD:
             ("test-uuid-001", 25544, "ISS VHF FM", 145800000, "FM", "manual"),
         )
         db_conn.commit()
-        row = db_conn.execute(
-            "SELECT * FROM transmitters WHERE uuid = 'test-uuid-001'"
-        ).fetchone()
+        row = db_conn.execute("SELECT * FROM transmitters WHERE uuid = 'test-uuid-001'").fetchone()
         assert row["downlink_low"] == 145800000
         assert row["mode"] == "FM"
 
@@ -115,9 +110,7 @@ class TestTransmitterCRUD:
         db_conn.commit()
         db_conn.execute("DELETE FROM satellites WHERE norad_cat_id = 12345")
         db_conn.commit()
-        row = db_conn.execute(
-            "SELECT * FROM transmitters WHERE uuid = 'del-uuid'"
-        ).fetchone()
+        row = db_conn.execute("SELECT * FROM transmitters WHERE uuid = 'del-uuid'").fetchone()
         assert row is None, "CASCADE DELETE が機能していない"
 
 
@@ -137,9 +130,7 @@ class TestTleData:
             (25544, "ISS (ZARYA)", self._LINE1, self._LINE2, "celestrak", "excellent"),
         )
         db_conn.commit()
-        row = db_conn.execute(
-            "SELECT * FROM tle_data WHERE norad_cat_id = 25544"
-        ).fetchone()
+        row = db_conn.execute("SELECT * FROM tle_data WHERE norad_cat_id = 25544").fetchone()
         assert row["line1"] == self._LINE1
         assert row["quality_score"] == "excellent"
 
@@ -165,7 +156,5 @@ class TestAppSettings:
             ("last_sync", "2024-01-01T00:00:00"),
         )
         db_conn.commit()
-        row = db_conn.execute(
-            "SELECT value FROM app_settings WHERE key = 'last_sync'"
-        ).fetchone()
+        row = db_conn.execute("SELECT value FROM app_settings WHERE key = 'last_sync'").fetchone()
         assert row["value"] == "2024-01-01T00:00:00"
