@@ -1,0 +1,260 @@
+# Japanese translation for GPredict-Improved
+# Copyright (C) 2024 GPredict-Improved Contributors
+# This file is distributed under the same license as the gpredict-improved package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: gpredict-improved\n"
+"Report-Msgid-Bugs-To: https://github.com/JF9SOM/gpredict-improved/issues\n"
+"POT-Creation-Date: 2024-01-01 00:00+0000\n"
+"PO-Revision-Date: 2024-01-01 00:00+0000\n"
+"Last-Translator: GPredict-Improved Contributors\n"
+"Language-Team: Japanese\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# --- Application ---
+msgid "Satellite Tracker"
+msgstr "衛星追尾ソフト"
+
+# --- Menu: File ---
+msgid "File"
+msgstr "ファイル"
+
+msgid "Quit"
+msgstr "終了"
+
+# --- Menu: View ---
+msgid "View"
+msgstr "表示"
+
+msgid "World Map"
+msgstr "世界地図"
+
+msgid "Satellite List"
+msgstr "衛星リスト"
+
+msgid "Pass Predictions"
+msgstr "パス予測"
+
+msgid "Radar View"
+msgstr "レーダー表示"
+
+# --- Menu: Radio ---
+msgid "Radio"
+msgstr "無線機"
+
+msgid "Connect Radio"
+msgstr "無線機に接続"
+
+msgid "Disconnect Radio"
+msgstr "無線機を切断"
+
+msgid "Radio Settings..."
+msgstr "無線機設定..."
+
+# --- Menu: Tools ---
+msgid "Tools"
+msgstr "ツール"
+
+msgid "Update TLE Data"
+msgstr "TLEデータを更新"
+
+msgid "Settings..."
+msgstr "設定..."
+
+# --- Menu: Help ---
+msgid "Help"
+msgstr "ヘルプ"
+
+msgid "About GPredict-Improved"
+msgstr "GPredict-Improved について"
+
+msgid "Documentation"
+msgstr "ドキュメント"
+
+# --- Status bar ---
+msgid "Ready"
+msgstr "準備完了"
+
+msgid "Updating TLE data..."
+msgstr "TLEデータを更新中..."
+
+msgid "TLE update complete: %(count)d satellites updated"
+msgstr "TLE更新完了: %(count)d 衛星を更新しました"
+
+msgid "Tracking: %(name)s"
+msgstr "追尾中: %(name)s"
+
+msgid "No radio connected"
+msgstr "無線機未接続"
+
+msgid "Radio connected: %(model)s"
+msgstr "無線機接続済み: %(model)s"
+
+msgid "LAN access:"
+msgstr "LANアクセス:"
+
+msgid "Show QR Code"
+msgstr "QRコードを表示"
+
+# --- Satellite list columns ---
+msgid "NORAD ID"
+msgstr "NORAD ID"
+
+msgid "Name"
+msgstr "衛星名"
+
+msgid "Status"
+msgstr "状態"
+
+msgid "TLE Quality"
+msgstr "TLE品質"
+
+msgid "Next Pass"
+msgstr "次回パス"
+
+# --- Pass list columns ---
+msgid "AOS"
+msgstr "AOS"
+
+msgid "TCA"
+msgstr "TCA"
+
+msgid "LOS"
+msgstr "LOS"
+
+msgid "Max Elevation"
+msgstr "最大仰角"
+
+msgid "Duration"
+msgstr "継続時間"
+
+msgid "Direction"
+msgstr "方向"
+
+# --- Settings dialog ---
+msgid "Settings"
+msgstr "設定"
+
+msgid "General"
+msgstr "全般"
+
+msgid "Ground Station"
+msgstr "地上局"
+
+msgid "Language"
+msgstr "言語"
+
+msgid "Network"
+msgstr "ネットワーク"
+
+msgid "Latitude"
+msgstr "緯度"
+
+msgid "Longitude"
+msgstr "経度"
+
+msgid "Altitude (m)"
+msgstr "標高 (m)"
+
+msgid "Apply"
+msgstr "適用"
+
+msgid "Cancel"
+msgstr "キャンセル"
+
+msgid "OK"
+msgstr "OK"
+
+# --- TLE quality labels ---
+msgid "Excellent"
+msgstr "優良"
+
+msgid "Good"
+msgstr "良好"
+
+msgid "Fair"
+msgstr "普通"
+
+msgid "Poor"
+msgstr "不良"
+
+msgid "Unknown"
+msgstr "不明"
+
+# --- Satellite status ---
+msgid "Alive"
+msgstr "運用中"
+
+msgid "Dead"
+msgstr "運用終了"
+
+# --- Radio / Rig dialog ---
+msgid "Radio Model"
+msgstr "無線機モデル"
+
+msgid "Serial Port"
+msgstr "シリアルポート"
+
+msgid "Baud Rate"
+msgstr "ボーレート"
+
+msgid "Connect"
+msgstr "接続"
+
+msgid "Disconnect"
+msgstr "切断"
+
+# --- Transmitter panel ---
+msgid "Transmitter"
+msgstr "送信機"
+
+msgid "Transponder"
+msgstr "トランスポンダ"
+
+msgid "Beacon"
+msgstr "ビーコン"
+
+msgid "Uplink"
+msgstr "アップリンク"
+
+msgid "Downlink"
+msgstr "ダウンリンク"
+
+msgid "Mode"
+msgstr "モード"
+
+msgid "Tone"
+msgstr "トーン"
+
+msgid "Add Manually"
+msgstr "手動追加"
+
+msgid "Edit"
+msgstr "編集"
+
+msgid "Delete"
+msgstr "削除"
+
+# --- Error messages ---
+msgid "TLE update failed: %(error)s"
+msgstr "TLE更新失敗: %(error)s"
+
+msgid "Radio connection failed: %(error)s"
+msgstr "無線機接続失敗: %(error)s"
+
+msgid "Database error: %(error)s"
+msgstr "データベースエラー: %(error)s"
+
+# --- Plural forms (日本語は単複同形) ---
+msgid "%(count)d satellite"
+msgid_plural "%(count)d satellites"
+msgstr[0] "%(count)d 衛星"
+
+msgid "%(count)d pass"
+msgid_plural "%(count)d passes"
+msgstr[0] "%(count)d パス"

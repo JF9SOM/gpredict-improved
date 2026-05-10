@@ -1,0 +1,262 @@
+# English translation for GPredict-Improved
+# Copyright (C) 2024 GPredict-Improved Contributors
+# This file is distributed under the same license as the gpredict-improved package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: gpredict-improved\n"
+"Report-Msgid-Bugs-To: https://github.com/JF9SOM/gpredict-improved/issues\n"
+"POT-Creation-Date: 2024-01-01 00:00+0000\n"
+"PO-Revision-Date: 2024-01-01 00:00+0000\n"
+"Last-Translator: GPredict-Improved Contributors\n"
+"Language-Team: English\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+# --- Application ---
+msgid "Satellite Tracker"
+msgstr "Satellite Tracker"
+
+# --- Menu: File ---
+msgid "File"
+msgstr "File"
+
+msgid "Quit"
+msgstr "Quit"
+
+# --- Menu: View ---
+msgid "View"
+msgstr "View"
+
+msgid "World Map"
+msgstr "World Map"
+
+msgid "Satellite List"
+msgstr "Satellite List"
+
+msgid "Pass Predictions"
+msgstr "Pass Predictions"
+
+msgid "Radar View"
+msgstr "Radar View"
+
+# --- Menu: Radio ---
+msgid "Radio"
+msgstr "Radio"
+
+msgid "Connect Radio"
+msgstr "Connect Radio"
+
+msgid "Disconnect Radio"
+msgstr "Disconnect Radio"
+
+msgid "Radio Settings..."
+msgstr "Radio Settings..."
+
+# --- Menu: Tools ---
+msgid "Tools"
+msgstr "Tools"
+
+msgid "Update TLE Data"
+msgstr "Update TLE Data"
+
+msgid "Settings..."
+msgstr "Settings..."
+
+# --- Menu: Help ---
+msgid "Help"
+msgstr "Help"
+
+msgid "About GPredict-Improved"
+msgstr "About GPredict-Improved"
+
+msgid "Documentation"
+msgstr "Documentation"
+
+# --- Status bar ---
+msgid "Ready"
+msgstr "Ready"
+
+msgid "Updating TLE data..."
+msgstr "Updating TLE data..."
+
+msgid "TLE update complete: %(count)d satellites updated"
+msgstr "TLE update complete: %(count)d satellites updated"
+
+msgid "Tracking: %(name)s"
+msgstr "Tracking: %(name)s"
+
+msgid "No radio connected"
+msgstr "No radio connected"
+
+msgid "Radio connected: %(model)s"
+msgstr "Radio connected: %(model)s"
+
+msgid "LAN access:"
+msgstr "LAN access:"
+
+msgid "Show QR Code"
+msgstr "Show QR Code"
+
+# --- Satellite list columns ---
+msgid "NORAD ID"
+msgstr "NORAD ID"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "TLE Quality"
+msgstr "TLE Quality"
+
+msgid "Next Pass"
+msgstr "Next Pass"
+
+# --- Pass list columns ---
+msgid "AOS"
+msgstr "AOS"
+
+msgid "TCA"
+msgstr "TCA"
+
+msgid "LOS"
+msgstr "LOS"
+
+msgid "Max Elevation"
+msgstr "Max Elevation"
+
+msgid "Duration"
+msgstr "Duration"
+
+msgid "Direction"
+msgstr "Direction"
+
+# --- Settings dialog ---
+msgid "Settings"
+msgstr "Settings"
+
+msgid "General"
+msgstr "General"
+
+msgid "Ground Station"
+msgstr "Ground Station"
+
+msgid "Language"
+msgstr "Language"
+
+msgid "Network"
+msgstr "Network"
+
+msgid "Latitude"
+msgstr "Latitude"
+
+msgid "Longitude"
+msgstr "Longitude"
+
+msgid "Altitude (m)"
+msgstr "Altitude (m)"
+
+msgid "Apply"
+msgstr "Apply"
+
+msgid "Cancel"
+msgstr "Cancel"
+
+msgid "OK"
+msgstr "OK"
+
+# --- TLE quality labels ---
+msgid "Excellent"
+msgstr "Excellent"
+
+msgid "Good"
+msgstr "Good"
+
+msgid "Fair"
+msgstr "Fair"
+
+msgid "Poor"
+msgstr "Poor"
+
+msgid "Unknown"
+msgstr "Unknown"
+
+# --- Satellite status ---
+msgid "Alive"
+msgstr "Alive"
+
+msgid "Dead"
+msgstr "Dead"
+
+# --- Radio / Rig dialog ---
+msgid "Radio Model"
+msgstr "Radio Model"
+
+msgid "Serial Port"
+msgstr "Serial Port"
+
+msgid "Baud Rate"
+msgstr "Baud Rate"
+
+msgid "Connect"
+msgstr "Connect"
+
+msgid "Disconnect"
+msgstr "Disconnect"
+
+# --- Transmitter panel ---
+msgid "Transmitter"
+msgstr "Transmitter"
+
+msgid "Transponder"
+msgstr "Transponder"
+
+msgid "Beacon"
+msgstr "Beacon"
+
+msgid "Uplink"
+msgstr "Uplink"
+
+msgid "Downlink"
+msgstr "Downlink"
+
+msgid "Mode"
+msgstr "Mode"
+
+msgid "Tone"
+msgstr "Tone"
+
+msgid "Add Manually"
+msgstr "Add Manually"
+
+msgid "Edit"
+msgstr "Edit"
+
+msgid "Delete"
+msgstr "Delete"
+
+# --- Error messages ---
+msgid "TLE update failed: %(error)s"
+msgstr "TLE update failed: %(error)s"
+
+msgid "Radio connection failed: %(error)s"
+msgstr "Radio connection failed: %(error)s"
+
+msgid "Database error: %(error)s"
+msgstr "Database error: %(error)s"
+
+# --- Plural forms ---
+msgid "%(count)d satellite"
+msgid_plural "%(count)d satellites"
+msgstr[0] "%(count)d satellite"
+msgstr[1] "%(count)d satellites"
+
+msgid "%(count)d pass"
+msgid_plural "%(count)d passes"
+msgstr[0] "%(count)d pass"
+msgstr[1] "%(count)d passes"

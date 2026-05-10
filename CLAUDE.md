@@ -31,7 +31,11 @@ gpredict-improved/
 │   ├── ui/             # PySide6 Qt6 デスクトップUI
 │   ├── web/            # FastAPI + WebSocket（LAN内ブラウザアクセス）
 │   ├── rig/            # Hamlib制御（直接接続 + NET Control互換）
-│   └── data/           # データ同期（SATNOGS・TLE）・SQLiteDB・手動編集
+│   ├── data/           # データ同期（SATNOGS・TLE）・SQLiteDB・手動編集
+│   └── i18n/           # 多言語対応基盤（gettextラッパー）
+├── locale/
+│   ├── en/LC_MESSAGES/ # 英語翻訳（デフォルト）
+│   └── ja/LC_MESSAGES/ # 日本語翻訳
 ├── tests/
 ├── docs/
 ├── scripts/            # udevルール・インストールヘルパー
@@ -203,6 +207,37 @@ CREATE TABLE tle_history (
 - `GET /api/satellites/{norad}/passes` — パス予測
 - `WebSocket /ws/tracking` — リアルタイム仰角/方位角/ドップラー
 - `GET /api/tle/status` — TLE品質情報
+
+### i18n (src/i18n/)
+
+#### 設計方針
+- Python 標準 `gettext` ベース。外部ライブラリ不要
+- 翻訳ドメイン: `gpredict_improved`
+- 翻訳ファイル: `locale/<lang>/LC_MESSAGES/gpredict_improved.{po,mo}`
+- 新言語の追加は `.po` ファイルを追加して `msgfmt` でコンパイルするだけ
+
+#### 公開 API
+
+```python
+from i18n import _, ngettext, set_language, get_language, available_languages
+
+set_language("ja")          # 言語を変更（スレッドセーフ）
+get_language()              # 現在の言語コードを返す → "ja"
+available_languages()       # 利用可能な言語一覧 → ["en", "ja"]
+_("Ready")                  # 翻訳 → "準備完了"
+ngettext("%(n)d satellite", "%(n)d satellites", n)  # 複数形対応
+```
+
+#### 重要な規則
+- `set_language()` は **Qt UI の設定変更時のみ**呼ぶ。起動時はシステムロケールを参照する予定
+- `from i18n import _` してから `set_language()` を呼んでも、`_()` は常に最新のカタログを参照する（関数オブジェクトはモジュールの `_translation` グローバルを参照するため）
+- `.mo` ファイルはコンパイル済みバイナリ。`.po` ファイルを編集したら必ず `msgfmt` で再コンパイルしてコミットする
+- `locale/` はプロジェクトルート直下に配置（`src/` の外）
+
+#### 翻訳対象
+- UI テキスト全般（メニュー・ボタン・ラベル・ステータスメッセージ）
+- エラーメッセージ（ユーザー向けのもの）
+- 翻訳不要: ログ出力・コード内定数・NORAD IDなどのデータ値
 
 ---
 
