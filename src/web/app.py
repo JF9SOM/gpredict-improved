@@ -26,6 +26,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocket
 from pydantic import BaseModel
 
 from core.engine import PassPredictor, SatelliteEngine
+from core.location import Location, LocationManager
 from data.tle_manager import TLEManager
 from web.websocket import ConnectionManager
 
@@ -108,6 +109,28 @@ class ServerStatusOut(BaseModel):
     uptime_s: float
 
 
+class BrowserLocationIn(BaseModel):
+    """ブラウザ Geolocation API からの位置情報リクエスト"""
+
+    latitude: float
+    longitude: float
+    accuracy_m: float | None = None
+    elevation_m: float = 0.0
+
+
+class LocationOut(BaseModel):
+    """自局位置情報レスポンス"""
+
+    latitude_deg: float
+    longitude_deg: float
+    elevation_m: float
+    source: str
+    accuracy_m: float | None
+    city: str
+    country: str
+    status_text: str
+
+
 # ---------------------------------------------------------------------------
 # ユーティリティ
 # ---------------------------------------------------------------------------
@@ -165,22 +188,38 @@ def _build_tracking_payload(norad: int, engine: SatelliteEngine | None) -> dict[
 # ---------------------------------------------------------------------------
 
 
+def _location_to_out(loc: Location, mgr: LocationManager) -> LocationOut:
+    """Location オブジェクトを LocationOut レスポンスモデルに変換する。"""
+    return LocationOut(
+        latitude_deg=loc.latitude_deg,
+        longitude_deg=loc.longitude_deg,
+        elevation_m=loc.elevation_m,
+        source=loc.source.value,
+        accuracy_m=loc.accuracy_m,
+        city=loc.city,
+        country=loc.country,
+        status_text=mgr.status_text,
+    )
+
+
 def create_app(
     conn: sqlite3.Connection,
     tle_manager: TLEManager,
     pass_predictor: PassPredictor | None = None,
     engine: SatelliteEngine | None = None,
     start_time: datetime | None = None,
+    location_manager: LocationManager | None = None,
 ) -> FastAPI:
     """
     FastAPI アプリケーションを生成して返す。
 
     Args:
-        conn:           SQLite 接続（衛星・トランスポンダ・TLE クエリ用）
-        tle_manager:    TLE マネージャー（品質一覧取得用）
-        pass_predictor: パス予測器。None の場合はパス予測エンドポイントが空リストを返す
-        engine:         衛星エンジン。None の場合は WebSocket がエラーを返す
-        start_time:     アップタイム計算の起点。None なら現在時刻
+        conn:             SQLite 接続（衛星・トランスポンダ・TLE クエリ用）
+        tle_manager:      TLE マネージャー（品質一覧取得用）
+        pass_predictor:   パス予測器。None の場合はパス予測エンドポイントが空リストを返す
+        engine:           衛星エンジン。None の場合は WebSocket がエラーを返す
+        start_time:       アップタイム計算の起点。None なら現在時刻
+        location_manager: 位置情報マネージャー。None の場合は位置エンドポイントが 503 を返す
 
     Returns:
         設定済み FastAPI インスタンス
@@ -345,6 +384,34 @@ def create_app(
             tle_count=tle_count,
             uptime_s=(datetime.now(UTC) - _start).total_seconds(),
         )
+
+    @app.get("/api/location", response_model=LocationOut)
+    async def get_location() -> LocationOut:
+        """現在の自局位置情報を返す。位置が未設定の場合は 503 を返す。"""
+        if location_manager is None:
+            raise HTTPException(status_code=503, detail="location manager not configured")
+        loc = location_manager.current or location_manager.load_saved()
+        if loc is None:
+            raise HTTPException(status_code=404, detail="location not set")
+        return _location_to_out(loc, location_manager)
+
+    @app.post("/api/location/browser", response_model=LocationOut)
+    async def post_browser_location(body: BrowserLocationIn) -> LocationOut:
+        """
+        ブラウザ Geolocation API から受け取った座標を保存する。
+
+        フロントエンドの navigator.geolocation.getCurrentPosition() で取得した
+        座標をこのエンドポイントに POST することで自局位置を設定できる。
+        """
+        if location_manager is None:
+            raise HTTPException(status_code=503, detail="location manager not configured")
+        loc = location_manager.set_browser_location(
+            latitude_deg=body.latitude,
+            longitude_deg=body.longitude,
+            accuracy_m=body.accuracy_m,
+            elevation_m=body.elevation_m,
+        )
+        return _location_to_out(loc, location_manager)
 
     # ------------------------------------------------------------------ #
     # WebSocket — /ws/tracking

@@ -211,6 +211,8 @@ CREATE TABLE tle_history (
   - `quality`: 品質ランク（excellent/good/fair/low）
 - `WebSocket /ws/tracking` — リアルタイム仰角/方位角/ドップラー
 - `GET /api/tle/status` — TLE品質情報
+- `GET /api/location` — 現在の自局位置情報を返す
+- `POST /api/location/browser` — ブラウザ Geolocation API から座標を受け取り保存する
 
 #### パス品質ランク定義
 | ランク | 最大仰角 | 表示色 |
@@ -231,6 +233,53 @@ CREATE TABLE tle_history (
   - `renderPassChart(canvasId, passes, satName)` — キャンバスにチャート描画
   - `fetchAndRenderPasses(canvasId, noradId, satName, options)` — APIから自動取得して描画
   - `showPassDetail(pass)` — クリック時の詳細ポップアップ
+
+### レーダーチャート（スカイビュー）(src/ui/, src/web/static/)
+
+#### デスクトップ版 (src/ui/radar_view.py)
+PySide6 の QPainter で以下を実装:
+- 円形レーダー表示（同心円で仰角 0/30/60/90 度を表示）
+- 上が北固定（North-up）
+- 衛星の現在位置をドットで表示（衛星名ラベル付き）
+- パスの軌跡を曲線で描画（AOS から LOS まで）
+- AOS/LOS の時刻をパス線の端に表示
+- 現在仰角を下部に数値表示（例: "EL: 34.2°  AZ: 247.5°"）
+- 複数衛星を色分けして同時表示
+- `SatTrackData` データクラス: name, norad_cat_id, azimuth_deg, elevation_deg, is_visible, track, aos_time, los_time
+- `az_el_to_xy(az, el, cx, cy, r)` — 方位角・仰角をレーダー上の (x, y) に変換するユーティリティ
+- `sat_clicked(str)` Signal — 衛星ドットクリック時に衛星名を emit
+
+#### ブラウザ版 (src/web/static/radar.js)
+Canvas API で同等のレーダー表示:
+- `RadarView` クラス: `new RadarView('canvasId')` でインスタンス化
+- `setTracks(tracks)` — 衛星データ配列を設定して描画
+- スマホでは `DeviceOrientationEvent` で方位を取得してレーダーを自動回転（コンパス連動）
+- 方位センサーがない場合は北固定にフォールバック
+- タッチ/クリックで衛星をタップすると `onSatClick(track)` コールバックを呼ぶ
+- `azElToXY(az, el, cx, cy, r, rotationDeg)` — 座標変換ユーティリティ（公開関数）
+
+### 自局位置の自動取得 (src/core/location.py)
+
+取得優先順位:
+1. GPS デバイス（gpsd デーモン経由 / python-gps）
+2. ブラウザ Geolocation API（POST /api/location/browser 経由）
+3. IPジオロケーション（ip-api.com）
+4. 手動入力（緯度・経度・標高 / QTH グリッドロケーター形式）
+
+主要コンポーネント:
+- `LocationSource` enum: `GPS` / `Browser` / `IP` / `Manual`
+- `Location` dataclass: latitude_deg, longitude_deg, elevation_m, source, accuracy_m, city, country
+- `grid_to_latlon(grid: str) -> tuple[float, float]` — Maidenhead グリッドロケーターを緯度経度に変換
+- `LocationManager` クラス:
+  - `detect()` — 優先順位に従って自動取得（async）
+  - `from_gps()` — gpsd 経由で GPS 座標取得（async）
+  - `from_ip()` — ip-api.com で IP ジオロケーション（async）
+  - `from_manual(lat, lon, elev)` — 手動設定
+  - `from_grid(grid, elev)` — グリッドロケーターから設定
+  - `set_browser_location(lat, lon, accuracy_m)` — ブラウザ位置を設定
+  - `save(loc)` — app_settings に保存
+  - `load_saved()` — 保存済みを読み込む
+  - `status_text` プロパティ — ステータスバー表示テキスト（例: "QTH: 35.6895°N 139.6917°E (GPS)"）
 
 ### i18n (src/i18n/)
 
