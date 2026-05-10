@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from data.database import init_database, SCHEMA_SQL
+from data.database import SCHEMA_SQL, init_database
 
 
 @pytest.fixture

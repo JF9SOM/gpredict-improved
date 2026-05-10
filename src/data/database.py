@@ -7,7 +7,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;

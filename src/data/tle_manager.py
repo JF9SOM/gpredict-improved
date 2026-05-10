@@ -7,7 +7,7 @@ TLE（Two-Line Element）自動更新マネージャー
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -133,7 +133,7 @@ class TLEManager:
             return stats
 
         # TLEテキスト形式をパース（3行1組）
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         tle_triples = []
         i = 0
         while i < len(lines) - 2:
@@ -203,13 +203,13 @@ class TLEManager:
         1衛星のTLEをSpace-TrackまたはCelesTrakから取得する。
         特定衛星だけ手動更新したいときに使用。
         """
-        url = f"https://celestrak.org/SOCRATES/query.php"
+        url = "https://celestrak.org/SOCRATES/query.php"
         params = {"CATNR": str(norad_cat_id), "FORMAT": "tle"}
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 r = await client.get(url, params=params)
                 r.raise_for_status()
-                lines = [l.strip() for l in r.text.splitlines() if l.strip()]
+                lines = [ln.strip() for ln in r.text.splitlines() if ln.strip()]
                 if len(lines) >= 3:
                     result = await self.fetch_and_update.__func__(  # type: ignore[attr-defined]
                         self, "celestrak-single"

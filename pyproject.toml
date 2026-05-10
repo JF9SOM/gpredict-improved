@@ -96,8 +96,7 @@ select = [
     "ANN",               # type annotations
 ]
 ignore = [
-    "ANN101", "ANN102",  # selfとclsの型注釈は不要
-    "ANN401",            # Anyを許容
+    "ANN401",  # Anyを許容
 ]
 
 [tool.ruff.lint.per-file-ignores]

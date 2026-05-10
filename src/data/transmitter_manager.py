@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-
-from .database import init_database
 
 SATNOGS_API_BASE = "https://db.satnogs.org/api"
 SATNOGS_TRANSMITTERS_URL = f"{SATNOGS_API_BASE}/transmitters/"

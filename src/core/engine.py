@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
-from skyfield.api import EarthSatellite, Time, Topos, load, wgs84
+from skyfield.api import EarthSatellite, Time, load, wgs84
 
 if TYPE_CHECKING:
     from data.tle_manager import TLEManager
@@ -142,7 +142,6 @@ class SatelliteEngine:
         at: datetime | None = None,
     ) -> dict[int, Observation]:
         """複数衛星の観測値を一括取得する。存在しないIDはスキップ。"""
-        t = self._to_skyfield_time(at)
         result: dict[int, Observation] = {}
         for norad in norad_cat_ids:
             obs = self.observe(norad, at)
@@ -273,7 +272,7 @@ class PassPredictor:
         times_list = list(times)    # type: ignore[call-overload]
         events_list = list(events)  # type: ignore[call-overload]
 
-        for t, ev in zip(times_list, events_list):
+        for t, ev in zip(times_list, events_list, strict=False):
             if ev == 0:   # AOS
                 pending = {"aos": t}
             elif ev == 1 and "aos" in pending:  # TCA
