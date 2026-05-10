@@ -97,6 +97,7 @@ select = [
 ]
 ignore = [
     "ANN401",  # Anyを許容
+    "B008",    # FastAPI Depends() はデフォルト引数での関数呼び出しが正規パターン
 ]
 
 [tool.ruff.lint.per-file-ignores]
