@@ -12,6 +12,7 @@ GPredict-Improved エントリーポイント
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from datetime import UTC, datetime
@@ -46,6 +47,21 @@ def main() -> int:
     tle_manager = TLEManager(conn)
     location_manager = LocationManager(conn)
     location = location_manager.load_saved()
+
+    if location is None:
+        logger.info("No saved QTH — trying IP geolocation...")
+        try:
+            location = asyncio.run(location_manager.from_ip())
+            if location:
+                logger.info(
+                    "IP geolocation: %.4f°N %.4f°E (%s, %s)",
+                    location.latitude_deg,
+                    location.longitude_deg,
+                    location.city,
+                    location.country,
+                )
+        except Exception as exc:
+            logger.warning("IP geolocation failed at startup: %s", exc)
 
     engine: SatelliteEngine | None = None
     pass_predictor: PassPredictor | None = None

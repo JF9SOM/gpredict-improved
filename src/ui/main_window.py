@@ -17,7 +17,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QPointF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
@@ -27,6 +27,7 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPen,
     QPixmap,
+    QPolygonF,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -64,6 +65,188 @@ _QUALITY_DOT_COLORS: dict[str | None, str] = {
     "poor": "#e74c3c",
     None: "#7f8c8d",
 }
+
+# 簡略化された大陸・島嶼ポリゴン (lat, lon) — 近似値
+_CONTINENTS: list[list[tuple[float, float]]] = [
+    # 北アメリカ
+    [
+        (71, -162),
+        (71, -141),
+        (60, -141),
+        (59, -136),
+        (55, -130),
+        (49, -124),
+        (37, -122),
+        (32, -117),
+        (25, -109),
+        (22, -97),
+        (15, -85),
+        (8, -77),
+        (10, -84),
+        (23, -82),
+        (25, -80),
+        (35, -75),
+        (42, -70),
+        (47, -53),
+        (52, -56),
+        (58, -62),
+        (62, -64),
+        (60, -80),
+        (61, -95),
+        (68, -96),
+        (72, -106),
+        (71, -162),
+    ],
+    # 南アメリカ
+    [
+        (12, -72),
+        (8, -77),
+        (1, -80),
+        (-4, -81),
+        (-20, -70),
+        (-23, -43),
+        (-34, -53),
+        (-56, -68),
+        (-55, -65),
+        (-42, -63),
+        (-38, -57),
+        (-33, -52),
+        (-10, -37),
+        (-5, -35),
+        (0, -51),
+        (5, -52),
+        (8, -60),
+        (10, -62),
+        (12, -72),
+    ],
+    # ヨーロッパ
+    [
+        (71, 27),
+        (65, 14),
+        (58, 5),
+        (51, 2),
+        (43, -9),
+        (36, -6),
+        (37, 0),
+        (43, 6),
+        (44, 8),
+        (46, 14),
+        (42, 20),
+        (37, 25),
+        (41, 29),
+        (47, 38),
+        (55, 37),
+        (60, 29),
+        (65, 26),
+        (68, 27),
+        (71, 27),
+    ],
+    # アフリカ
+    [
+        (37, -6),
+        (37, 11),
+        (30, 33),
+        (22, 37),
+        (15, 41),
+        (12, 44),
+        (11, 51),
+        (1, 42),
+        (-12, 40),
+        (-26, 33),
+        (-35, 19),
+        (-28, 16),
+        (-17, 12),
+        (-5, 10),
+        (-5, -10),
+        (5, -16),
+        (15, -17),
+        (25, -15),
+        (35, -5),
+        (37, -6),
+    ],
+    # アジア（本土）
+    [
+        (41, 27),
+        (42, 35),
+        (47, 38),
+        (55, 37),
+        (65, 40),
+        (65, 57),
+        (73, 53),
+        (72, 68),
+        (77, 68),
+        (73, 100),
+        (72, 130),
+        (65, 141),
+        (53, 141),
+        (50, 140),
+        (42, 130),
+        (38, 121),
+        (35, 121),
+        (25, 121),
+        (21, 110),
+        (18, 110),
+        (15, 120),
+        (5, 119),
+        (5, 115),
+        (3, 113),
+        (1, 104),
+        (2, 102),
+        (6, 100),
+        (5, 80),
+        (8, 77),
+        (22, 68),
+        (30, 60),
+        (38, 57),
+        (42, 50),
+        (42, 44),
+        (41, 27),
+    ],
+    # オーストラリア
+    [
+        (-10, 131),
+        (-15, 129),
+        (-17, 122),
+        (-26, 114),
+        (-34, 115),
+        (-38, 140),
+        (-38, 147),
+        (-34, 151),
+        (-25, 153),
+        (-15, 145),
+        (-10, 142),
+        (-10, 131),
+    ],
+    # グリーンランド
+    [
+        (83, -30),
+        (77, -18),
+        (65, -40),
+        (60, -48),
+        (68, -52),
+        (76, -57),
+        (80, -53),
+        (83, -30),
+    ],
+    # 南極大陸
+    [
+        (-65, -180),
+        (-68, -150),
+        (-72, -120),
+        (-66, -90),
+        (-73, -60),
+        (-70, -30),
+        (-67, 0),
+        (-70, 30),
+        (-67, 60),
+        (-70, 90),
+        (-68, 120),
+        (-72, 150),
+        (-65, 180),
+        (-90, 180),
+        (-90, -180),
+    ],
+]
 
 
 # ---------------------------------------------------------------------------
@@ -145,13 +328,21 @@ class WorldMapView(QWidget):
     def _draw(self, p: QPainter) -> None:
         w, h = float(self.width()), float(self.height())
 
-        # 背景（海）
-        p.fillRect(0, 0, int(w), int(h), QColor("#0d1b2a"))
+        # 背景（海: 明るい青）
+        p.fillRect(0, 0, int(w), int(h), QColor("#1565C0"))
+
+        # 陸地ポリゴン
+        p.setPen(QPen(QColor("#1B5E20"), 1))
+        p.setBrush(QColor("#388E3C"))
+        for continent in _CONTINENTS:
+            points = [QPointF(*self.latlon_to_xy(lat, lon, w, h)) for lat, lon in continent]
+            p.drawPolygon(QPolygonF(points))
 
         # グリッド線（30° 間隔）
-        grid_pen = QPen(QColor("#1e3a5f"), 1)
+        grid_pen = QPen(QColor("#90CAF9"), 1)
         grid_pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(grid_pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         for lat in range(-90, 91, 30):
             _, y = self.latlon_to_xy(float(lat), 0.0, w, h)
             p.drawLine(0, int(y), int(w), int(y))
@@ -159,9 +350,9 @@ class WorldMapView(QWidget):
             x, _ = self.latlon_to_xy(0.0, float(lon), w, h)
             p.drawLine(int(x), 0, int(x), int(h))
 
-        # 赤道（強調）
+        # 赤道（強調: 金色の実線）
         _, eq_y = self.latlon_to_xy(0.0, 0.0, w, h)
-        p.setPen(QPen(QColor("#1e5f3a"), 1))
+        p.setPen(QPen(QColor("#FFD700"), 2))
         p.drawLine(0, int(eq_y), int(w), int(eq_y))
 
         # 衛星ドット + ラベル
