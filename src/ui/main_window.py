@@ -2,7 +2,6 @@
 メインウィンドウ
 
 MainWindow     — Qt6 アプリケーションのメインウィンドウ (QMainWindow)
-WorldMapView   — 2D 等緯度経度図（衛星直下点リアルタイム表示）
 SatDetailPanel — 選択衛星の詳細情報パネル
 PassListPanel  — パス予測一覧パネル
 """
@@ -12,22 +11,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import math
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from PySide6.QtCore import QPointF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
-    QFont,
-    QMouseEvent,
-    QPainter,
-    QPaintEvent,
-    QPen,
     QPixmap,
-    QPolygonF,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -40,7 +32,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -55,6 +46,7 @@ from data.tle_manager import TLEManager
 from i18n import _
 from ui.pass_chart import QUALITY_COLORS, PassChartView, pass_quality
 from ui.radar_view import SAT_COLORS, RadarView, SatTrackData
+from ui.world_map import WorldMapView
 
 logger = logging.getLogger(__name__)
 
@@ -65,309 +57,6 @@ _QUALITY_DOT_COLORS: dict[str | None, str] = {
     "poor": "#e74c3c",
     None: "#7f8c8d",
 }
-
-# 簡略化された大陸・島嶼ポリゴン (lat, lon) — 近似値
-_CONTINENTS: list[list[tuple[float, float]]] = [
-    # 北アメリカ
-    [
-        (71, -162),
-        (71, -141),
-        (60, -141),
-        (59, -136),
-        (55, -130),
-        (49, -124),
-        (37, -122),
-        (32, -117),
-        (25, -109),
-        (22, -97),
-        (15, -85),
-        (8, -77),
-        (10, -84),
-        (23, -82),
-        (25, -80),
-        (35, -75),
-        (42, -70),
-        (47, -53),
-        (52, -56),
-        (58, -62),
-        (62, -64),
-        (60, -80),
-        (61, -95),
-        (68, -96),
-        (72, -106),
-        (71, -162),
-    ],
-    # 南アメリカ
-    [
-        (12, -72),
-        (8, -77),
-        (1, -80),
-        (-4, -81),
-        (-20, -70),
-        (-23, -43),
-        (-34, -53),
-        (-56, -68),
-        (-55, -65),
-        (-42, -63),
-        (-38, -57),
-        (-33, -52),
-        (-10, -37),
-        (-5, -35),
-        (0, -51),
-        (5, -52),
-        (8, -60),
-        (10, -62),
-        (12, -72),
-    ],
-    # ヨーロッパ
-    [
-        (71, 27),
-        (65, 14),
-        (58, 5),
-        (51, 2),
-        (43, -9),
-        (36, -6),
-        (37, 0),
-        (43, 6),
-        (44, 8),
-        (46, 14),
-        (42, 20),
-        (37, 25),
-        (41, 29),
-        (47, 38),
-        (55, 37),
-        (60, 29),
-        (65, 26),
-        (68, 27),
-        (71, 27),
-    ],
-    # アフリカ
-    [
-        (37, -6),
-        (37, 11),
-        (30, 33),
-        (22, 37),
-        (15, 41),
-        (12, 44),
-        (11, 51),
-        (1, 42),
-        (-12, 40),
-        (-26, 33),
-        (-35, 19),
-        (-28, 16),
-        (-17, 12),
-        (-5, 10),
-        (-5, -10),
-        (5, -16),
-        (15, -17),
-        (25, -15),
-        (35, -5),
-        (37, -6),
-    ],
-    # アジア（本土）
-    [
-        (41, 27),
-        (42, 35),
-        (47, 38),
-        (55, 37),
-        (65, 40),
-        (65, 57),
-        (73, 53),
-        (72, 68),
-        (77, 68),
-        (73, 100),
-        (72, 130),
-        (65, 141),
-        (53, 141),
-        (50, 140),
-        (42, 130),
-        (38, 121),
-        (35, 121),
-        (25, 121),
-        (21, 110),
-        (18, 110),
-        (15, 120),
-        (5, 119),
-        (5, 115),
-        (3, 113),
-        (1, 104),
-        (2, 102),
-        (6, 100),
-        (5, 80),
-        (8, 77),
-        (22, 68),
-        (30, 60),
-        (38, 57),
-        (42, 50),
-        (42, 44),
-        (41, 27),
-    ],
-    # オーストラリア
-    [
-        (-10, 131),
-        (-15, 129),
-        (-17, 122),
-        (-26, 114),
-        (-34, 115),
-        (-38, 140),
-        (-38, 147),
-        (-34, 151),
-        (-25, 153),
-        (-15, 145),
-        (-10, 142),
-        (-10, 131),
-    ],
-    # グリーンランド
-    [
-        (83, -30),
-        (77, -18),
-        (65, -40),
-        (60, -48),
-        (68, -52),
-        (76, -57),
-        (80, -53),
-        (83, -30),
-    ],
-    # 南極大陸
-    [
-        (-65, -180),
-        (-68, -150),
-        (-72, -120),
-        (-66, -90),
-        (-73, -60),
-        (-70, -30),
-        (-67, 0),
-        (-70, 30),
-        (-67, 60),
-        (-70, 90),
-        (-68, 120),
-        (-72, 150),
-        (-65, 180),
-        (-90, 180),
-        (-90, -180),
-    ],
-]
-
-
-# ---------------------------------------------------------------------------
-# WorldMapView
-# ---------------------------------------------------------------------------
-
-
-class WorldMapView(QWidget):
-    """
-    2D 等緯度経度図（Equirectangular）ウィジェット。
-
-    衛星の直下点（サブサテライトポイント）をリアルタイムに表示する。
-    上が北、左端が西経 180°、右端が東経 180°。
-    """
-
-    sat_clicked: Signal = Signal(int)  # norad_cat_id
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setMinimumSize(400, 200)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        # norad -> (name, lat_deg, lon_deg, QColor)
-        self._satellites: dict[int, tuple[str, float, float, QColor]] = {}
-        self._dot_radius: float = 5.0
-        self._hit_radius: float = 12.0
-
-    def sizeHint(self) -> QSize:
-        return QSize(800, 400)
-
-    def set_satellites(
-        self,
-        satellites: dict[int, tuple[str, float, float, QColor]],
-    ) -> None:
-        """
-        衛星の直下点データを設定して再描画する。
-
-        Args:
-            satellites: {norad_cat_id: (name, lat_deg, lon_deg, QColor)}
-        """
-        self._satellites = satellites
-        self.update()
-
-    def latlon_to_xy(self, lat: float, lon: float, w: float, h: float) -> tuple[float, float]:
-        """
-        緯度・経度をウィジェット座標に変換する（等緯度経度図）。
-
-        Args:
-            lat: 緯度（度、北緯正）
-            lon: 経度（度、東経正）
-            w:   ウィジェット幅（ピクセル）
-            h:   ウィジェット高さ（ピクセル）
-
-        Returns:
-            (x, y) ウィジェット座標
-        """
-        x = (lon + 180.0) / 360.0 * w
-        y = (90.0 - lat) / 180.0 * h
-        return x, y
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        """衛星ドット付近のクリックで sat_clicked を emit する。"""
-        w, h = float(self.width()), float(self.height())
-        px, py = event.position().x(), event.position().y()
-        for norad, sat_info in reversed(list(self._satellites.items())):
-            _name, lat, lon, _color = sat_info
-            sx, sy = self.latlon_to_xy(lat, lon, w, h)
-            if math.hypot(px - sx, py - sy) <= self._hit_radius:
-                self.sat_clicked.emit(norad)
-                return
-
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: ARG002
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        try:
-            self._draw(painter)
-        finally:
-            painter.end()
-
-    def _draw(self, p: QPainter) -> None:
-        w, h = float(self.width()), float(self.height())
-
-        # 背景（海: 明るい青）
-        p.fillRect(0, 0, int(w), int(h), QColor("#1565C0"))
-
-        # 陸地ポリゴン
-        p.setPen(QPen(QColor("#1B5E20"), 1))
-        p.setBrush(QColor("#388E3C"))
-        for continent in _CONTINENTS:
-            points = [QPointF(*self.latlon_to_xy(lat, lon, w, h)) for lat, lon in continent]
-            p.drawPolygon(QPolygonF(points))
-
-        # グリッド線（30° 間隔）
-        grid_pen = QPen(QColor("#90CAF9"), 1)
-        grid_pen.setStyle(Qt.PenStyle.DashLine)
-        p.setPen(grid_pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for lat in range(-90, 91, 30):
-            _, y = self.latlon_to_xy(float(lat), 0.0, w, h)
-            p.drawLine(0, int(y), int(w), int(y))
-        for lon in range(-180, 181, 30):
-            x, _ = self.latlon_to_xy(0.0, float(lon), w, h)
-            p.drawLine(int(x), 0, int(x), int(h))
-
-        # 赤道（強調: 金色の実線）
-        _, eq_y = self.latlon_to_xy(0.0, 0.0, w, h)
-        p.setPen(QPen(QColor("#FFD700"), 2))
-        p.drawLine(0, int(eq_y), int(w), int(eq_y))
-
-        # 衛星ドット + ラベル
-        label_font = QFont()
-        label_font.setPointSize(8)
-        p.setFont(label_font)
-        dr = int(self._dot_radius)
-        for info in self._satellites.values():
-            sx, sy = self.latlon_to_xy(info[1], info[2], w, h)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(info[3])
-            p.drawEllipse(int(sx) - dr, int(sy) - dr, dr * 2, dr * 2)
-            p.setPen(info[3])
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawText(int(sx) + dr + 2, int(sy) + 4, info[0])
 
 
 # ---------------------------------------------------------------------------
@@ -778,7 +467,12 @@ class MainWindow(QMainWindow):
         self._update_statusbar()
 
     def _update_world_map(self) -> None:
-        """全衛星の直下点を取得して世界地図を更新する。"""
+        """全衛星の直下点と自局位置を取得して世界地図を更新する。"""
+        # 自局位置 ★ マーカーを更新（エンジン有無にかかわらず）
+        if self._location_manager is not None and self._location_manager.current is not None:
+            loc = self._location_manager.current
+            self._world_map.set_observer_location(loc.latitude_deg, loc.longitude_deg)
+
         if self._engine is None or not self._all_norads:
             return
 

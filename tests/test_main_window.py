@@ -13,12 +13,12 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from PySide6.QtGui import QColor
 
 from core.engine import Observation, PassInfo
 from data.database import SCHEMA_SQL
 from data.tle_manager import TLEManager
-from ui.main_window import MainWindow, PassListPanel, SatDetailPanel, WorldMapView
+from ui.main_window import MainWindow, PassListPanel, SatDetailPanel
+from ui.world_map import WorldMapView
 
 # ---------------------------------------------------------------------------
 # フィクスチャ
@@ -88,103 +88,6 @@ def _make_pass_info(
         los_azimuth_deg=270.0,
         duration_s=duration,
     )
-
-
-# ---------------------------------------------------------------------------
-# WorldMapView
-# ---------------------------------------------------------------------------
-
-
-class TestWorldMapView:
-    def test_create(self, qtbot) -> None:
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        assert w is not None
-
-    def test_set_satellites_empty(self, qtbot) -> None:
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        w.set_satellites({})
-        assert w._satellites == {}
-
-    def test_set_satellites_single(self, qtbot) -> None:
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        w.set_satellites({25544: ("ISS", 35.0, 139.0, QColor("#e74c3c"))})
-        assert 25544 in w._satellites
-
-    def test_set_satellites_multiple(self, qtbot) -> None:
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        w.set_satellites(
-            {
-                25544: ("ISS", 35.0, 139.0, QColor("#e74c3c")),
-                43017: ("AO-91", -5.0, -60.0, QColor("#3498db")),
-            }
-        )
-        assert len(w._satellites) == 2
-
-    def test_latlon_to_xy_equator_prime_meridian(self, qtbot) -> None:
-        """緯度 0°・経度 0° はマップ中央になる。"""
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        x, y = w.latlon_to_xy(0.0, 0.0, 360.0, 180.0)
-        assert abs(x - 180.0) < 1e-9
-        assert abs(y - 90.0) < 1e-9
-
-    def test_latlon_to_xy_north_pole(self, qtbot) -> None:
-        """北極はマップ上端になる。"""
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        _, y = w.latlon_to_xy(90.0, 0.0, 360.0, 180.0)
-        assert abs(y) < 1e-9
-
-    def test_latlon_to_xy_south_pole(self, qtbot) -> None:
-        """南極はマップ下端になる。"""
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        _, y = w.latlon_to_xy(-90.0, 0.0, 360.0, 180.0)
-        assert abs(y - 180.0) < 1e-9
-
-    def test_latlon_to_xy_antimeridian_east(self, qtbot) -> None:
-        """東経 180° はマップ右端になる。"""
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        x, _ = w.latlon_to_xy(0.0, 180.0, 360.0, 180.0)
-        assert abs(x - 360.0) < 1e-9
-
-    def test_latlon_to_xy_antimeridian_west(self, qtbot) -> None:
-        """西経 180° はマップ左端になる。"""
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        x, _ = w.latlon_to_xy(0.0, -180.0, 360.0, 180.0)
-        assert abs(x) < 1e-9
-
-    def test_latlon_to_xy_returns_floats(self, qtbot) -> None:
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        x, y = w.latlon_to_xy(35.6895, 139.6917, 800.0, 400.0)
-        assert isinstance(x, float)
-        assert isinstance(y, float)
-
-    def test_size_hint_positive(self, qtbot) -> None:
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        hint = w.sizeHint()
-        assert hint.width() > 0
-        assert hint.height() > 0
-
-    def test_minimum_size(self, qtbot) -> None:
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        assert w.minimumWidth() >= 400
-        assert w.minimumHeight() >= 200
-
-    def test_sat_clicked_signal_exists(self, qtbot) -> None:
-        w = WorldMapView()
-        qtbot.addWidget(w)
-        assert hasattr(w, "sat_clicked")
-
 
 # ---------------------------------------------------------------------------
 # SatDetailPanel

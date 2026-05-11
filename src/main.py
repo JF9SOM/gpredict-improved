@@ -24,6 +24,7 @@ from core.location import LocationManager
 from data.database import init_database
 from data.tle_manager import TLEManager
 from ui.main_window import MainWindow
+from ui.world_map import prefetch_land_data
 from web.app import create_app
 
 logging.basicConfig(
@@ -39,6 +40,9 @@ def main() -> int:
     app.setApplicationName("GPredict-Improved")
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName("GPredict-Improved")
+
+    # Natural Earth 地図データのプリフェッチ（初回のみネットワーク取得、以降はキャッシュ）
+    prefetch_land_data()
 
     # SQLite DB 初期化
     conn = init_database()

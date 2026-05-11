@@ -47,6 +47,7 @@ dependencies = [
     "apscheduler>=3.10",    # TLE自動更新スケジューラ
     "platformdirs>=4.2",    # OS別設定ディレクトリ
     "python-dateutil>=2.9",
+    "shapely>=2.0",             # 世界地図 Natural Earth ポリゴン解析
 ]
 
 [project.optional-dependencies]
