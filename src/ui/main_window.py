@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -60,6 +61,15 @@ _QUALITY_DOT_COLORS: dict[str | None, str] = {
     "poor": "#e74c3c",
     None: "#7f8c8d",
 }
+
+# AO-91, FO-29, CAS-4A などの AMSAT 識別子を抽出する正規表現
+# 2〜4 文字のプレフィックス + 任意の区切り + 1〜3 桁数字 + 任意の末尾文字
+_DESIG_RE = re.compile(r"\b([A-Za-z]{2,4})[-\s]?(\d{1,3}[A-Za-z]?)\b")
+
+
+def _extract_designators(name: str) -> set[str]:
+    """衛星名から AMSAT 識別子を正規化して返す（例: 'AO-91' → {'ao91'}）。"""
+    return {(m.group(1) + m.group(2)).lower() for m in _DESIG_RE.finditer(name)}
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +416,12 @@ class MainWindow(QMainWindow):
         }
         amsat_map: dict[str, str] = self._amsat_fetcher.load_cached() or {}
 
+        # AMSAT 識別子（例: 'ao91'）→ ステータスの逆引きマップを構築
+        designator_status: dict[str, str] = {}
+        for amsat_name, status in amsat_map.items():
+            for desig in _extract_designators(amsat_name):
+                designator_status[desig] = status
+
         rows = self._conn.execute(
             "SELECT norad_cat_id, name FROM satellites ORDER BY name"
         ).fetchall()
@@ -418,7 +434,14 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(name)
             item.setData(Qt.ItemDataRole.UserRole, norad)
 
-            amsat_status = amsat_map.get(name.lower())
+            # 1. 完全名照合、2. 識別子照合（AO-91 など）の順でステータスを探す
+            amsat_status: str | None = amsat_map.get(name.lower())
+            if amsat_status is None:
+                for desig in _extract_designators(name):
+                    if desig in designator_status:
+                        amsat_status = designator_status[desig]
+                        break
+
             if amsat_status == "operational":
                 item.setForeground(QColor("#2ecc71"))
                 font: QFont = item.font()

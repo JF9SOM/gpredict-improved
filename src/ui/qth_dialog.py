@@ -2,19 +2,28 @@
 QTH手動設定ダイアログ
 
 緯度・経度・標高の直接入力、Maidenheadグリッドロケーター入力、コールサイン入力をサポート。
+標高は Open Elevation API で自動取得できる（オフライン時は 0 m のまま）。
 """
 
 from __future__ import annotations
 
+import logging
+import threading
+from collections.abc import Callable
+
+import httpx
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -22,6 +31,33 @@ from PySide6.QtWidgets import (
 
 from core.location import LocationManager, grid_to_latlon
 from i18n import _
+
+logger = logging.getLogger(__name__)
+
+_OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup"
+_ELEVATION_TIMEOUT = 10.0
+
+
+def _fetch_elevation_sync(lat: float, lon: float) -> float | None:
+    """
+    Open Elevation API から標高を取得する（同期・ブロッキング）。
+
+    Returns:
+        標高（m）。取得失敗の場合は None。
+    """
+    try:
+        resp = httpx.get(
+            _OPEN_ELEVATION_URL,
+            params={"locations": f"{lat},{lon}"},
+            timeout=_ELEVATION_TIMEOUT,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        if results:
+            return float(results[0]["elevation"])
+    except Exception as exc:
+        logger.debug("Elevation fetch failed: %s", exc)
+    return None
 
 
 class QTHDialog(QDialog):
@@ -40,7 +76,14 @@ class QTHDialog(QDialog):
         super().__init__(parent)
         self._location_manager = location_manager
         self.setWindowTitle(_("Set QTH"))
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(440)
+
+        # Grid Locator タブ用デバウンスタイマー（1秒後に自動取得）
+        self._grid_debounce = QTimer(self)
+        self._grid_debounce.setSingleShot(True)
+        self._grid_debounce.setInterval(1000)
+        self._grid_debounce.timeout.connect(self._auto_fetch_grid_elevation)
+
         self._build_ui()
         self._load_current()
 
@@ -51,7 +94,6 @@ class QTHDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        # タブ: 座標直接入力 / グリッドロケーター
         self._tabs = QTabWidget()
 
         # Tab 0: 座標直接入力
@@ -70,11 +112,20 @@ class QTHDialog(QDialog):
         self._lon_spin.setSuffix("°")
         coord_form.addRow(_("Longitude (°E):"), self._lon_spin)
 
+        # 標高 + Get Elevation ボタン
+        elev_row = QWidget()
+        elev_h = QHBoxLayout(elev_row)
+        elev_h.setContentsMargins(0, 0, 0, 0)
         self._elev_spin = QDoubleSpinBox()
         self._elev_spin.setRange(-100.0, 9000.0)
         self._elev_spin.setDecimals(1)
         self._elev_spin.setSuffix(" m")
-        coord_form.addRow(_("Elevation (m):"), self._elev_spin)
+        elev_h.addWidget(self._elev_spin)
+        self._get_elev_btn = QPushButton(_("Get Elevation"))
+        self._get_elev_btn.setFixedWidth(120)
+        self._get_elev_btn.clicked.connect(self._on_get_coord_elevation)
+        elev_h.addWidget(self._get_elev_btn)
+        coord_form.addRow(_("Elevation (m):"), elev_row)
 
         self._tabs.addTab(coord_tab, _("Coordinates"))
 
@@ -95,6 +146,10 @@ class QTHDialog(QDialog):
 
         self._grid_preview = QLabel("")
         grid_form.addRow(_("Decoded:"), self._grid_preview)
+
+        self._grid_elev_status = QLabel("")
+        grid_form.addRow("", self._grid_elev_status)
+
         self._grid_edit.textChanged.connect(self._on_grid_changed)
 
         self._tabs.addTab(grid_tab, _("Grid Locator"))
@@ -110,7 +165,7 @@ class QTHDialog(QDialog):
         call_form.addRow(_("Callsign:"), self._call_edit)
         layout.addWidget(call_group)
 
-        # ボタン
+        # OK / Cancel ボタン
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -132,11 +187,65 @@ class QTHDialog(QDialog):
             self._call_edit.setText(callsign)
 
     # ------------------------------------------------------------------ #
+    # 標高自動取得
+    # ------------------------------------------------------------------ #
+
+    def _fetch_elevation_async(
+        self,
+        lat: float,
+        lon: float,
+        on_done: Callable[[float | None], None],
+    ) -> None:
+        """バックグラウンドスレッドで標高を取得してメインスレッドのコールバックを呼ぶ。"""
+
+        def worker() -> None:
+            elev = _fetch_elevation_sync(lat, lon)
+            QTimer.singleShot(0, lambda: on_done(elev))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_get_coord_elevation(self) -> None:
+        """Coordinates タブの "Get Elevation" ボタン押下時の処理。"""
+        lat = self._lat_spin.value()
+        lon = self._lon_spin.value()
+        self._get_elev_btn.setText(_("Getting..."))
+        self._get_elev_btn.setEnabled(False)
+
+        def on_done(elev: float | None) -> None:
+            if elev is not None:
+                self._elev_spin.setValue(elev)
+            self._get_elev_btn.setText(_("Get Elevation"))
+            self._get_elev_btn.setEnabled(True)
+
+        self._fetch_elevation_async(lat, lon, on_done)
+
+    def _auto_fetch_grid_elevation(self) -> None:
+        """Grid Locator タブ: デバウンス後に自動で標高を取得する。"""
+        g = self._grid_edit.text().strip()
+        if len(g) not in (4, 6):
+            return
+        try:
+            lat, lon = grid_to_latlon(g)
+        except ValueError:
+            return
+
+        self._grid_elev_status.setText(_("Getting elevation..."))
+
+        def on_done(elev: float | None) -> None:
+            if elev is not None:
+                self._grid_elev_spin.setValue(elev)
+                self._grid_elev_status.setText(f"↑ {elev:.1f} m (auto)")
+            else:
+                self._grid_elev_status.setText(_("Elevation unavailable (offline?)"))
+
+        self._fetch_elevation_async(lat, lon, on_done)
+
+    # ------------------------------------------------------------------ #
     # シグナルハンドラー
     # ------------------------------------------------------------------ #
 
     def _on_grid_changed(self, text: str) -> None:
-        """グリッドロケーター入力時にデコードプレビューを更新する。"""
+        """グリッドロケーター入力時にデコードプレビューを更新し標高取得を予約する。"""
         g = text.strip()
         if len(g) in (4, 6):
             try:
@@ -144,10 +253,16 @@ class QTHDialog(QDialog):
                 ns = "N" if lat >= 0 else "S"
                 ew = "E" if lon >= 0 else "W"
                 self._grid_preview.setText(f"{abs(lat):.4f}°{ns}  {abs(lon):.4f}°{ew}")
+                self._grid_elev_status.setText("")
+                self._grid_debounce.start()
             except ValueError:
                 self._grid_preview.setText(_("Invalid grid locator"))
+                self._grid_debounce.stop()
+                self._grid_elev_status.setText("")
         else:
             self._grid_preview.setText("")
+            self._grid_debounce.stop()
+            self._grid_elev_status.setText("")
 
     def _on_accept(self) -> None:
         """OKボタン時の処理。"""
