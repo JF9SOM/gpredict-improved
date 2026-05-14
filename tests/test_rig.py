@@ -235,8 +235,12 @@ class TestHamlibNetController:
 
     def test_connect_fails_when_no_server(self) -> None:
         ctrl = self._make_ctrl()
-        # ポート 4532 にサーバーがいないので失敗するはず
-        result = ctrl.connect()
+        # ソケット接続をモックして環境依存を排除する
+        with patch("rig.controller.socket.socket") as mock_cls:
+            mock_sock = MagicMock()
+            mock_sock.connect.side_effect = ConnectionRefusedError("connection refused")
+            mock_cls.return_value = mock_sock
+            result = ctrl.connect()
         assert result is False
         assert ctrl.state == RigState.ERROR
 
@@ -360,7 +364,12 @@ class TestHamlibRotatorController:
 
     def test_net_mode_connect_fails_without_server(self) -> None:
         ctrl = HamlibRotatorController(net_mode=True, net_host="localhost", net_port=4533)
-        result = ctrl.connect()
+        # ソケット接続をモックして環境依存を排除する
+        with patch("rig.controller.socket.socket") as mock_cls:
+            mock_sock = MagicMock()
+            mock_sock.connect.side_effect = ConnectionRefusedError("connection refused")
+            mock_cls.return_value = mock_sock
+            result = ctrl.connect()
         assert result is False
 
     def _make_net_ctrl_connected(self) -> HamlibRotatorController:
