@@ -12,7 +12,7 @@ import threading
 from collections.abc import Callable
 
 import httpx
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -37,6 +37,12 @@ logger = logging.getLogger(__name__)
 _OPENTOPODATA_URL = "https://api.opentopodata.org/v1/srtm90m"
 _OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup"
 _ELEVATION_TIMEOUT = 10.0
+
+
+class _ElevationBridge(QObject):
+    """ワーカースレッドからメインスレッドへ標高結果を渡すシグナルブリッジ。"""
+
+    done: Signal = Signal(object)  # float | None
 
 
 def _fetch_elevation_sync(lat: float, lon: float) -> float | None:
@@ -221,11 +227,18 @@ class QTHDialog(QDialog):
         lon: float,
         on_done: Callable[[float | None], None],
     ) -> None:
-        """バックグラウンドスレッドで標高を取得してメインスレッドのコールバックを呼ぶ。"""
+        """バックグラウンドスレッドで標高を取得してメインスレッドのコールバックを呼ぶ。
+
+        threading.Thread から QTimer.singleShot を呼んでも非Qtスレッドには
+        イベントループがないため発火しない。Signal を介してメインスレッドに
+        キューイングすることで安全にUIを更新する。
+        """
+        bridge = _ElevationBridge(self)
+        bridge.done.connect(on_done)
 
         def worker() -> None:
             elev = _fetch_elevation_sync(lat, lon)
-            QTimer.singleShot(0, lambda: on_done(elev))
+            bridge.done.emit(elev)
 
         threading.Thread(target=worker, daemon=True).start()
 

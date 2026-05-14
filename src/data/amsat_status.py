@@ -232,7 +232,7 @@ class AMSATStatusFetcher:
                ON CONFLICT(key) DO UPDATE SET
                    value = excluded.value,
                    updated_at = excluded.updated_at""",
-            (_SETTINGS_KEY, json.dumps(status_map)),
+            (_SETTINGS_KEY, json.dumps(status_map), now),
         )
         self._conn.execute(
             """INSERT INTO app_settings (key, value, updated_at)
@@ -240,6 +240,6 @@ class AMSATStatusFetcher:
                ON CONFLICT(key) DO UPDATE SET
                    value = excluded.value,
                    updated_at = excluded.updated_at""",
-            (_TIMESTAMP_KEY, now),
+            (_TIMESTAMP_KEY, now, now),
         )
         self._conn.commit()
