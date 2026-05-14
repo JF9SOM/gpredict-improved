@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
@@ -28,6 +29,11 @@ _STATUS_MAP: dict[str, str] = {
     "nonoperational": "non_operational",
     "not operational": "non_operational",
 }
+
+# bgcolor values that indicate an active/operational satellite
+_OPERATIONAL_BG = {"#648fff", "#785ef0"}
+# bgcolor values that mean "no report submitted" (treated as no data)
+_EMPTY_BG = {"c0c0c0", "", "white"}
 
 _SETTINGS_KEY = "amsat_status_data"
 _TIMESTAMP_KEY = "amsat_status_updated_at"
@@ -117,41 +123,78 @@ class AMSATStatusFetcher:
         return result
 
     def _parse_tables(self, soup: Any) -> dict[str, str]:
-        """テーブル形式のHTMLから衛星状況を抽出する。"""
+        """
+        テーブル形式のHTMLから衛星状況を抽出する。
+
+        ページ構造:
+          - 衛星ごとに複数の周波数行がある（例: AO-7_[U/v], AO-7_[V/a]）
+          - 各行のセル1以降に時系列ステータスが左=最新順で並ぶ
+          - bgcolor #648fff（青）= Satellite Active, #785ef0（紫）= ISS Active
+          - bgcolor C0C0C0 または空 = 報告なし（スキップ）
+
+        判定: 各周波数の最新（左端）の非空ステータスを確認し、
+        1つでも青（Operational）があれば「operational」と判定する。
+        """
         result: dict[str, str] = {}
 
         for table in soup.find_all("table"):
-            headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
-            name_col: int | None = next(
-                (
-                    i
-                    for i, h in enumerate(headers)
-                    if "satellite" in h or "name" in h or "call" in h
-                ),
-                None,
-            )
-            status_col: int | None = next(
-                (
-                    i
-                    for i, h in enumerate(headers)
-                    if "status" in h or "condition" in h or "oper" in h
-                ),
-                None,
-            )
-            if name_col is None or status_col is None:
+            rows = table.find_all("tr")
+            if len(rows) < 3:
                 continue
 
-            for row in table.find_all("tr")[1:]:
+            # 1行目に "Name" セルがあるテーブルが対象
+            header_cells = rows[0].find_all(["td", "th"])
+            if not header_cells:
+                continue
+            if header_cells[0].get_text(strip=True).lower() != "name":
+                continue
+
+            # sat_name → [operational_count, total_freq_count]
+            sat_freq: dict[str, list[int]] = {}
+
+            for row in rows[1:]:
                 cells = row.find_all(["td", "th"])
-                if len(cells) <= max(name_col, status_col):
+                if len(cells) < 2:
                     continue
-                name = cells[name_col].get_text(strip=True)
-                status_raw = cells[status_col].get_text(strip=True).lower()
-                if not name:
+
+                name_raw = cells[0].get_text(strip=True)
+                if not name_raw:
                     continue
-                status = _STATUS_MAP.get(status_raw)
-                if status:
-                    result[name.lower()] = status
+
+                # "AO-7_[U/v]" → "AO-7"
+                sat_name = re.sub(r"_\[.*?\]$", "", name_raw).strip()
+                if not sat_name:
+                    continue
+
+                if sat_name not in sat_freq:
+                    sat_freq[sat_name] = [0, 0]
+                sat_freq[sat_name][1] += 1
+
+                # 左端から最初の非空セルのbgcolorを探す
+                most_recent_bg: str | None = None
+                for cell in cells[1:]:
+                    bg = cell.get("bgcolor", "").strip().lower()
+                    if bg not in _EMPTY_BG:
+                        most_recent_bg = bg
+                        break
+
+                if most_recent_bg in {c.lower() for c in _OPERATIONAL_BG}:
+                    sat_freq[sat_name][0] += 1
+
+            for sat_name, (op_count, total_count) in sat_freq.items():
+                if op_count > 0:
+                    status = "operational"
+                    print(
+                        f"[AMSAT] {sat_name}: operational"
+                        f" ({op_count}/{total_count} frequencies active)"
+                    )
+                else:
+                    status = "non_operational"
+                    print(f"[AMSAT] {sat_name}: not operational")
+                result[sat_name.lower()] = status
+
+            # 対象テーブルを処理したら終了
+            break
 
         return result
 

@@ -34,29 +34,54 @@ from i18n import _
 
 logger = logging.getLogger(__name__)
 
+_OPENTOPODATA_URL = "https://api.opentopodata.org/v1/srtm90m"
 _OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup"
 _ELEVATION_TIMEOUT = 10.0
 
 
 def _fetch_elevation_sync(lat: float, lon: float) -> float | None:
     """
-    Open Elevation API から標高を取得する（同期・ブロッキング）。
+    標高を取得する（同期・ブロッキング）。
+
+    優先順位:
+        1. opentopodata.org (GET)
+        2. open-elevation.com (POST)
 
     Returns:
-        標高（m）。取得失敗の場合は None。
+        標高（m）。両方失敗の場合は None。
     """
+    # 1st: opentopodata
     try:
         resp = httpx.get(
-            _OPEN_ELEVATION_URL,
+            _OPENTOPODATA_URL,
             params={"locations": f"{lat},{lon}"},
             timeout=_ELEVATION_TIMEOUT,
         )
+        print(f"[Elevation] opentopodata status={resp.status_code} body={resp.text[:200]}")
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        if results and results[0].get("elevation") is not None:
+            return float(results[0]["elevation"])
+    except Exception as exc:
+        logger.debug("opentopodata fetch failed: %s", exc)
+        print(f"[Elevation] opentopodata failed: {exc}")
+
+    # 2nd: open-elevation (POST with JSON body)
+    try:
+        resp = httpx.post(
+            _OPEN_ELEVATION_URL,
+            json={"locations": [{"latitude": lat, "longitude": lon}]},
+            timeout=_ELEVATION_TIMEOUT,
+        )
+        print(f"[Elevation] open-elevation status={resp.status_code} body={resp.text[:200]}")
         resp.raise_for_status()
         results = resp.json().get("results", [])
         if results:
             return float(results[0]["elevation"])
     except Exception as exc:
-        logger.debug("Elevation fetch failed: %s", exc)
+        logger.debug("open-elevation fetch failed: %s", exc)
+        print(f"[Elevation] open-elevation failed: {exc}")
+
     return None
 
 
@@ -214,7 +239,10 @@ class QTHDialog(QDialog):
         def on_done(elev: float | None) -> None:
             if elev is not None:
                 self._elev_spin.setValue(elev)
-            self._get_elev_btn.setText(_("Get Elevation"))
+                self._get_elev_btn.setText(_("Get Elevation"))
+            else:
+                self._get_elev_btn.setText(_("Unavailable"))
+                QTimer.singleShot(2000, lambda: self._get_elev_btn.setText(_("Get Elevation")))
             self._get_elev_btn.setEnabled(True)
 
         self._fetch_elevation_async(lat, lon, on_done)
