@@ -72,6 +72,16 @@ def _extract_designators(name: str) -> set[str]:
     return {(m.group(1) + m.group(2)).lower() for m in _DESIG_RE.finditer(name)}
 
 
+def _amsat_key_in_sat_name(amsat_key: str, sat_name_lower: str) -> bool:
+    """AMSAT キーが衛星名に完全なトークンとして含まれているか判定する。
+
+    前後に英数字が連続しない位置でのマッチのみ認める。
+    例: "iss" → "iss (zarya)" ✓  /  "ao-7" → "ao-73" ✗
+    """
+    pattern = r"(?<![a-z0-9])" + re.escape(amsat_key) + r"(?![a-z0-9])"
+    return bool(re.search(pattern, sat_name_lower))
+
+
 # ---------------------------------------------------------------------------
 # SatDetailPanel
 # ---------------------------------------------------------------------------
@@ -422,6 +432,9 @@ class MainWindow(QMainWindow):
             for desig in _extract_designators(amsat_name):
                 designator_status[desig] = status
 
+        # Level 3 用: 長いキーを優先（より具体的なマッチを先に試みる）
+        amsat_keys_by_len = sorted(amsat_map.keys(), key=len, reverse=True)
+
         rows = self._conn.execute(
             "SELECT norad_cat_id, name FROM satellites ORDER BY name"
         ).fetchall()
@@ -434,13 +447,27 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(name)
             item.setData(Qt.ItemDataRole.UserRole, norad)
 
-            # 1. 完全名照合、2. 識別子照合（AO-91 など）の順でステータスを探す
-            amsat_status: str | None = amsat_map.get(name.lower())
+            name_lower = name.lower()
+
+            # Level 1: 完全名照合（例: "SO-50" → "so-50"）
+            amsat_status: str | None = amsat_map.get(name_lower)
+
+            # Level 2: AMSAT識別子照合（例: "AO-73" → "ao73"）
             if amsat_status is None:
                 for desig in _extract_designators(name):
                     if desig in designator_status:
                         amsat_status = designator_status[desig]
                         break
+
+            # Level 3: トークン部分一致（例: "iss" in "iss (zarya)"）
+            # ISS・LASARsatなど数字のない衛星名や括弧付き別名に対応する
+            if amsat_status is None:
+                for amsat_key in amsat_keys_by_len:
+                    if _amsat_key_in_sat_name(amsat_key, name_lower):
+                        amsat_status = amsat_map[amsat_key]
+                        break
+
+            print(f"[DEBUG] sat='{name}' amsat_match={amsat_status}")
 
             if amsat_status == "operational":
                 item.setForeground(QColor("#2ecc71"))
