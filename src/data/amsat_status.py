@@ -105,7 +105,7 @@ class AMSATStatusFetcher:
     def _parse_html(self, html: str) -> dict[str, str]:
         """HTMLから衛星名→運用状況の辞書を生成する。"""
         try:
-            from bs4 import BeautifulSoup  # type: ignore[import-untyped]
+            from bs4 import BeautifulSoup
         except ImportError:
             logger.warning("beautifulsoup4 not installed; AMSAT status scraping disabled")
             return {}
