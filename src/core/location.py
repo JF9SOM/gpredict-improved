@@ -167,7 +167,7 @@ class LocationManager:
         """
         ステータスバー表示用テキストを返す。
 
-        例: "QTH: 35.6895°N 139.6917°E (GPS)"
+        例: "JF9SOM / QTH: 35.6895°N 139.6917°E (Manual)"
         """
         loc = self._current
         if loc is None:
@@ -176,7 +176,9 @@ class LocationManager:
         ew = "E" if loc.longitude_deg >= 0 else "W"
         lat = abs(loc.latitude_deg)
         lon = abs(loc.longitude_deg)
-        return f"QTH: {lat:.4f}°{ns} {lon:.4f}°{ew} ({loc.source.value})"
+        qth = f"QTH: {lat:.4f}°{ns} {lon:.4f}°{ew} ({loc.source.value})"
+        callsign = self.get_callsign()
+        return f"{callsign} / {qth}" if callsign else qth
 
     # ------------------------------------------------------------------ #
     # 公開 API — 同期（設定・保存）
@@ -257,6 +259,27 @@ class LocationManager:
         self._current = loc
         self.save(loc)
         return loc
+
+    def get_callsign(self) -> str:
+        """app_settings から保存済みコールサインを返す。未設定の場合は空文字。"""
+        row = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'callsign'",
+        ).fetchone()
+        if row is None:
+            return ""
+        return str(row[0])
+
+    def save_callsign(self, callsign: str) -> None:
+        """コールサインを app_settings に保存する。"""
+        self._conn.execute(
+            """INSERT INTO app_settings (key, value, updated_at)
+               VALUES ('callsign', ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at""",
+            (callsign,),
+        )
+        self._conn.commit()
 
     def save(self, loc: Location) -> None:
         """位置情報を app_settings テーブルに永続化する。"""

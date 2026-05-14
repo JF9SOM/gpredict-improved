@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
+    QFont,
     QPixmap,
 )
 from PySide6.QtWidgets import (
@@ -42,7 +43,9 @@ from PySide6.QtWidgets import (
 
 from core.engine import Observation, PassInfo, PassPredictor, SatelliteEngine
 from core.location import LocationManager
+from data.amsat_status import AMSATStatusFetcher
 from data.tle_manager import TLEManager
+from data.transmitter_manager import TransmitterManager
 from i18n import _
 from ui.pass_chart import QUALITY_COLORS, PassChartView, pass_quality
 from ui.radar_view import SAT_COLORS, RadarView, SatTrackData
@@ -251,6 +254,8 @@ class MainWindow(QMainWindow):
         self._web_server: Any | None = None
         self._web_server_url: str = ""
         self._scheduler: Any | None = None
+        self._amsat_fetcher = AMSATStatusFetcher(conn)
+        self._transmitter_manager = TransmitterManager(conn)
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
@@ -330,6 +335,7 @@ class MainWindow(QMainWindow):
         # File
         file_menu = mb.addMenu(_("File"))
         if file_menu:
+            file_menu.addAction(_("Set QTH..."), self._on_set_qth)
             file_menu.addAction(_("Settings"), self._on_settings)
             file_menu.addSeparator()
             file_menu.addAction(_("Exit"), self.close)
@@ -337,6 +343,8 @@ class MainWindow(QMainWindow):
         # Satellite
         sat_menu = mb.addMenu(_("Satellite"))
         if sat_menu:
+            sat_menu.addAction(_("Add Transmitter..."), self._on_add_transmitter)
+            sat_menu.addSeparator()
             sat_menu.addAction(_("Add Satellite..."), self._on_add_satellite)
             sat_menu.addAction(_("Update TLE"), self._on_update_tle)
             sat_menu.addAction(_("Sync SATNOGS"), self._on_sync_satnogs)
@@ -396,6 +404,7 @@ class MainWindow(QMainWindow):
             r["norad_cat_id"]: r.get("quality_score")
             for r in self._tle_manager.get_all_quality_status()
         }
+        amsat_map: dict[str, str] = self._amsat_fetcher.load_cached() or {}
 
         rows = self._conn.execute(
             "SELECT norad_cat_id, name FROM satellites ORDER BY name"
@@ -408,8 +417,24 @@ class MainWindow(QMainWindow):
             quality = quality_map.get(norad)
             item = QListWidgetItem(name)
             item.setData(Qt.ItemDataRole.UserRole, norad)
-            color_hex = _QUALITY_DOT_COLORS.get(quality, _QUALITY_DOT_COLORS[None])
-            item.setForeground(QColor(color_hex))
+
+            amsat_status = amsat_map.get(name.lower())
+            if amsat_status == "operational":
+                item.setForeground(QColor("#2ecc71"))
+                font: QFont = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            elif amsat_status == "partial":
+                item.setForeground(QColor("#f1c40f"))
+            elif amsat_status == "non_operational":
+                item.setForeground(QColor("#7f8c8d"))
+                font = item.font()
+                font.setItalic(True)
+                item.setFont(font)
+            else:
+                color_hex = _QUALITY_DOT_COLORS.get(quality, _QUALITY_DOT_COLORS[None])
+                item.setForeground(QColor(color_hex))
+
             self._sat_list.addItem(item)
             self._all_norads.append(norad)
 
@@ -430,7 +455,7 @@ class MainWindow(QMainWindow):
             logger.warning("Web server start failed: %s", exc)
 
     def _start_scheduler(self) -> None:
-        """APScheduler で TLE 自動更新ジョブを登録・起動する。"""
+        """APScheduler で TLE・AMSAT自動更新ジョブを登録・起動する。"""
         try:
             from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -442,11 +467,24 @@ class MainWindow(QMainWindow):
                 id="tle_refresh",
                 misfire_grace_time=300,
             )
+            self._scheduler.add_job(
+                self._refresh_amsat_sync,
+                "interval",
+                hours=24,
+                id="amsat_refresh",
+                misfire_grace_time=600,
+            )
             self._scheduler.start()
             logger.debug("APScheduler started")
         except Exception as exc:
             logger.warning("APScheduler start failed: %s", exc)
             self._scheduler = None
+
+        # 起動時にAMSATステータスが古ければバックグラウンドで更新
+        if self._amsat_fetcher.is_stale():
+            import threading
+
+            threading.Thread(target=self._refresh_amsat_sync, daemon=True).start()
 
     def _refresh_tle_sync(self) -> None:
         """バックグラウンドスレッドから TLE を更新する（APScheduler ジョブ）。"""
@@ -455,6 +493,15 @@ class MainWindow(QMainWindow):
             logger.info("TLE refresh completed")
         except Exception as exc:
             logger.warning("TLE refresh failed: %s", exc)
+
+    def _refresh_amsat_sync(self) -> None:
+        """バックグラウンドスレッドから AMSAT 運用状況を更新する。"""
+        try:
+            asyncio.run(self._amsat_fetcher.fetch_and_update())
+            logger.info("AMSAT status refresh completed")
+            QTimer.singleShot(0, self._load_satellites)
+        except Exception as exc:
+            logger.warning("AMSAT status refresh failed: %s", exc)
 
     # ------------------------------------------------------------------ #
     # タイマーコールバック（1 秒ごと）
@@ -557,8 +604,49 @@ class MainWindow(QMainWindow):
     # メニューハンドラー
     # ------------------------------------------------------------------ #
 
+    def _on_set_qth(self) -> None:
+        """File > Set QTH... ハンドラー。"""
+        if self._location_manager is None:
+            QMessageBox.warning(self, _("Set QTH"), _("Location manager not initialized."))
+            return
+        from ui.qth_dialog import QTHDialog
+
+        dialog = QTHDialog(self._location_manager, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            loc = self._location_manager.current
+            if loc is None:
+                return
+            if self._engine is not None:
+                self._engine.update_observer(loc.latitude_deg, loc.longitude_deg, loc.elevation_m)
+            else:
+                self._engine = SatelliteEngine(
+                    self._tle_manager, loc.latitude_deg, loc.longitude_deg, loc.elevation_m
+                )
+            if self._pass_predictor is not None:
+                self._pass_predictor.update_observer(
+                    loc.latitude_deg, loc.longitude_deg, loc.elevation_m
+                )
+            else:
+                self._pass_predictor = PassPredictor(
+                    self._tle_manager, loc.latitude_deg, loc.longitude_deg, loc.elevation_m
+                )
+            self._update_statusbar()
+
     def _on_settings(self) -> None:
         QMessageBox.information(self, _("Settings"), _("Settings dialog not yet implemented."))
+
+    def _on_add_transmitter(self) -> None:
+        """Satellite > Add Transmitter... ハンドラー。"""
+        from ui.transmitter_dialog import TransmitterDialog
+
+        norad = self._selected_norad
+        dialog = TransmitterDialog(self._transmitter_manager, norad_cat_id=norad, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            QMessageBox.information(
+                self,
+                _("Add Transmitter"),
+                _("Transmitter added successfully."),
+            )
 
     def _on_add_satellite(self) -> None:
         QMessageBox.information(

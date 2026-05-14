@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from PySide6.QtWidgets import QApplication
 
 from core.engine import PassPredictor, SatelliteEngine
-from core.location import LocationManager
+from core.location import LocationManager, LocationSource
 from data.database import init_database
 from data.tle_manager import TLEManager
 from ui.main_window import MainWindow
@@ -52,17 +52,23 @@ def main() -> int:
     location_manager = LocationManager(conn)
     location = location_manager.load_saved()
 
-    if location is None:
-        logger.info("No saved QTH — trying IP geolocation...")
+    # 手動設定・GPSは上書きしない。未設定またはIP由来のみIPジオロケーションを実行する。
+    _skip_ip = location is not None and location.source in (
+        LocationSource.MANUAL,
+        LocationSource.GPS,
+    )
+    if not _skip_ip:
+        logger.info("No saved QTH (or IP-based) — trying IP geolocation...")
         try:
-            location = asyncio.run(location_manager.from_ip())
-            if location:
+            ip_loc = asyncio.run(location_manager.from_ip())
+            if ip_loc:
+                location = ip_loc
                 logger.info(
                     "IP geolocation: %.4f°N %.4f°E (%s, %s)",
-                    location.latitude_deg,
-                    location.longitude_deg,
-                    location.city,
-                    location.country,
+                    ip_loc.latitude_deg,
+                    ip_loc.longitude_deg,
+                    ip_loc.city,
+                    ip_loc.country,
                 )
         except Exception as exc:
             logger.warning("IP geolocation failed at startup: %s", exc)

@@ -48,6 +48,7 @@ dependencies = [
     "platformdirs>=4.2",    # OS別設定ディレクトリ
     "python-dateutil>=2.9",
     "shapely>=2.0",             # 世界地図 Natural Earth ポリゴン解析
+    "beautifulsoup4>=4.12",     # AMSAT運用状況スクレイピング
 ]
 
 [project.optional-dependencies]

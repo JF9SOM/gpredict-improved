@@ -199,6 +199,16 @@ class SatelliteEngine:
             else:
                 self._sat_cache.pop(norad_cat_id, None)
 
+    def update_observer(
+        self,
+        latitude_deg: float,
+        longitude_deg: float,
+        elevation_m: float = 0.0,
+    ) -> None:
+        """観測地点を更新する（QTH変更時に呼ぶ）。"""
+        with self._cache_lock:
+            self._ground_station = wgs84.latlon(latitude_deg, longitude_deg, elevation_m)
+
     # ------------------------------------------------------------------ #
     # 内部ユーティリティ
     # ------------------------------------------------------------------ #
@@ -258,6 +268,16 @@ class PassPredictor:
         self._ts = load.timescale()
         self._ground_station = wgs84.latlon(latitude_deg, longitude_deg, elevation_m)
         self._engine = SatelliteEngine(tle_manager, latitude_deg, longitude_deg, elevation_m)
+
+    def update_observer(
+        self,
+        latitude_deg: float,
+        longitude_deg: float,
+        elevation_m: float = 0.0,
+    ) -> None:
+        """観測地点を更新する（QTH変更時に呼ぶ）。"""
+        self._ground_station = wgs84.latlon(latitude_deg, longitude_deg, elevation_m)
+        self._engine.update_observer(latitude_deg, longitude_deg, elevation_m)
 
     def get_passes(
         self,
