@@ -373,10 +373,25 @@ function computePassTrack(p, nPoints = 20) {
 function connectWS(norad) {
   if (ws) { ws.close(); ws = null; }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws/tracking?norad=${norad}`);
+  const url = `${proto}://${location.host}/ws/tracking?norad=${norad}`;
+  let sock;
+  try {
+    sock = new WebSocket(url);
+  } catch (e) {
+    setWsStatus(false);
+    return;
+  }
+  ws = sock;
 
   ws.onopen = () => setWsStatus(true);
-  ws.onclose = () => setWsStatus(false);
+  ws.onclose = () => {
+    setWsStatus(false);
+    ws = null;
+    // Auto-reconnect after 3 s if the same satellite is still selected
+    if (selectedNorad === norad) {
+      setTimeout(() => { if (selectedNorad === norad) connectWS(norad); }, 3000);
+    }
+  };
   ws.onerror = () => setWsStatus(false);
   ws.onmessage = e => {
     try { updateTracking(JSON.parse(e.data)); }

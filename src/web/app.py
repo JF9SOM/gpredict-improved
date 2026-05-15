@@ -492,9 +492,17 @@ def create_app(
         try:
             while True:
                 await asyncio.sleep(1.0)
-                payload = _build_tracking_payload(norad, engine)
+                try:
+                    payload = _build_tracking_payload(norad, engine)
+                except Exception as exc:
+                    logger.warning("WS: payload build error: %s", exc)
+                    payload = {"norad": norad, "error": str(exc)}
                 await manager.send_json(websocket, payload)
         except WebSocketDisconnect:
+            pass
+        except Exception as exc:
+            logger.warning("WS: unexpected error norad=%d: %s", norad, exc)
+        finally:
             await manager.disconnect(websocket)
 
     return app

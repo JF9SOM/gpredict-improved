@@ -324,6 +324,7 @@ class MainWindow(QMainWindow):
         self._world_map = WorldMapView()
         self._radar_view = RadarView()
         self._pass_chart = PassChartView()
+        self._pass_chart.range_changed.connect(self._on_chart_range_changed)
         self._tab_widget.addTab(self._world_map, _("World Map"))
         self._tab_widget.addTab(self._radar_view, _("Radar"))
         self._tab_widget.addTab(self._pass_chart, _("Pass Chart"))
@@ -674,6 +675,22 @@ class MainWindow(QMainWindow):
         self._current_passes = passes
         self._pass_list.set_passes(passes)
 
+        item = self._sat_list.currentItem()
+        name = item.text() if item else ""
+        self._pass_chart.set_passes(passes, sat_name=name)
+
+    def _on_chart_range_changed(self, hours: float) -> None:
+        """パスチャートの時間範囲変更時に PassPredictor を即時呼び出す。"""
+        if self._selected_norad is None or self._pass_predictor is None:
+            return
+        now = datetime.now(UTC)
+        passes = self._pass_predictor.get_passes(
+            self._selected_norad,
+            now,
+            now + timedelta(hours=hours),
+        )
+        self._current_passes = passes
+        self._pass_list.set_passes(passes)
         item = self._sat_list.currentItem()
         name = item.text() if item else ""
         self._pass_chart.set_passes(passes, sat_name=name)

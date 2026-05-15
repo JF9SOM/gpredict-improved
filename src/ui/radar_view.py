@@ -282,9 +282,9 @@ class RadarView(QWidget):
         if len(track.track) < 2:
             return
 
-        _TRACK_COLOR = QColor("#3498db")  # blue
-        _AOS_COLOR = QColor("#2ecc71")  # green
-        _LOS_COLOR = QColor("#e74c3c")  # red
+        _TRACK_COLOR = QColor("#00bcd4")  # cyan
+        _AOS_COLOR = QColor("#4caf50")  # green
+        _LOS_COLOR = QColor("#f44336")  # red
 
         pts = [az_el_to_xy(az, el, cx, cy, r) for az, el in track.track]
 
@@ -331,12 +331,9 @@ class RadarView(QWidget):
         x, y = az_el_to_xy(track.azimuth_deg, track.elevation_deg, cx, cy, r)
         dot_r = 6
 
-        if track.is_visible:
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(color)
-        else:
-            p.setPen(QPen(color, 2))
-            p.setBrush(Qt.BrushStyle.NoBrush)
+        # 現在位置: 赤い中抜き円（可視・不可視を問わず統一）
+        p.setPen(QPen(QColor("#f44336"), 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(int(x) - dot_r, int(y) - dot_r, dot_r * 2, dot_r * 2)
 
         label_font = QFont()

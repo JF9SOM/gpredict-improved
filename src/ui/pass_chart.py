@@ -220,9 +220,11 @@ class PassChartView(QWidget):
 
     Signals:
         pass_clicked(PassInfo): パスの曲線クリック時に発火する
+        range_changed(float):   時間範囲プルダウン変更時に選択時間数を emit する
     """
 
     pass_clicked: Signal = Signal(object)  # emit(PassInfo)
+    range_changed: Signal = Signal(float)  # emit(hours)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -300,6 +302,8 @@ class PassChartView(QWidget):
     # ------------------------------------------------------------------ #
 
     def _on_range_changed(self, _idx: int) -> None:
+        hours = self._selected_hours()
+        self.range_changed.emit(hours)
         self._rebuild()
 
     def _selected_hours(self) -> float:

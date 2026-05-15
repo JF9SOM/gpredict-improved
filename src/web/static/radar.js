@@ -305,8 +305,8 @@ class RadarView {
 
         const fmt = iso => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-        // Blue track line
-        ctx.strokeStyle = '#3498db';
+        // Cyan track line
+        ctx.strokeStyle = '#00bcd4';
         ctx.lineWidth = 2;
         ctx.beginPath();
         pts.forEach((pt, i) => {
@@ -320,10 +320,10 @@ class RadarView {
         const aosPos = azElToXY(pts[0].az, pts[0].el, cx, cy, r, rot);
         ctx.beginPath();
         ctx.arc(aosPos.x, aosPos.y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = '#2ecc71';
+        ctx.fillStyle = '#4caf50';
         ctx.fill();
         if (track.aosTime) {
-            ctx.fillStyle = '#3498db';
+            ctx.fillStyle = '#00bcd4';
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'left';
             ctx.fillText(`AOS ${fmt(track.aosTime)}`, aosPos.x + 6, aosPos.y - 2);
@@ -334,10 +334,10 @@ class RadarView {
         const losPos = azElToXY(last.az, last.el, cx, cy, r, rot);
         ctx.beginPath();
         ctx.arc(losPos.x, losPos.y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = '#e74c3c';
+        ctx.fillStyle = '#f44336';
         ctx.fill();
         if (track.losTime) {
-            ctx.fillStyle = '#3498db';
+            ctx.fillStyle = '#00bcd4';
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'left';
             ctx.fillText(`LOS ${fmt(track.losTime)}`, losPos.x + 6, losPos.y + 12);
@@ -348,16 +348,12 @@ class RadarView {
         const { x, y } = azElToXY(track.azimuth, track.elevation, cx, cy, r, rot);
         const dotR = 6;
 
+        // Current position: red hollow circle
         ctx.beginPath();
         ctx.arc(x, y, dotR, 0, Math.PI * 2);
-        if (track.isVisible) {
-            ctx.fillStyle = color;
-            ctx.fill();
-        } else {
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        }
+        ctx.strokeStyle = '#f44336';
+        ctx.lineWidth = 2;
+        ctx.stroke();
 
         ctx.fillStyle = color;
         ctx.font = '11px sans-serif';
