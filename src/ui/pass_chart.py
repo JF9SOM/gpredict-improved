@@ -322,12 +322,24 @@ class PassChartView(QWidget):
                 scene.removeItem(item)
         self._peak_label_items.clear()
 
-    def _add_peak_labels(self) -> None:
-        """各パス山頂の仰角ラベルを QGraphicsTextItem としてシーンに配置する。"""
+    def showEvent(self, event: object) -> None:  # noqa: ANN001
+        """タブ切り替えなどで表示された際に未配置のラベルを配置する。"""
+        super().showEvent(event)  # type: ignore[arg-type]
+        if self._overlay and not self._peak_label_items:
+            self._add_peak_labels()
+
+    def _add_peak_labels(self, retry: int = 0) -> None:
+        """各パス山頂の仰角ラベルを QGraphicsTextItem としてシーンに配置する。
+
+        Qt Charts のレイアウト計算が完了していない場合（plotArea が 1px 以下）は
+        最大 5 回まで 150ms 間隔でリトライする。
+        """
         self._clear_peak_labels()
 
         plot_area = self._chart.plotArea()
-        if plot_area.width() <= 0:
+        if plot_area.width() <= 1 or plot_area.height() <= 1:
+            if retry < 5:
+                QTimer.singleShot(150, lambda: self._add_peak_labels(retry + 1))
             return
 
         scene = self._chart.scene()
