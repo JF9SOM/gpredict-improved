@@ -240,7 +240,7 @@ class PassChartView(QWidget):
         header = QWidget()
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(6, 2, 6, 2)
-        h_layout.addWidget(QLabel("表示範囲:"))
+        h_layout.addWidget(QLabel("Range:"))
         self._range_combo = QComboBox()
         for label, _ in _RANGE_OPTIONS:
             self._range_combo.addItem(label)
@@ -316,16 +316,13 @@ class PassChartView(QWidget):
         filtered = [p for p in self._passes if p.los >= now and p.aos <= cutoff]
 
         if not filtered:
-            self._chart.setTitle(self._sat_name or "パス予測（データなし）")
+            self._chart.setTitle("No passes in range")
             return
 
-        title = f"{self._sat_name} パス予測" if self._sat_name else "パス予測"
+        title = f"{self._sat_name} Pass Prediction" if self._sat_name else "Pass Prediction"
         self._chart.setTitle(title)
 
-        # 全パスの範囲をカバーする時間軸（明示設定しないと1本分しか表示されない）
-        t_start = min(p.aos for p in filtered)
-        t_end = max(p.los for p in filtered)
-        dt_axis = self._make_time_axis(t_start, t_end)
+        dt_axis = self._make_time_axis()
         el_axis = self._make_elevation_axis()
         self._chart.addAxis(dt_axis, Qt.AlignmentFlag.AlignBottom)
         self._chart.addAxis(el_axis, Qt.AlignmentFlag.AlignLeft)
@@ -343,31 +340,35 @@ class PassChartView(QWidget):
             overlay.append((series, p.max_elevation_deg, QUALITY_COLORS[quality]))
 
         # 現在時刻ライン
+        t_end = max(p.los for p in filtered)
         if now <= t_end:
             now_series = self._build_now_line(now)
             self._chart.addSeries(now_series)
             now_series.attachAxis(dt_axis)
             now_series.attachAxis(el_axis)
 
+        # series 全追加後に range を設定（attachAxis が auto-range を上書きするため）
+        dt_axis.setRange(
+            QDateTime.fromMSecsSinceEpoch(int(now.timestamp() * 1000)),
+            QDateTime.fromMSecsSinceEpoch(int(cutoff.timestamp() * 1000)),
+        )
+        el_axis.setRange(0.0, 90.0)
+
         self._chart_view.set_overlay_labels(overlay)
 
-    def _make_time_axis(self, t_start: datetime, t_end: datetime) -> QDateTimeAxis:
+    def _make_time_axis(self) -> QDateTimeAxis:
         axis = QDateTimeAxis()
         axis.setFormat("HH:mm")
-        axis.setTitleText("時刻 (UTC)")
+        axis.setTitleText("Time (UTC)")
         axis.setTickCount(7)
-        axis.setRange(
-            QDateTime.fromMSecsSinceEpoch(int(t_start.timestamp() * 1000)),
-            QDateTime.fromMSecsSinceEpoch(int(t_end.timestamp() * 1000)),
-        )
         return axis
 
     def _make_elevation_axis(self) -> QValueAxis:
         axis = QValueAxis()
         axis.setRange(0.0, 90.0)
-        axis.setTitleText("仰角 (度)")
+        axis.setTitleText("Elevation (°)")
         axis.setTickCount(10)
-        axis.setLabelFormat("%.0f°")
+        axis.setLabelFormat("%d")
         return axis
 
     def _build_pass_series(self, p: PassInfo) -> QSplineSeries:
@@ -390,7 +391,7 @@ class PassChartView(QWidget):
     def _build_now_line(self, now: datetime) -> QLineSeries:
         now_ms = now.timestamp() * 1000.0
         series = QLineSeries()
-        series.setName("現在時刻")
+        series.setName("Now")
         pen = QPen(QColor("#e74c3c"))
         pen.setWidth(2)
         pen.setStyle(Qt.PenStyle.DashLine)

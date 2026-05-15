@@ -182,6 +182,7 @@ class RadarView(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         try:
+            painter.fillRect(self.rect(), QColor("#0d1b2a"))
             self._draw(painter)
         finally:
             painter.end()
@@ -347,7 +348,7 @@ class RadarView(QWidget):
     def _draw_status(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         """レーダー円の下部に現在パス情報または次パス情報を表示する。"""
         font = QFont()
-        font.setPointSize(11)
+        font.setPointSize(12)
         p.setFont(font)
 
         y_base = int(cy + r + 16)

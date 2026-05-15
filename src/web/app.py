@@ -34,6 +34,18 @@ from data.tle_manager import TLEManager
 from web.websocket import ConnectionManager
 
 _STATIC_DIR = Path(__file__).parent / "static"
+_STATIC_FALLBACKS = [
+    Path(__file__).parent / "static",
+    Path("src/web/static"),
+]
+
+
+def _find_static_dir() -> Path | None:
+    for candidate in _STATIC_FALLBACKS:
+        if candidate.is_dir():
+            return candidate
+    return None
+
 
 logger = logging.getLogger(__name__)
 
@@ -238,8 +250,9 @@ def create_app(
         description="衛星追尾ソフトウェア GPredict-Improved の REST / WebSocket API",
     )
 
-    if _STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    _static = _find_static_dir()
+    if _static is not None:
+        app.mount("/static", StaticFiles(directory=str(_static)), name="static")
 
     # ------------------------------------------------------------------ #
     # 依存関数（クロージャでキャプチャ）
@@ -260,9 +273,11 @@ def create_app(
     @app.get("/", response_class=HTMLResponse, response_model=None)
     async def root() -> HTMLResponse:
         """スマホ向けメインページを返す。"""
-        index_html = _STATIC_DIR / "index.html"
-        if index_html.is_file():
-            return HTMLResponse(content=index_html.read_text(encoding="utf-8"))
+        static_dir = _find_static_dir()
+        if static_dir is not None:
+            index_html = static_dir / "index.html"
+            if index_html.is_file():
+                return HTMLResponse(content=index_html.read_text(encoding="utf-8"))
         return HTMLResponse(
             "<h1>GPredict-Improved</h1><p>index.html not found</p>", status_code=503
         )
