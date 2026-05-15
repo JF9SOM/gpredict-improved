@@ -29,6 +29,7 @@ from PySide6.QtCharts import (
 from PySide6.QtCore import QDateTime, QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -363,6 +364,13 @@ class PassChartView(QWidget):
         el_axis.setRange(0.0, 90.0)
 
         self._chart_view.set_overlay_labels(overlay)
+
+        # Qt Charts レイアウト確定後に即時描画を強制する
+        # （チャート内部のレイアウト計算が非同期のため、update() だけでは
+        #   ウィンドウ移動まで描画されない問題が発生する）
+        QApplication.processEvents()
+        self._chart_view.update()
+        self._chart_view.repaint()
 
     def _make_time_axis(self) -> QDateTimeAxis:
         axis = QDateTimeAxis()
