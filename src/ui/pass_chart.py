@@ -166,6 +166,7 @@ class _ElevationChartView(QChartView):
             return
 
         chart = self.chart()
+        plot_area = chart.plotArea()
         painter = QPainter(self.viewport())
         try:
             font = QFont()
@@ -185,6 +186,9 @@ class _ElevationChartView(QChartView):
                     continue
                 try:
                     scene_pt = chart.mapToPosition(best, series)
+                    # プロット領域外（時間軸範囲外）のラベルは描画しない
+                    if not plot_area.contains(scene_pt):
+                        continue
                     view_pt = self.mapFromScene(scene_pt)
                     lbl = f"{max_el:.0f}°"
                     w = fm.horizontalAdvance(lbl)

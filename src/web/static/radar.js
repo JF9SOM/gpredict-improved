@@ -303,7 +303,10 @@ class RadarView {
         const pts = track.track || [];
         if (pts.length < 2) return;
 
-        ctx.strokeStyle = color;
+        const fmt = iso => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        // Blue track line
+        ctx.strokeStyle = '#3498db';
         ctx.lineWidth = 2;
         ctx.beginPath();
         pts.forEach((pt, i) => {
@@ -313,20 +316,31 @@ class RadarView {
         });
         ctx.stroke();
 
-        const fmt = iso => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-        ctx.fillStyle = color;
-        ctx.font = '10px sans-serif';
-        ctx.textAlign = 'left';
-
+        // Green AOS dot
+        const aosPos = azElToXY(pts[0].az, pts[0].el, cx, cy, r, rot);
+        ctx.beginPath();
+        ctx.arc(aosPos.x, aosPos.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#2ecc71';
+        ctx.fill();
         if (track.aosTime) {
-            const { x, y } = azElToXY(pts[0].az, pts[0].el, cx, cy, r, rot);
-            ctx.fillText(`AOS ${fmt(track.aosTime)}`, x + 4, y - 2);
+            ctx.fillStyle = '#3498db';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(`AOS ${fmt(track.aosTime)}`, aosPos.x + 6, aosPos.y - 2);
         }
+
+        // Red LOS dot
+        const last = pts[pts.length - 1];
+        const losPos = azElToXY(last.az, last.el, cx, cy, r, rot);
+        ctx.beginPath();
+        ctx.arc(losPos.x, losPos.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fill();
         if (track.losTime) {
-            const last = pts[pts.length - 1];
-            const { x, y } = azElToXY(last.az, last.el, cx, cy, r, rot);
-            ctx.fillText(`LOS ${fmt(track.losTime)}`, x + 4, y + 12);
+            ctx.fillStyle = '#3498db';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(`LOS ${fmt(track.losTime)}`, losPos.x + 6, losPos.y + 12);
         }
     }
 
