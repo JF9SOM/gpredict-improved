@@ -26,7 +26,7 @@ from PySide6.QtCharts import (
     QSplineSeries,
     QValueAxis,
 )
-from PySide6.QtCore import QDateTime, QPointF, Qt, Signal
+from PySide6.QtCore import QDateTime, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -168,6 +168,9 @@ class _ElevationChartView(QChartView):
 
         chart = self.chart()
         plot_area = chart.plotArea()
+        # チャートレイアウト未確定（幅=0）の場合はオーバーレイを描画しない
+        if plot_area.width() <= 0:
+            return
         painter = QPainter(self.viewport())
         try:
             font = QFont()
@@ -366,11 +369,11 @@ class PassChartView(QWidget):
         self._chart_view.set_overlay_labels(overlay)
 
         # Qt Charts レイアウト確定後に即時描画を強制する
-        # （チャート内部のレイアウト計算が非同期のため、update() だけでは
-        #   ウィンドウ移動まで描画されない問題が発生する）
         QApplication.processEvents()
         self._chart_view.update()
         self._chart_view.repaint()
+        # レイアウト計算が完全に確定する 100ms 後に再描画して残像を消す
+        QTimer.singleShot(100, self._chart_view.repaint)
 
     def _make_time_axis(self) -> QDateTimeAxis:
         axis = QDateTimeAxis()

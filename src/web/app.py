@@ -103,6 +103,7 @@ class PassOut(BaseModel):
     duration_s: float
     duration_seconds: float  # duration_s と同値（フロントエンド利便性のための別名）
     quality: str  # "excellent" | "good" | "fair" | "low"
+    track_points: list[dict[str, float]] | None = None  # track=true 時のみ返す
 
 
 class TLEStatusOut(BaseModel):
@@ -203,6 +204,24 @@ def _build_tracking_payload(norad: int, engine: SatelliteEngine | None) -> dict[
 # ---------------------------------------------------------------------------
 # アプリファクトリー
 # ---------------------------------------------------------------------------
+
+
+def _compute_track_points(
+    norad: int,
+    aos: datetime,
+    los: datetime,
+    engine: SatelliteEngine,
+    step_s: int = 15,
+) -> list[dict[str, float]]:
+    """AOS から LOS まで step_s 秒刻みで仰角・方位角のリストを返す。"""
+    points: list[dict[str, float]] = []
+    t = aos
+    while t <= los:
+        obs = engine.observe(norad, at=t)
+        if obs is not None:
+            points.append({"az": round(obs.azimuth_deg, 2), "el": round(obs.elevation_deg, 2)})
+        t += timedelta(seconds=step_s)
+    return points
 
 
 def _location_to_out(loc: Location, mgr: LocationManager) -> LocationOut:
@@ -363,11 +382,13 @@ def create_app(
         norad: int,
         hours: float = Query(default=24.0, gt=0, le=168, description="予測時間幅（時間）"),
         min_el: float = Query(default=5.0, ge=0, le=90, description="最低仰角（度）"),
+        track: bool = Query(default=False, description="15秒刻みの軌跡点（az, el）を含める"),
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[PassOut]:
         """
         指定衛星のパス予測を返す。
 
+        track=true を指定すると各パスに 15 秒刻みの仰角・方位角リストが付く。
         pass_predictor が None の場合は常に空リストを返す（エンジンなし状態）。
         """
         if (
@@ -383,22 +404,30 @@ def create_app(
         passes = pass_predictor.get_passes(
             norad, now, now + timedelta(hours=hours), min_elevation_deg=min_el
         )
-        return [
-            PassOut(
-                norad_cat_id=p.norad_cat_id,
-                aos=p.aos.isoformat(),
-                tca=p.tca.isoformat(),
-                los=p.los.isoformat(),
-                max_elevation_deg=p.max_elevation_deg,
-                max_elevation_time=p.tca.isoformat(),
-                aos_azimuth_deg=p.aos_azimuth_deg,
-                los_azimuth_deg=p.los_azimuth_deg,
-                duration_s=p.duration_s,
-                duration_seconds=p.duration_s,
-                quality=pass_quality(p.max_elevation_deg),
+        result: list[PassOut] = []
+        for p in passes:
+            tp = (
+                _compute_track_points(norad, p.aos, p.los, engine)
+                if track and engine is not None
+                else None
             )
-            for p in passes
-        ]
+            result.append(
+                PassOut(
+                    norad_cat_id=p.norad_cat_id,
+                    aos=p.aos.isoformat(),
+                    tca=p.tca.isoformat(),
+                    los=p.los.isoformat(),
+                    max_elevation_deg=p.max_elevation_deg,
+                    max_elevation_time=p.tca.isoformat(),
+                    aos_azimuth_deg=p.aos_azimuth_deg,
+                    los_azimuth_deg=p.los_azimuth_deg,
+                    duration_s=p.duration_s,
+                    duration_seconds=p.duration_s,
+                    quality=pass_quality(p.max_elevation_deg),
+                    track_points=tp,
+                )
+            )
+        return result
 
     @app.get("/api/tle/status", response_model=list[TLEStatusOut])
     async def tle_status(

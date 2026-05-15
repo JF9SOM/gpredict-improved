@@ -444,15 +444,15 @@ function updateTracking(data) {
 function loadPasses(norad) {
   document.getElementById('pass-tbody').innerHTML =
     '<tr><td colspan="5" style="text-align:center;color:#8b949e">Loading...</td></tr>';
-  fetch(`/api/satellites/${norad}/passes?hours=24&min_el=5`)
+  fetch(`/api/satellites/${norad}/passes?hours=24&min_el=5&track=true`)
     .then(r => r.json())
     .then(passes => {
       renderPasses(passes);
-      // Compute track for the next upcoming pass
+      // Use server-computed track points for the next upcoming pass
       const now = Date.now();
       const nextPass = passes.find(p => new Date(p.los).getTime() > now);
       if (nextPass) {
-        currentPassTrack = computePassTrack(nextPass);
+        currentPassTrack = nextPass.track_points || computePassTrack(nextPass);
         currentPassAos = nextPass.aos;
         currentPassLos = nextPass.los;
       } else {
