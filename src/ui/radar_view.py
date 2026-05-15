@@ -51,14 +51,16 @@ class SatTrackData:
     レーダーに表示する衛星の位置・軌跡データ。
 
     Attributes:
-        name:          衛星名（ラベル表示用）
-        norad_cat_id:  NORAD カタログ番号
-        azimuth_deg:   現在の方位角（度、北=0、東=90）
-        elevation_deg: 現在の仰角（度、0=地平線、90=天頂）
-        is_visible:    地平線より上か
-        track:         パス軌跡 [(az_deg, el_deg), ...] AOS→LOS 順
-        aos_time:      AOS 時刻（UTC）
-        los_time:      LOS 時刻（UTC）
+        name:            衛星名（ラベル表示用）
+        norad_cat_id:    NORAD カタログ番号
+        azimuth_deg:     現在の方位角（度、北=0、東=90）
+        elevation_deg:   現在の仰角（度、0=地平線、90=天頂）
+        is_visible:      地平線より上か
+        track:           パス軌跡 [(az_deg, el_deg), ...] AOS→LOS 順
+        aos_time:        AOS 時刻（UTC）— 次パスのAOS（未可視時）または現パスAOS
+        los_time:        LOS 時刻（UTC）— 現パスLOS（可視時）または次パスLOS
+        next_max_el:     次パス（または現パス）の最大仰角（度）
+        next_duration_s: 次パス（または現パス）の継続時間（秒）
     """
 
     name: str
@@ -69,6 +71,8 @@ class SatTrackData:
     track: list[tuple[float, float]] = field(default_factory=list)
     aos_time: datetime | None = None
     los_time: datetime | None = None
+    next_max_el: float | None = None
+    next_duration_s: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +194,7 @@ class RadarView(QWidget):
         """(center_x, center_y, radius) を返す。下部テキスト分のマージンを確保する。"""
         w = self.width()
         h = self.height()
-        margin = 32
+        margin = 70  # 次パス情報テキスト用に余裕を持たせる
         r = (min(w, h - margin) - 20) / 2.0
         cx = w / 2.0
         cy = (h - margin) / 2.0 + 10.0
@@ -326,25 +330,46 @@ class RadarView(QWidget):
         p.drawText(int(x) + dot_r + 2, int(y) + 4, track.name)
 
     def _draw_status(self, p: QPainter, cx: float, cy: float, r: float) -> None:
-        """下部に可視衛星の仰角・方位角テキストを表示する。"""
-        visible = [t for t in self._tracks if t.is_visible]
-        if not visible:
-            return
-
+        """レーダー円の下部に現在パス情報または次パス情報を表示する。"""
         font = QFont()
         font.setPointSize(9)
         p.setFont(font)
-        p.setPen(QColor("#ecf0f1"))
 
-        text = "  |  ".join(
-            f"{t.name}: EL {t.elevation_deg:.1f}°  AZ {t.azimuth_deg:.1f}°" for t in visible
-        )
-        y = int(cy + r + 20)
-        p.drawText(
-            0,
-            y,
-            self.width(),
-            20,
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-            text,
-        )
+        y_base = int(cy + r + 20)
+        line_h = 18
+
+        for i, track in enumerate(self._tracks):
+            if track.is_visible:
+                # IN PASS: 緑色でパス中情報を表示
+                los_str = ""
+                if track.los_time is not None:
+                    los_str = f"  LOS: {track.los_time.strftime('%H:%M')} UTC"
+                text = (
+                    f"IN PASS  EL: {track.elevation_deg:.1f}°"
+                    f"  AZ: {track.azimuth_deg:.1f}°{los_str}"
+                )
+                p.setPen(QColor("#2ecc71"))
+            elif track.aos_time is not None:
+                # 次パス情報を表示
+                aos_str = track.aos_time.strftime("%m/%d %H:%M") + " UTC"
+                max_el_str = (
+                    f"  Max El: {track.next_max_el:.1f}°" if track.next_max_el is not None else ""
+                )
+                dur_str = ""
+                if track.next_duration_s is not None:
+                    m = int(track.next_duration_s) // 60
+                    s = int(track.next_duration_s) % 60
+                    dur_str = f"  Duration: {m}m {s:02d}s"
+                text = f"Next pass: {aos_str}{max_el_str}{dur_str}"
+                p.setPen(QColor("#bdc3c7"))
+            else:
+                continue
+
+            p.drawText(
+                0,
+                y_base + i * line_h,
+                self.width(),
+                line_h,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                text,
+            )

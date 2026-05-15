@@ -1,7 +1,7 @@
 """
 パス予測グラフィカル表示ウィジェット
 
-PassChartView  — PySide6 + QtCharts による仰角 vs 時刻チャート
+PassChartView  — PySide6 + QtCharts による仰角 vs 時刻チャート（時間範囲選択付き）
 pass_quality() — 最大仰角から品質ランクを返す共用ユーティリティ
 elevation_points() — AOS/TCA/LOS からサイン近似の仰角点列を生成する
 
@@ -15,7 +15,7 @@ elevation_points() — AOS/TCA/LOS からサイン近似の仰角点列を生成
 from __future__ import annotations
 
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from PySide6.QtCharts import (
@@ -27,8 +27,15 @@ from PySide6.QtCharts import (
     QValueAxis,
 )
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QSizePolicy, QWidget
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 if TYPE_CHECKING:
     from core.engine import PassInfo
@@ -45,6 +52,13 @@ QUALITY_COLORS: dict[str, QColor] = {
 }
 
 _ELEVATION_SAMPLE_POINTS = 20
+
+_RANGE_OPTIONS: tuple[tuple[str, float], ...] = (
+    ("Next 4 hours", 4.0),
+    ("Next 8 hours", 8.0),
+    ("Next 12 hours", 12.0),
+    ("Next 24 hours", 24.0),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -127,13 +141,72 @@ def elevation_points(
 
 
 # ---------------------------------------------------------------------------
+# 内部 QChartView：山頂ラベルを重ね描きする
+# ---------------------------------------------------------------------------
+
+
+class _ElevationChartView(QChartView):
+    """各パス山頂に最大仰角テキストを重ね描きする内部ウィジェット。"""
+
+    def __init__(self, chart: QChart, parent: QWidget | None = None) -> None:
+        super().__init__(chart, parent)
+        self._overlay: list[tuple[QSplineSeries, float, QColor]] = []
+
+    def set_overlay_labels(
+        self,
+        labels: list[tuple[QSplineSeries, float, QColor]],
+    ) -> None:
+        """山頂ラベルリストを設定する。(series, max_el_deg, color) のタプルリスト。"""
+        self._overlay = labels
+        self.update()
+
+    def paintEvent(self, event: object) -> None:  # noqa: ANN001
+        super().paintEvent(event)  # type: ignore[arg-type]
+        if not self._overlay:
+            return
+
+        chart = self.chart()
+        painter = QPainter(self.viewport())
+        try:
+            font = QFont()
+            font.setPointSize(8)
+            font.setBold(True)
+            painter.setFont(font)
+            fm = painter.fontMetrics()
+
+            for series, max_el, color in self._overlay:
+                # 仰角が最大のデータ点を探す
+                best: QPointF | None = None
+                for i in range(series.count()):
+                    pt = series.at(i)
+                    if best is None or pt.y() > best.y():
+                        best = QPointF(pt.x(), pt.y())
+                if best is None:
+                    continue
+                try:
+                    scene_pt = chart.mapToPosition(best, series)
+                    view_pt = self.mapFromScene(scene_pt)
+                    lbl = f"{max_el:.0f}°"
+                    w = fm.horizontalAdvance(lbl)
+                    painter.setPen(color)
+                    painter.drawText(int(view_pt.x()) - w // 2, int(view_pt.y()) - 4, lbl)
+                except Exception:  # noqa: BLE001
+                    pass
+        finally:
+            painter.end()
+
+
+# ---------------------------------------------------------------------------
 # PassChartView ウィジェット
 # ---------------------------------------------------------------------------
 
 
-class PassChartView(QChartView):
+class PassChartView(QWidget):
     """
     衛星パスの仰角 vs 時刻チャートを表示する PySide6 ウィジェット。
+
+    上部に時間範囲プルダウンを持ち、選択範囲内のパスのみ描画する。
+    各パス山頂には最大仰角ラベルを表示する。
 
     使い方::
 
@@ -149,18 +222,47 @@ class PassChartView(QChartView):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._passes: list[PassInfo] = []
+        self._sat_name: str = ""
+        self._series_to_pass: dict[QSplineSeries, PassInfo] = {}
+        self._setup_ui()
+
+    # ------------------------------------------------------------------ #
+    # UI 構築
+    # ------------------------------------------------------------------ #
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        # 時間範囲プルダウン
+        header = QWidget()
+        h_layout = QHBoxLayout(header)
+        h_layout.setContentsMargins(6, 2, 6, 2)
+        h_layout.addWidget(QLabel("表示範囲:"))
+        self._range_combo = QComboBox()
+        for label, _ in _RANGE_OPTIONS:
+            self._range_combo.addItem(label)
+        self._range_combo.setCurrentIndex(len(_RANGE_OPTIONS) - 1)  # "Next 24 hours" をデフォルト
+        self._range_combo.currentIndexChanged.connect(self._on_range_changed)
+        h_layout.addWidget(self._range_combo)
+        h_layout.addStretch()
+        layout.addWidget(header)
+
+        # チャートビュー
         self._chart = QChart()
         self._chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
         self._chart.legend().setVisible(True)
         self._chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
-        self.setChart(self._chart)
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setSizePolicy(
+
+        self._chart_view = _ElevationChartView(self._chart)
+        self._chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._chart_view.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._passes: list[PassInfo] = []
-        self._series_to_pass: dict[QSplineSeries, PassInfo] = {}
+        layout.addWidget(self._chart_view)
 
     # ------------------------------------------------------------------ #
     # 公開 API
@@ -171,46 +273,62 @@ class PassChartView(QChartView):
         表示するパスリストを設定してチャートを再描画する。
 
         Args:
-            passes:   PassInfo のリスト（空リストでチャートをクリア）
+            passes:   PassInfo のリスト（最大24時間分を推奨）
             sat_name: チャートタイトルに使う衛星名
         """
         self._passes = passes
-        self._series_to_pass = {}
-        self._rebuild(sat_name)
+        self._sat_name = sat_name
+        self._rebuild()
 
     def clear(self) -> None:
         """チャートをクリアする。"""
         self._passes = []
+        self._sat_name = ""
         self._series_to_pass = {}
         self._chart.removeAllSeries()
         for axis in self._chart.axes():
             self._chart.removeAxis(axis)
         self._chart.setTitle("")
+        self._chart_view.set_overlay_labels([])
 
     # ------------------------------------------------------------------ #
     # チャート構築
     # ------------------------------------------------------------------ #
 
-    def _rebuild(self, sat_name: str) -> None:
-        """パスリストからチャートを構築する。"""
+    def _on_range_changed(self, _idx: int) -> None:
+        self._rebuild()
+
+    def _selected_hours(self) -> float:
+        idx = self._range_combo.currentIndex()
+        return _RANGE_OPTIONS[idx][1]
+
+    def _rebuild(self) -> None:
+        """選択された時間範囲のパスでチャートを再構築する。"""
         self._chart.removeAllSeries()
         for axis in self._chart.axes():
             self._chart.removeAxis(axis)
+        self._series_to_pass = {}
+        self._chart_view.set_overlay_labels([])
 
-        if not self._passes:
-            self._chart.setTitle(sat_name or "パス予測（データなし）")
+        hours = self._selected_hours()
+        now = datetime.now(UTC)
+        cutoff = now + timedelta(hours=hours)
+        filtered = [p for p in self._passes if p.aos <= cutoff]
+
+        if not filtered:
+            self._chart.setTitle(self._sat_name or "パス予測（データなし）")
             return
 
-        title = f"{sat_name} パス予測" if sat_name else "パス予測"
+        title = f"{self._sat_name} パス予測" if self._sat_name else "パス予測"
         self._chart.setTitle(title)
 
-        # 軸を先に追加してから series を attach する
         dt_axis = self._make_time_axis()
         el_axis = self._make_elevation_axis()
         self._chart.addAxis(dt_axis, Qt.AlignmentFlag.AlignBottom)
         self._chart.addAxis(el_axis, Qt.AlignmentFlag.AlignLeft)
 
-        for p in self._passes:
+        overlay: list[tuple[QSplineSeries, float, QColor]] = []
+        for p in filtered:
             series = self._build_pass_series(p)
             self._chart.addSeries(series)
             series.attachAxis(dt_axis)
@@ -218,15 +336,18 @@ class PassChartView(QChartView):
             self._series_to_pass[series] = p
             series.clicked.connect(self._on_series_clicked)
 
+            quality = pass_quality(p.max_elevation_deg)
+            overlay.append((series, p.max_elevation_deg, QUALITY_COLORS[quality]))
+
         # 現在時刻ライン
-        now = datetime.now(UTC)
-        all_aos = min(p.aos for p in self._passes)
-        all_los = max(p.los for p in self._passes)
-        if all_aos <= now <= all_los:
+        all_los = max(p.los for p in filtered)
+        if now <= all_los:
             now_series = self._build_now_line(now)
             self._chart.addSeries(now_series)
             now_series.attachAxis(dt_axis)
             now_series.attachAxis(el_axis)
+
+        self._chart_view.set_overlay_labels(overlay)
 
     def _make_time_axis(self) -> QDateTimeAxis:
         axis = QDateTimeAxis()
@@ -244,13 +365,11 @@ class PassChartView(QChartView):
         return axis
 
     def _build_pass_series(self, p: PassInfo) -> QSplineSeries:
-        """1 パス分の仰角曲線 QSplineSeries を生成する。"""
         quality = pass_quality(p.max_elevation_deg)
         color = QUALITY_COLORS[quality]
 
         series = QSplineSeries()
-        label = f"max {p.max_elevation_deg:.0f}° ({quality})"
-        series.setName(label)
+        series.setName(f"max {p.max_elevation_deg:.0f}° ({quality})")
 
         pen = QPen(color)
         pen.setWidth(2)
@@ -263,7 +382,6 @@ class PassChartView(QChartView):
         return series
 
     def _build_now_line(self, now: datetime) -> QLineSeries:
-        """現在時刻を示す赤い縦線の QLineSeries を生成する。"""
         now_ms = now.timestamp() * 1000.0
         series = QLineSeries()
         series.setName("現在時刻")
@@ -280,7 +398,6 @@ class PassChartView(QChartView):
     # ------------------------------------------------------------------ #
 
     def _on_series_clicked(self, point: QPointF) -> None:
-        """クリックされた series からパス情報を特定して pass_clicked を emit する。"""
         sender = self.sender()
         if isinstance(sender, QSplineSeries) and sender in self._series_to_pass:
             self.pass_clicked.emit(self._series_to_pass[sender])

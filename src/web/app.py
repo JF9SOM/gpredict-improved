@@ -20,15 +20,20 @@ import json
 import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core.engine import PassPredictor, SatelliteEngine
 from core.location import Location, LocationManager
 from data.tle_manager import TLEManager
 from web.websocket import ConnectionManager
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +238,9 @@ def create_app(
         description="衛星追尾ソフトウェア GPredict-Improved の REST / WebSocket API",
     )
 
+    if _STATIC_DIR.is_dir():
+        app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
     # ------------------------------------------------------------------ #
     # 依存関数（クロージャでキャプチャ）
     # ------------------------------------------------------------------ #
@@ -248,6 +256,29 @@ def create_app(
     # ------------------------------------------------------------------ #
     # REST エンドポイント
     # ------------------------------------------------------------------ #
+
+    @app.get("/", response_class=HTMLResponse, response_model=None)
+    async def root() -> FileResponse | HTMLResponse:
+        """スマホ向けメインページを返す。"""
+        index_html = _STATIC_DIR / "index.html"
+        if index_html.is_file():
+            return FileResponse(str(index_html))
+        return HTMLResponse("<h1>GPredict-Improved</h1><p>index.html not found</p>")
+
+    @app.get("/api/amsat", response_model=dict[str, str])
+    async def get_amsat_status(
+        db: sqlite3.Connection = Depends(get_conn),
+    ) -> dict[str, str]:
+        """AMSAT 運用状況マップを返す。{"衛星名小文字": "operational|non_operational"} 形式。"""
+        row = db.execute(
+            "SELECT value FROM app_settings WHERE key = 'amsat_status_data'"
+        ).fetchone()
+        if row is None:
+            return {}
+        try:
+            return dict(json.loads(row[0]))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
 
     @app.get("/api/satellites", response_model=list[SatelliteOut])
     async def list_satellites(

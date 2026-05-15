@@ -271,6 +271,7 @@ class MainWindow(QMainWindow):
         self._location_manager = location_manager
         self._selected_norad: int | None = None
         self._all_norads: list[int] = []
+        self._current_passes: list[Any] = []
         self._web_server: Any | None = None
         self._web_server_url: str = ""
         self._scheduler: Any | None = None
@@ -595,12 +596,28 @@ class MainWindow(QMainWindow):
         if obs is not None:
             item = self._sat_list.currentItem()
             name = item.text() if item else str(self._selected_norad)
+
+            # 現在パス中かどうかに応じて次パス情報を選択する
+            now = datetime.now(UTC)
+            next_pass = next(
+                (p for p in self._current_passes if p.los > now),
+                None,
+            )
+            aos_t = next_pass.aos if next_pass is not None else None
+            los_t = next_pass.los if next_pass is not None else None
+            next_max_el = next_pass.max_elevation_deg if next_pass is not None else None
+            next_dur = next_pass.duration_s if next_pass is not None else None
+
             track = SatTrackData(
                 name=name,
                 norad_cat_id=self._selected_norad,
                 azimuth_deg=obs.azimuth_deg,
                 elevation_deg=obs.elevation_deg,
                 is_visible=obs.is_above_horizon,
+                aos_time=aos_t,
+                los_time=los_t,
+                next_max_el=next_max_el,
+                next_duration_s=next_dur,
             )
             self._radar_view.set_tracks([track])
 
@@ -642,6 +659,7 @@ class MainWindow(QMainWindow):
             now,
             now + timedelta(hours=24),
         )
+        self._current_passes = passes
         self._pass_list.set_passes(passes)
 
         item = self._sat_list.currentItem()

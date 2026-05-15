@@ -125,6 +125,19 @@ class TestSatTrackData:
         assert track.track == []
         assert track.aos_time is None
         assert track.los_time is None
+        assert track.next_max_el is None
+        assert track.next_duration_s is None
+
+    def test_next_pass_fields(self) -> None:
+        """next_max_el と next_duration_s が設定できることを確認する。"""
+        track = SatTrackData(
+            name="AO-91",
+            norad_cat_id=43017,
+            next_max_el=45.3,
+            next_duration_s=480.0,
+        )
+        assert track.next_max_el == pytest.approx(45.3)
+        assert track.next_duration_s == pytest.approx(480.0)
 
     def test_custom_values(self) -> None:
         aos = datetime(2026, 5, 10, 12, 0, 0, tzinfo=UTC)
@@ -300,3 +313,43 @@ class TestRadarView:
         qtbot.addWidget(widget)
         assert widget.minimumWidth() >= 200
         assert widget.minimumHeight() >= 200
+
+    def test_next_pass_info_in_track(self, qtbot: Any) -> None:
+        """next_max_el / next_duration_s を持つ非可視衛星でもクラッシュしないことを確認する。"""
+        from ui.radar_view import RadarView
+
+        widget = RadarView()
+        qtbot.addWidget(widget)
+        aos = datetime(2026, 5, 15, 14, 0, 0, tzinfo=UTC)
+        los = aos + timedelta(minutes=8)
+        track = SatTrackData(
+            name="AO-91",
+            norad_cat_id=43017,
+            azimuth_deg=90.0,
+            elevation_deg=-5.0,
+            is_visible=False,
+            aos_time=aos,
+            los_time=los,
+            next_max_el=34.5,
+            next_duration_s=480.0,
+        )
+        widget.set_tracks([track])
+
+    def test_in_pass_status_rendering(self, qtbot: Any) -> None:
+        """可視衛星（IN PASS）を設定してもクラッシュしないことを確認する。"""
+        from ui.radar_view import RadarView
+
+        widget = RadarView()
+        qtbot.addWidget(widget)
+        aos = datetime(2026, 5, 15, 13, 0, 0, tzinfo=UTC)
+        los = aos + timedelta(minutes=10)
+        track = SatTrackData(
+            name="ISS",
+            norad_cat_id=25544,
+            azimuth_deg=180.0,
+            elevation_deg=45.0,
+            is_visible=True,
+            aos_time=aos,
+            los_time=los,
+        )
+        widget.set_tracks([track])

@@ -315,3 +315,69 @@ class TestGetLanIp:
         parts = ip.split(".")
         assert len(parts) == 4
         assert all(p.isdigit() for p in parts)
+
+
+# ---------------------------------------------------------------------------
+# GET / (スマホ向けメインページ)
+# ---------------------------------------------------------------------------
+
+
+class TestRootPage:
+    def test_returns_200(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert resp.status_code == 200
+
+    def test_content_type_html(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert "text/html" in resp.headers["content-type"]
+
+    def test_contains_gpredict(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert "GPredict" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# GET /api/amsat
+# ---------------------------------------------------------------------------
+
+
+class TestApiAmsat:
+    def test_empty_db_returns_empty_dict(self, client: TestClient) -> None:
+        resp = client.get("/api/amsat")
+        assert resp.status_code == 200
+        assert resp.json() == {}
+
+    def test_returns_dict_with_status_data(
+        self, db: sqlite3.Connection, tle_manager: TLEManager
+    ) -> None:
+        import json as _json
+
+        status_map = {"iss": "operational", "ao-91": "non_operational"}
+        db.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+            ("amsat_status_data", _json.dumps(status_map), "2026-05-15T00:00:00"),
+        )
+        db.commit()
+        app = create_app(conn=db, tle_manager=tle_manager)
+        from fastapi.testclient import TestClient as TC
+
+        c = TC(app, raise_server_exceptions=True)
+        data = c.get("/api/amsat").json()
+        assert data["iss"] == "operational"
+        assert data["ao-91"] == "non_operational"
+
+    def test_invalid_json_returns_empty_dict(
+        self, db: sqlite3.Connection, tle_manager: TLEManager
+    ) -> None:
+        db.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+            ("amsat_status_data", "not-valid-json", "2026-05-15T00:00:00"),
+        )
+        db.commit()
+        app = create_app(conn=db, tle_manager=tle_manager)
+        from fastapi.testclient import TestClient as TC
+
+        c = TC(app, raise_server_exceptions=True)
+        resp = c.get("/api/amsat")
+        assert resp.status_code == 200
+        assert resp.json() == {}

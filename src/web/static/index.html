@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>GPredict-Improved</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
+#ws-status {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: #21262d;
+}
+#ws-status.connected { background: #1a4731; color: #2ecc71; }
+#ws-status.disconnected { background: #3d1a1a; color: #e74c3c; }
+
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── サイドバー（衛星リスト） ── */
+.sidebar {
+  width: 200px;
+  min-width: 160px;
+  border-right: 1px solid #30363d;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+@media (max-width: 600px) {
+  .main { flex-direction: column; }
+  .sidebar { width: 100%; height: 140px; border-right: none; border-bottom: 1px solid #30363d; }
+}
+.sidebar-search {
+  padding: 6px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+.sidebar-search input {
+  width: 100%;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
+}
+.sidebar-search input:focus { border-color: #58a6ff; }
+#sat-list {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+}
+#sat-list li {
+  padding: 5px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid #21262d;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#sat-list li:hover { background: #21262d; }
+#sat-list li.selected { background: #1c2c3e; color: #58a6ff; }
+#sat-list li.operational { color: #2ecc71; }
+#sat-list li.non_operational { color: #7f8c8d; font-style: italic; }
+
+/* ── メインパネル ── */
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tabs {
+  display: flex;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+.tab-btn {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 13px;
+  border-bottom: 2px solid transparent;
+}
+.tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+.tab-pane { display: none; flex: 1; overflow: hidden; }
+.tab-pane.active { display: flex; flex-direction: column; }
+
+/* ── トラッキングパネル ── */
+#pane-track {
+  flex-direction: row;
+  flex-wrap: wrap;
+  overflow-y: auto;
+}
+.track-info {
+  padding: 12px;
+  min-width: 160px;
+  flex: 1;
+}
+.track-info h2 { font-size: 14px; color: #58a6ff; margin-bottom: 8px; }
+.info-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+.info-label { color: #8b949e; }
+.info-value { color: #e6edf3; font-variant-numeric: tabular-nums; }
+.info-value.visible { color: #2ecc71; font-weight: 600; }
+.info-value.hidden { color: #e74c3c; }
+
+.radar-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px;
+  flex: 1;
+  min-height: 200px;
+}
+canvas#radar { background: transparent; }
+
+/* ── パスリスト ── */
+#pane-passes { overflow-y: auto; }
+#pane-passes table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+#pane-passes th {
+  background: #161b22;
+  color: #8b949e;
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid #30363d;
+  position: sticky;
+  top: 0;
+}
+#pane-passes td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #21262d;
+}
+#pane-passes tr:hover td { background: #161b22; }
+.quality-excellent { color: #2ecc71; }
+.quality-good { color: #3498db; }
+.quality-fair { color: #f1c40f; }
+.quality-low { color: #95a5a6; }
+
+/* スクロールバー */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🛰 GPredict-Improved</h1>
+  <span id="ws-status" class="disconnected">WS: OFF</span>
+</header>
+
+<div class="main">
+  <!-- 衛星リスト -->
+  <aside class="sidebar">
+    <div class="sidebar-search">
+      <input type="search" id="sat-search" placeholder="衛星を検索…" oninput="filterSats()">
+    </div>
+    <ul id="sat-list"></ul>
+  </aside>
+
+  <!-- メインコンテンツ -->
+  <div class="content">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('track', this)">トラッキング</button>
+      <button class="tab-btn" onclick="switchTab('passes', this)">パス予測</button>
+    </div>
+
+    <!-- トラッキングタブ -->
+    <div id="pane-track" class="tab-pane active">
+      <div class="track-info">
+        <h2 id="sat-name">衛星を選択してください</h2>
+        <div class="info-grid" id="track-grid">
+          <span class="info-label">仰角</span><span class="info-value" id="val-el">—</span>
+          <span class="info-label">方位角</span><span class="info-value" id="val-az">—</span>
+          <span class="info-label">距離</span><span class="info-value" id="val-range">—</span>
+          <span class="info-label">視線速度</span><span class="info-value" id="val-rate">—</span>
+          <span class="info-label">可視</span><span class="info-value" id="val-vis">—</span>
+        </div>
+      </div>
+      <div class="radar-wrap">
+        <canvas id="radar" width="280" height="280"></canvas>
+      </div>
+    </div>
+
+    <!-- パス予測タブ -->
+    <div id="pane-passes" class="tab-pane">
+      <table>
+        <thead>
+          <tr>
+            <th>AOS (UTC)</th>
+            <th>最大仰角</th>
+            <th>継続時間</th>
+            <th>方位(IN→OUT)</th>
+            <th>品質</th>
+          </tr>
+        </thead>
+        <tbody id="pass-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="/static/radar.js"></script>
+<script>
+'use strict';
+
+// ---------------------------------------------------------------------------
+// グローバル状態
+// ---------------------------------------------------------------------------
+let allSats = [];
+let amsatMap = {};
+let selectedNorad = null;
+let ws = null;
+let radarView = null;
+let lastObs = null;
+
+// ---------------------------------------------------------------------------
+// タブ切り替え
+// ---------------------------------------------------------------------------
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('pane-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ---------------------------------------------------------------------------
+// AMSAT マッチング（小文字含まれているか）
+// ---------------------------------------------------------------------------
+function getAmsatStatus(satName) {
+  const lower = satName.toLowerCase();
+  // 完全一致
+  if (amsatMap[lower] !== undefined) return amsatMap[lower];
+  // 部分一致（AMSATキーが衛星名に含まれている）
+  for (const [key, status] of Object.entries(amsatMap)) {
+    const idx = lower.indexOf(key);
+    if (idx === -1) continue;
+    const before = idx === 0 ? true : !/[a-z0-9]/.test(lower[idx - 1]);
+    const after = (idx + key.length >= lower.length) ? true : !/[a-z0-9]/.test(lower[idx + key.length]);
+    if (before && after) return status;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 衛星リスト
+// ---------------------------------------------------------------------------
+function filterSats() {
+  const q = document.getElementById('sat-search').value.toLowerCase();
+  document.querySelectorAll('#sat-list li').forEach(li => {
+    li.style.display = li.dataset.name.includes(q) ? '' : 'none';
+  });
+}
+
+function renderSatList() {
+  const ul = document.getElementById('sat-list');
+  ul.innerHTML = '';
+  allSats.forEach(sat => {
+    const li = document.createElement('li');
+    li.textContent = sat.name;
+    li.dataset.name = sat.name.toLowerCase();
+    li.dataset.norad = sat.norad_cat_id;
+    const status = getAmsatStatus(sat.name);
+    if (status === 'operational') li.classList.add('operational');
+    else if (status === 'non_operational') li.classList.add('non_operational');
+    li.onclick = () => selectSat(sat.norad_cat_id, sat.name, li);
+    ul.appendChild(li);
+  });
+}
+
+function selectSat(norad, name, liElem) {
+  selectedNorad = norad;
+  document.querySelectorAll('#sat-list li').forEach(l => l.classList.remove('selected'));
+  if (liElem) liElem.classList.add('selected');
+  document.getElementById('sat-name').textContent = name;
+  resetTrackDisplay();
+  connectWS(norad);
+  loadPasses(norad);
+}
+
+function resetTrackDisplay() {
+  ['val-el','val-az','val-range','val-rate','val-vis'].forEach(id => {
+    const el = document.getElementById(id);
+    el.textContent = '—';
+    el.className = 'info-value';
+  });
+  if (radarView) radarView.setTracks([]);
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket
+// ---------------------------------------------------------------------------
+function connectWS(norad) {
+  if (ws) { ws.close(); ws = null; }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/tracking?norad=${norad}`);
+
+  ws.onopen = () => setWsStatus(true);
+  ws.onclose = () => setWsStatus(false);
+  ws.onerror = () => setWsStatus(false);
+  ws.onmessage = e => {
+    try { updateTracking(JSON.parse(e.data)); }
+    catch (_) {}
+  };
+}
+
+function setWsStatus(on) {
+  const el = document.getElementById('ws-status');
+  el.textContent = on ? 'WS: ON' : 'WS: OFF';
+  el.className = on ? 'connected' : 'disconnected';
+}
+
+function updateTracking(data) {
+  if (data.error) return;
+  lastObs = data;
+
+  const el = data.elevation_deg.toFixed(1) + '°';
+  const az = data.azimuth_deg.toFixed(1) + '°';
+  const range = (data.range_km).toFixed(1) + ' km';
+  const rate = data.range_rate_km_s.toFixed(3) + ' km/s';
+  const vis = data.is_above_horizon;
+
+  document.getElementById('val-el').textContent = el;
+  document.getElementById('val-az').textContent = az;
+  document.getElementById('val-range').textContent = range;
+  document.getElementById('val-rate').textContent = rate;
+  const visEl = document.getElementById('val-vis');
+  visEl.textContent = vis ? '可視 ▲' : '地平線以下';
+  visEl.className = 'info-value ' + (vis ? 'visible' : 'hidden');
+
+  // レーダー更新
+  if (radarView && selectedNorad !== null) {
+    radarView.setTracks([{
+      name: document.getElementById('sat-name').textContent,
+      norad: selectedNorad,
+      azimuth: data.azimuth_deg,
+      elevation: data.elevation_deg,
+      isVisible: data.is_above_horizon,
+      track: [],
+    }]);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// パス予測
+// ---------------------------------------------------------------------------
+function loadPasses(norad) {
+  document.getElementById('pass-tbody').innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8b949e">読み込み中…</td></tr>';
+  fetch(`/api/satellites/${norad}/passes?hours=24&min_el=5`)
+    .then(r => r.json())
+    .then(passes => renderPasses(passes))
+    .catch(() => {
+      document.getElementById('pass-tbody').innerHTML = '<tr><td colspan="5" style="text-align:center;color:#e74c3c">取得失敗</td></tr>';
+    });
+}
+
+function renderPasses(passes) {
+  const tbody = document.getElementById('pass-tbody');
+  if (!passes.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8b949e">パスなし</td></tr>';
+    return;
+  }
+  tbody.innerHTML = passes.map(p => {
+    const aos = new Date(p.aos).toUTCString().slice(5, 22);
+    const dur = formatDuration(p.duration_seconds);
+    const q = p.quality;
+    const az = `${p.aos_azimuth_deg.toFixed(0)}° → ${p.los_azimuth_deg.toFixed(0)}°`;
+    return `<tr>
+      <td>${aos}</td>
+      <td class="quality-${q}">${p.max_elevation_deg.toFixed(1)}°</td>
+      <td>${dur}</td>
+      <td>${az}</td>
+      <td class="quality-${q}">${q}</td>
+    </tr>`;
+  }).join('');
+}
+
+function formatDuration(sec) {
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  return `${m}m ${String(s).padStart(2,'0')}s`;
+}
+
+// ---------------------------------------------------------------------------
+// 初期化
+// ---------------------------------------------------------------------------
+async function init() {
+  radarView = new RadarView('radar');
+
+  const [sats, amsat] = await Promise.all([
+    fetch('/api/satellites').then(r => r.json()).catch(() => []),
+    fetch('/api/amsat').then(r => r.json()).catch(() => ({})),
+  ]);
+
+  allSats = sats;
+  amsatMap = amsat;
+  renderSatList();
+}
+
+init();
+</script>
+</body>
+</html>
