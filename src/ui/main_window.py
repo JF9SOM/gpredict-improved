@@ -467,8 +467,6 @@ class MainWindow(QMainWindow):
                         amsat_status = amsat_map[amsat_key]
                         break
 
-            print(f"[DEBUG] sat='{name}' amsat_match={amsat_status}")
-
             if amsat_status == "operational":
                 item.setForeground(QColor("#2ecc71"))
                 font: QFont = item.font()
