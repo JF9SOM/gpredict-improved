@@ -29,8 +29,8 @@ from PySide6.QtCharts import (
 from PySide6.QtCore import QDateTime, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
+    QGraphicsTextItem,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
@@ -142,69 +142,6 @@ def elevation_points(
 
 
 # ---------------------------------------------------------------------------
-# 内部 QChartView：山頂ラベルを重ね描きする
-# ---------------------------------------------------------------------------
-
-
-class _ElevationChartView(QChartView):
-    """各パス山頂に最大仰角テキストを重ね描きする内部ウィジェット。"""
-
-    def __init__(self, chart: QChart, parent: QWidget | None = None) -> None:
-        super().__init__(chart, parent)
-        self._overlay: list[tuple[QSplineSeries, float, QColor]] = []
-
-    def set_overlay_labels(
-        self,
-        labels: list[tuple[QSplineSeries, float, QColor]],
-    ) -> None:
-        """山頂ラベルリストを設定する。(series, max_el_deg, color) のタプルリスト。"""
-        self._overlay = labels
-        self.update()
-
-    def paintEvent(self, event: object) -> None:  # noqa: ANN001
-        super().paintEvent(event)  # type: ignore[arg-type]
-        if not self._overlay:
-            return
-
-        chart = self.chart()
-        plot_area = chart.plotArea()
-        # チャートレイアウト未確定（幅=0）の場合はオーバーレイを描画しない
-        if plot_area.width() <= 0:
-            return
-        painter = QPainter(self.viewport())
-        try:
-            font = QFont()
-            font.setPointSize(8)
-            font.setBold(True)
-            painter.setFont(font)
-            fm = painter.fontMetrics()
-
-            for series, max_el, color in self._overlay:
-                # 仰角が最大のデータ点を探す
-                best: QPointF | None = None
-                for i in range(series.count()):
-                    pt = series.at(i)
-                    if best is None or pt.y() > best.y():
-                        best = QPointF(pt.x(), pt.y())
-                if best is None:
-                    continue
-                try:
-                    scene_pt = chart.mapToPosition(best, series)
-                    # プロット領域外（時間軸範囲外）のラベルは描画しない
-                    if not plot_area.contains(scene_pt):
-                        continue
-                    view_pt = self.mapFromScene(scene_pt)
-                    lbl = f"{max_el:.0f}°"
-                    w = fm.horizontalAdvance(lbl)
-                    painter.setPen(color)
-                    painter.drawText(int(view_pt.x()) - w // 2, int(view_pt.y()) - 4, lbl)
-                except Exception:  # noqa: BLE001
-                    pass
-        finally:
-            painter.end()
-
-
-# ---------------------------------------------------------------------------
 # PassChartView ウィジェット
 # ---------------------------------------------------------------------------
 
@@ -214,7 +151,7 @@ class PassChartView(QWidget):
     衛星パスの仰角 vs 時刻チャートを表示する PySide6 ウィジェット。
 
     上部に時間範囲プルダウンを持ち、選択範囲内のパスのみ描画する。
-    各パス山頂には最大仰角ラベルを表示する。
+    各パス山頂には最大仰角ラベルを QGraphicsTextItem でシーンに直接配置する。
 
     使い方::
 
@@ -235,6 +172,8 @@ class PassChartView(QWidget):
         self._passes: list[PassInfo] = []
         self._sat_name: str = ""
         self._series_to_pass: dict[QSplineSeries, PassInfo] = {}
+        self._overlay: list[tuple[QSplineSeries, float, QColor]] = []
+        self._peak_label_items: list[QGraphicsTextItem] = []
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -260,13 +199,13 @@ class PassChartView(QWidget):
         h_layout.addStretch()
         layout.addWidget(header)
 
-        # チャートビュー
+        # チャートビュー（アニメーション無効でシリーズが即時描画される）
         self._chart = QChart()
-        self._chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
+        self._chart.setAnimationOptions(QChart.AnimationOption.NoAnimation)
         self._chart.legend().setVisible(True)
         self._chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
 
-        self._chart_view = _ElevationChartView(self._chart)
+        self._chart_view = QChartView(self._chart)
         self._chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self._chart_view.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -295,11 +234,12 @@ class PassChartView(QWidget):
         self._passes = []
         self._sat_name = ""
         self._series_to_pass = {}
+        self._overlay = []
+        self._clear_peak_labels()
         self._chart.removeAllSeries()
         for axis in self._chart.axes():
             self._chart.removeAxis(axis)
         self._chart.setTitle("")
-        self._chart_view.set_overlay_labels([])
 
     # ------------------------------------------------------------------ #
     # チャート構築
@@ -316,11 +256,13 @@ class PassChartView(QWidget):
 
     def _rebuild(self) -> None:
         """選択された時間範囲のパスでチャートを再構築する。"""
+        # 既存のピークラベルをシーンから除去してから series を削除する
+        self._clear_peak_labels()
+        self._overlay = []
         self._chart.removeAllSeries()
         for axis in self._chart.axes():
             self._chart.removeAxis(axis)
         self._series_to_pass = {}
-        self._chart_view.set_overlay_labels([])
 
         hours = self._selected_hours()
         now = datetime.now(UTC)
@@ -366,14 +308,62 @@ class PassChartView(QWidget):
         )
         el_axis.setRange(0.0, 90.0)
 
-        self._chart_view.set_overlay_labels(overlay)
+        self._overlay = overlay
 
-        # Qt Charts レイアウト確定後に即時描画を強制する
-        QApplication.processEvents()
-        self._chart_view.update()
-        self._chart_view.repaint()
-        # レイアウト計算が完全に確定する 100ms 後に再描画して残像を消す
-        QTimer.singleShot(100, self._chart_view.repaint)
+        # Qt Charts のレイアウト計算が確定する 150ms 後にラベルをシーンへ配置する
+        # （mapToPosition() は layout 確定前だと不正な座標を返すため）
+        QTimer.singleShot(150, self._add_peak_labels)
+
+    def _clear_peak_labels(self) -> None:
+        """シーン上のピークラベル QGraphicsTextItem をすべて削除する。"""
+        scene = self._chart.scene()
+        if scene is not None:
+            for item in self._peak_label_items:
+                scene.removeItem(item)
+        self._peak_label_items.clear()
+
+    def _add_peak_labels(self) -> None:
+        """各パス山頂の仰角ラベルを QGraphicsTextItem としてシーンに配置する。"""
+        self._clear_peak_labels()
+
+        plot_area = self._chart.plotArea()
+        if plot_area.width() <= 0:
+            return
+
+        scene = self._chart.scene()
+        if scene is None:
+            return
+
+        label_font = QFont()
+        label_font.setPointSize(8)
+        label_font.setBold(True)
+
+        for series, max_el, color in self._overlay:
+            # 仰角が最大のデータ点を探す
+            best: QPointF | None = None
+            for i in range(series.count()):
+                pt = series.at(i)
+                if best is None or pt.y() > best.y():
+                    best = QPointF(pt.x(), pt.y())
+            if best is None:
+                continue
+
+            try:
+                scene_pt = self._chart.mapToPosition(best, series)
+                if not plot_area.contains(scene_pt):
+                    continue
+
+                lbl = f"{max_el:.0f}°"
+                item = QGraphicsTextItem(lbl)
+                item.setDefaultTextColor(color)
+                item.setFont(label_font)
+                bw = item.boundingRect().width()
+                # ラベルをピーク点の中央上に配置する
+                item.setPos(scene_pt.x() - bw / 2.0, scene_pt.y() - 18.0)
+                scene.addItem(item)
+                self._peak_label_items.append(item)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _make_time_axis(self) -> QDateTimeAxis:
         axis = QDateTimeAxis()
