@@ -323,18 +323,33 @@ class PassChartView(QWidget):
         self._peak_label_items.clear()
 
     def showEvent(self, event: object) -> None:  # noqa: ANN001
-        """タブ切り替えなどで表示された際に未配置のラベルを配置する。"""
+        """タブ切り替えなどで表示された際にラベルを（再）配置する。
+
+        showEvent 直後はチャートの描画マッピングが未確定なため、
+        小さな遅延を挟んでから _add_peak_labels() を呼ぶ。
+        """
         super().showEvent(event)  # type: ignore[arg-type]
-        if self._overlay and not self._peak_label_items:
-            self._add_peak_labels()
+        if self._overlay:
+            QTimer.singleShot(50, self._add_peak_labels)
 
     def _add_peak_labels(self, retry: int = 0) -> None:
         """各パス山頂の仰角ラベルを QGraphicsTextItem としてシーンに配置する。
 
-        Qt Charts のレイアウト計算が完了していない場合（plotArea が 1px 以下）は
-        最大 5 回まで 150ms 間隔でリトライする。
+        根本原因と対策:
+          - QTabWidget の非アクティブタブは isVisible()=False。
+            このとき plotArea() は valid-looking なサイズを返すが、
+            chart 内部のデータ→ピクセル変換が未初期化のため
+            mapToPosition() が (0,0) 付近を返しラベルが左上隅に集まる。
+          - isVisible() を確認し、非表示なら何もせず showEvent に任せる。
+          - mapToPosition() はチャートローカル座標を返すため、
+            mapToScene() でシーン座標に変換してから setPos() に渡す。
+          - plotArea が極小の場合は最大 5 回まで 150ms 間隔でリトライする。
         """
         self._clear_peak_labels()
+
+        # 非表示のチャートに対しては配置しない（showEvent でトリガーされる）
+        if not self.isVisible():
+            return
 
         plot_area = self._chart.plotArea()
         if plot_area.width() <= 1 or plot_area.height() <= 1:
@@ -361,17 +376,20 @@ class PassChartView(QWidget):
                 continue
 
             try:
-                scene_pt = self._chart.mapToPosition(best, series)
-                if not plot_area.contains(scene_pt):
+                # mapToPosition() はチャートローカル座標を返す
+                chart_pt = self._chart.mapToPosition(best, series)
+                if not plot_area.contains(chart_pt):
                     continue
+
+                # チャートローカル座標 → シーン座標に変換してから配置する
+                scene_pos = self._chart.mapToScene(chart_pt)
 
                 lbl = f"{max_el:.0f}°"
                 item = QGraphicsTextItem(lbl)
                 item.setDefaultTextColor(color)
                 item.setFont(label_font)
                 bw = item.boundingRect().width()
-                # ラベルをピーク点の中央上に配置する
-                item.setPos(scene_pt.x() - bw / 2.0, scene_pt.y() - 18.0)
+                item.setPos(scene_pos.x() - bw / 2.0, scene_pos.y() - 18.0)
                 scene.addItem(item)
                 self._peak_label_items.append(item)
             except Exception:  # noqa: BLE001
