@@ -608,12 +608,24 @@ class MainWindow(QMainWindow):
             next_max_el = next_pass.max_elevation_deg if next_pass is not None else None
             next_dur = next_pass.duration_s if next_pass is not None else None
 
+            # 次パス（または現パス）のAOS〜LOSを30秒刻みで計算して軌跡を作成
+            pass_track: list[tuple[float, float]] = []
+            if next_pass is not None:
+                n_steps = max(20, min(40, int(next_pass.duration_s / 15)))
+                step_s = next_pass.duration_s / n_steps
+                for i in range(n_steps + 1):
+                    t = next_pass.aos + timedelta(seconds=i * step_s)
+                    pt = self._engine.observe(self._selected_norad, at=t)
+                    if pt is not None:
+                        pass_track.append((pt.azimuth_deg, pt.elevation_deg))
+
             track = SatTrackData(
                 name=name,
                 norad_cat_id=self._selected_norad,
                 azimuth_deg=obs.azimuth_deg,
                 elevation_deg=obs.elevation_deg,
                 is_visible=obs.is_above_horizon,
+                track=pass_track,
                 aos_time=aos_t,
                 los_time=los_t,
                 next_max_el=next_max_el,

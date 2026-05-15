@@ -26,7 +26,7 @@ from PySide6.QtCharts import (
     QSplineSeries,
     QValueAxis,
 )
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QDateTime, QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
@@ -313,7 +313,7 @@ class PassChartView(QWidget):
         hours = self._selected_hours()
         now = datetime.now(UTC)
         cutoff = now + timedelta(hours=hours)
-        filtered = [p for p in self._passes if p.aos <= cutoff]
+        filtered = [p for p in self._passes if p.los >= now and p.aos <= cutoff]
 
         if not filtered:
             self._chart.setTitle(self._sat_name or "パス予測（データなし）")
@@ -322,7 +322,10 @@ class PassChartView(QWidget):
         title = f"{self._sat_name} パス予測" if self._sat_name else "パス予測"
         self._chart.setTitle(title)
 
-        dt_axis = self._make_time_axis()
+        # 全パスの範囲をカバーする時間軸（明示設定しないと1本分しか表示されない）
+        t_start = min(p.aos for p in filtered)
+        t_end = max(p.los for p in filtered)
+        dt_axis = self._make_time_axis(t_start, t_end)
         el_axis = self._make_elevation_axis()
         self._chart.addAxis(dt_axis, Qt.AlignmentFlag.AlignBottom)
         self._chart.addAxis(el_axis, Qt.AlignmentFlag.AlignLeft)
@@ -340,8 +343,7 @@ class PassChartView(QWidget):
             overlay.append((series, p.max_elevation_deg, QUALITY_COLORS[quality]))
 
         # 現在時刻ライン
-        all_los = max(p.los for p in filtered)
-        if now <= all_los:
+        if now <= t_end:
             now_series = self._build_now_line(now)
             self._chart.addSeries(now_series)
             now_series.attachAxis(dt_axis)
@@ -349,11 +351,15 @@ class PassChartView(QWidget):
 
         self._chart_view.set_overlay_labels(overlay)
 
-    def _make_time_axis(self) -> QDateTimeAxis:
+    def _make_time_axis(self, t_start: datetime, t_end: datetime) -> QDateTimeAxis:
         axis = QDateTimeAxis()
         axis.setFormat("HH:mm")
         axis.setTitleText("時刻 (UTC)")
         axis.setTickCount(7)
+        axis.setRange(
+            QDateTime.fromMSecsSinceEpoch(int(t_start.timestamp() * 1000)),
+            QDateTime.fromMSecsSinceEpoch(int(t_end.timestamp() * 1000)),
+        )
         return axis
 
     def _make_elevation_axis(self) -> QValueAxis:

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -258,12 +258,14 @@ def create_app(
     # ------------------------------------------------------------------ #
 
     @app.get("/", response_class=HTMLResponse, response_model=None)
-    async def root() -> FileResponse | HTMLResponse:
+    async def root() -> HTMLResponse:
         """スマホ向けメインページを返す。"""
         index_html = _STATIC_DIR / "index.html"
         if index_html.is_file():
-            return FileResponse(str(index_html))
-        return HTMLResponse("<h1>GPredict-Improved</h1><p>index.html not found</p>")
+            return HTMLResponse(content=index_html.read_text(encoding="utf-8"))
+        return HTMLResponse(
+            "<h1>GPredict-Improved</h1><p>index.html not found</p>", status_code=503
+        )
 
     @app.get("/api/amsat", response_model=dict[str, str])
     async def get_amsat_status(

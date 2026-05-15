@@ -281,27 +281,42 @@ class RadarView(QWidget):
         if len(track.track) < 2:
             return
 
-        pen = QPen(color, 2)
-        p.setPen(pen)
+        _TRACK_COLOR = QColor("#3498db")  # blue
+        _AOS_COLOR = QColor("#2ecc71")  # green
+        _LOS_COLOR = QColor("#e74c3c")  # red
 
         pts = [az_el_to_xy(az, el, cx, cy, r) for az, el in track.track]
+
+        # 青い軌跡ライン
+        p.setPen(QPen(_TRACK_COLOR, 2))
         for i in range(len(pts) - 1):
             x0, y0 = pts[i]
             x1, y1 = pts[i + 1]
             p.drawLine(int(x0), int(y0), int(x1), int(y1))
 
+        # AOS 点（緑の塗り潰し円）
+        ax, ay = pts[0]
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_AOS_COLOR)
+        p.drawEllipse(int(ax) - 4, int(ay) - 4, 8, 8)
+
+        # LOS 点（赤の塗り潰し円）
+        lx, ly = pts[-1]
+        p.setBrush(_LOS_COLOR)
+        p.drawEllipse(int(lx) - 4, int(ly) - 4, 8, 8)
+
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
         label_font = QFont()
         label_font.setPointSize(8)
         p.setFont(label_font)
-        p.setPen(color)
+        p.setPen(_TRACK_COLOR)
 
         if track.aos_time is not None:
-            ax, ay = pts[0]
-            p.drawText(int(ax) + 4, int(ay) - 2, f"AOS {track.aos_time.strftime('%H:%M')}")
+            p.drawText(int(ax) + 6, int(ay) - 2, f"AOS {track.aos_time.strftime('%H:%M')}")
 
         if track.los_time is not None:
-            lx, ly = pts[-1]
-            p.drawText(int(lx) + 4, int(ly) + 10, f"LOS {track.los_time.strftime('%H:%M')}")
+            p.drawText(int(lx) + 6, int(ly) + 10, f"LOS {track.los_time.strftime('%H:%M')}")
 
     def _draw_satellite(
         self,
@@ -332,11 +347,11 @@ class RadarView(QWidget):
     def _draw_status(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         """レーダー円の下部に現在パス情報または次パス情報を表示する。"""
         font = QFont()
-        font.setPointSize(9)
+        font.setPointSize(11)
         p.setFont(font)
 
-        y_base = int(cy + r + 20)
-        line_h = 18
+        y_base = int(cy + r + 16)
+        line_h = 22
 
         for i, track in enumerate(self._tracks):
             if track.is_visible:
@@ -350,18 +365,18 @@ class RadarView(QWidget):
                 )
                 p.setPen(QColor("#2ecc71"))
             elif track.aos_time is not None:
-                # 次パス情報を表示
+                # 次パス情報: "Next: MM/DD HH:MM UTC  Max X.X°  Xm Ys"
                 aos_str = track.aos_time.strftime("%m/%d %H:%M") + " UTC"
                 max_el_str = (
-                    f"  Max El: {track.next_max_el:.1f}°" if track.next_max_el is not None else ""
+                    f"  Max {track.next_max_el:.1f}°" if track.next_max_el is not None else ""
                 )
                 dur_str = ""
                 if track.next_duration_s is not None:
                     m = int(track.next_duration_s) // 60
                     s = int(track.next_duration_s) % 60
-                    dur_str = f"  Duration: {m}m {s:02d}s"
-                text = f"Next pass: {aos_str}{max_el_str}{dur_str}"
-                p.setPen(QColor("#bdc3c7"))
+                    dur_str = f"  {m}m {s:02d}s"
+                text = f"Next: {aos_str}{max_el_str}{dur_str}"
+                p.setPen(QColor("#ffffff"))
             else:
                 continue
 

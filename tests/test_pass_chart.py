@@ -355,3 +355,46 @@ class TestPassChartView:
         widget.set_passes([_make_pass_info()], sat_name="ISS")
         widget.clear()
         widget.set_passes([_make_pass_info(60.0)], sat_name="AO-92")
+
+    def test_multipass_future_dates_all_shown(self, qtbot: Any) -> None:
+        """将来日付のパス複数件が全て表示されることを確認する（時間軸 range 設定の検証）。"""
+        from dataclasses import dataclass
+        from datetime import UTC, datetime, timedelta
+
+        from ui.pass_chart import PassChartView
+
+        @dataclass(frozen=True)
+        class FuturePassInfo:
+            norad_cat_id: int
+            aos: datetime
+            tca: datetime
+            los: datetime
+            max_elevation_deg: float
+            aos_azimuth_deg: float
+            los_azimuth_deg: float
+            duration_s: float
+
+        now = datetime.now(UTC)
+        passes = []
+        for h in (1, 4, 8, 14, 20):
+            aos = now + timedelta(hours=h)
+            tca = aos + timedelta(minutes=5)
+            los = aos + timedelta(minutes=10)
+            passes.append(
+                FuturePassInfo(
+                    norad_cat_id=25544,
+                    aos=aos,
+                    tca=tca,
+                    los=los,
+                    max_elevation_deg=float(h * 5),
+                    aos_azimuth_deg=45.0,
+                    los_azimuth_deg=270.0,
+                    duration_s=600.0,
+                )
+            )
+
+        widget = PassChartView()
+        qtbot.addWidget(widget)
+        widget.set_passes(passes, sat_name="ISS")
+        # "Next 24 hours" が選択されているので 5 件すべて内部 _passes に格納されている
+        assert len(widget._passes) == 5
