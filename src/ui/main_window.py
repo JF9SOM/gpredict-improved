@@ -13,6 +13,7 @@ import contextlib
 import logging
 import re
 import sqlite3
+import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
@@ -867,7 +868,26 @@ class MainWindow(QMainWindow):
         from ui.settings_dialog import SettingsDialog
 
         dialog = SettingsDialog(self._conn, parent=self)
-        dialog.exec()
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._on_settings_accepted()
+
+    def _on_settings_accepted(self) -> None:
+        """Settings OK後に有効なTLEソースを同期して衛星リストを再描画する。"""
+        from ui.settings_dialog import SettingsDialog
+
+        enabled = SettingsDialog.get_enabled_sources(self._conn)
+
+        def _fetch_all() -> None:
+            for source_name in enabled:
+                print(f"[TLE] Fetching {source_name}...")
+                try:
+                    result = asyncio.run(self._tle_manager.fetch_and_update(source_name))
+                    print(f"[TLE] Result: {result}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[TLE] Error fetching {source_name}: {exc}")
+            QTimer.singleShot(0, self._load_satellites)
+
+        threading.Thread(target=_fetch_all, daemon=True).start()
 
     def _on_add_transmitter(self) -> None:
         """Satellite > Add Transmitter... ハンドラー。"""
