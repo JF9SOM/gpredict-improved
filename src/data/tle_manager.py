@@ -18,25 +18,63 @@ from skyfield.api import EarthSatellite, load
 # CelesTrak GP API: https://celestrak.org/NORAD/documentation/gp-data-formats.php
 TLE_SOURCES: list[dict[str, Any]] = [
     {
+        "name": "celestrak-stations",
+        "url": "https://celestrak.org/NORAD/elements/gp.php",
+        "params": {"GROUP": "STATIONS", "FORMAT": "TLE"},
+        "group": "stations",
+        "priority": 0,
+        "update_interval_hours": 1,
+    },
+    {
         "name": "celestrak-amateur",
         "url": "https://celestrak.org/NORAD/elements/gp.php",
         "params": {"GROUP": "AMATEUR", "FORMAT": "TLE"},
+        "group": "amateur",
         "priority": 1,
         "update_interval_hours": 2,
     },
     {
-        "name": "celestrak-stations",
+        "name": "celestrak-cubesat",
         "url": "https://celestrak.org/NORAD/elements/gp.php",
-        "params": {"GROUP": "STATIONS", "FORMAT": "TLE"},
-        "priority": 0,
-        "update_interval_hours": 1,
+        "params": {"GROUP": "CUBESAT", "FORMAT": "TLE"},
+        "group": "cubesat",
+        "priority": 2,
+        "update_interval_hours": 4,
+    },
+    {
+        "name": "celestrak-weather",
+        "url": "https://celestrak.org/NORAD/elements/gp.php",
+        "params": {"GROUP": "WEATHER", "FORMAT": "TLE"},
+        "group": "weather",
+        "priority": 3,
+        "update_interval_hours": 6,
+    },
+    {
+        "name": "celestrak-earth-obs",
+        "url": "https://celestrak.org/NORAD/elements/gp.php",
+        "params": {"GROUP": "EARTH-OBS", "FORMAT": "TLE"},
+        "group": "earth-obs",
+        "priority": 4,
+        "update_interval_hours": 12,
+    },
+    {
+        "name": "celestrak-science",
+        "url": "https://celestrak.org/NORAD/elements/gp.php",
+        "params": {"GROUP": "SCIENCE", "FORMAT": "TLE"},
+        "group": "science",
+        "priority": 5,
+        "update_interval_hours": 12,
     },
 ]
 
 
 _SOURCE_DB_VALUE: dict[str, str] = {
-    "celestrak-amateur": "celestrak",
     "celestrak-stations": "celestrak",
+    "celestrak-amateur": "celestrak",
+    "celestrak-cubesat": "celestrak",
+    "celestrak-weather": "celestrak",
+    "celestrak-earth-obs": "celestrak",
+    "celestrak-science": "celestrak",
     "celestrak-single": "celestrak",
 }
 
@@ -128,6 +166,7 @@ class TLEManager:
         Returns: {"inserted": N, "updated": N, "errors": N}
         """
         source = next((s for s in TLE_SOURCES if s["name"] == source_name), TLE_SOURCES[0])
+        tle_group = str(source.get("group", "amateur"))
         stats = {"inserted": 0, "updated": 0, "errors": 0}
 
         try:
@@ -191,7 +230,7 @@ class TLEManager:
                         """
                         UPDATE tle_data SET
                             name=?, line1=?, line2=?, epoch=?,
-                            source=?, fetched_at=?, quality_score=?
+                            source=?, tle_group=?, fetched_at=?, quality_score=?
                         WHERE norad_cat_id=?
                     """,
                         (
@@ -200,6 +239,7 @@ class TLEManager:
                             line2,
                             epoch_dt.isoformat(),
                             db_source,
+                            tle_group,
                             now,
                             quality,
                             norad,
@@ -211,8 +251,8 @@ class TLEManager:
                         """
                         INSERT INTO tle_data
                             (norad_cat_id, name, line1, line2, epoch,
-                             source, fetched_at, quality_score)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                             source, tle_group, fetched_at, quality_score)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         (
                             norad,
@@ -221,6 +261,7 @@ class TLEManager:
                             line2,
                             epoch_dt.isoformat(),
                             db_source,
+                            tle_group,
                             now,
                             quality,
                         ),

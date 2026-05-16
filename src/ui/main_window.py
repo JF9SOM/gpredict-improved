@@ -14,9 +14,9 @@ import logging
 import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
@@ -25,6 +25,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QFormLayout,
     QGroupBox,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -53,6 +55,18 @@ from ui.radar_view import SAT_COLORS, RadarView, SatTrackData
 from ui.world_map import WorldMapView
 
 logger = logging.getLogger(__name__)
+
+
+class _SatData(TypedDict):
+    """衛星リスト表示用データ（フィルタリングに使用）。"""
+
+    norad: int
+    name: str
+    is_favorite: bool
+    tle_group: str
+    quality: str | None
+    amsat_status: str | None
+
 
 _QUALITY_DOT_COLORS: dict[str | None, str] = {
     "excellent": "#2ecc71",
@@ -271,6 +285,7 @@ class MainWindow(QMainWindow):
         self._location_manager = location_manager
         self._selected_norad: int | None = None
         self._all_norads: list[int] = []
+        self._all_sat_data: list[_SatData] = []
         self._current_passes: list[Any] = []
         self._web_server: Any | None = None
         self._web_server_url: str = ""
@@ -312,8 +327,25 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(2, 2, 2, 2)
         left_layout.setSpacing(2)
         left_layout.addWidget(QLabel(_("Satellites")))
+
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItems(
+            [
+                "All Satellites",
+                "★ Favorites",
+                "Amateur",
+                "CubeSat",
+                "Weather",
+                "Operational (AMSAT)",
+            ]
+        )
+        self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
+        left_layout.addWidget(self._filter_combo)
+
         self._sat_list = QListWidget()
         self._sat_list.currentRowChanged.connect(self._on_sat_selected)
+        self._sat_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._sat_list.customContextMenuRequested.connect(self._on_sat_context_menu)
         left_layout.addWidget(self._sat_list)
         left.setMinimumWidth(140)
         left.setMaximumWidth(240)
@@ -400,6 +432,7 @@ class MainWindow(QMainWindow):
 
         self._qth_label = QLabel("QTH: 未設定")
         self._tle_label = QLabel("")
+        self._filter_label = QLabel("Showing: All")
         self._url_label = QLabel("")
         self._qr_button = QPushButton("QR")
         self._qr_button.setFlat(True)
@@ -411,6 +444,7 @@ class MainWindow(QMainWindow):
         if sb:
             sb.addWidget(self._qth_label)
             sb.addWidget(self._tle_label)
+            sb.addWidget(self._filter_label)
             sb.addPermanentWidget(self._url_label)
             sb.addPermanentWidget(self._qr_button)
             sb.addPermanentWidget(self._rig_label)
@@ -420,54 +454,89 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
 
     def _load_satellites(self) -> None:
-        """衛星一覧をDBから読み込んでサイドバーリストを更新する。"""
-        self._sat_list.clear()
+        """衛星データをDBから読み込んで内部リストを構築し、フィルターを適用する。"""
         quality_map: dict[int, str | None] = {
             r["norad_cat_id"]: r.get("quality_score")
             for r in self._tle_manager.get_all_quality_status()
         }
         amsat_map: dict[str, str] = self._amsat_fetcher.load_cached() or {}
 
-        # AMSAT 識別子（例: 'ao91'）→ ステータスの逆引きマップを構築
         designator_status: dict[str, str] = {}
         for amsat_name, status in amsat_map.items():
             for desig in _extract_designators(amsat_name):
                 designator_status[desig] = status
 
-        # Level 3 用: 長いキーを優先（より具体的なマッチを先に試みる）
         amsat_keys_by_len = sorted(amsat_map.keys(), key=len, reverse=True)
 
         rows = self._conn.execute(
-            "SELECT norad_cat_id, name FROM satellites ORDER BY name"
+            """
+            SELECT s.norad_cat_id, s.name, s.is_favorite,
+                   COALESCE(t.tle_group, 'amateur') AS tle_group
+            FROM satellites s
+            LEFT JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id
+            ORDER BY s.name
+            """
         ).fetchall()
 
+        self._all_sat_data = []
         self._all_norads = []
-        for row in rows:
-            norad: int = row["norad_cat_id"]
-            name: str = row["name"]
-            quality = quality_map.get(norad)
-            item = QListWidgetItem(name)
-            item.setData(Qt.ItemDataRole.UserRole, norad)
 
+        for row in rows:
+            norad: int = int(row["norad_cat_id"])
+            name: str = str(row["name"])
+            quality: str | None = quality_map.get(norad)
             name_lower = name.lower()
 
-            # Level 1: 完全名照合（例: "SO-50" → "so-50"）
             amsat_status: str | None = amsat_map.get(name_lower)
-
-            # Level 2: AMSAT識別子照合（例: "AO-73" → "ao73"）
             if amsat_status is None:
                 for desig in _extract_designators(name):
                     if desig in designator_status:
                         amsat_status = designator_status[desig]
                         break
-
-            # Level 3: トークン部分一致（例: "iss" in "iss (zarya)"）
-            # ISS・LASARsatなど数字のない衛星名や括弧付き別名に対応する
             if amsat_status is None:
                 for amsat_key in amsat_keys_by_len:
                     if _amsat_key_in_sat_name(amsat_key, name_lower):
                         amsat_status = amsat_map[amsat_key]
                         break
+
+            self._all_sat_data.append(
+                _SatData(
+                    norad=norad,
+                    name=name,
+                    is_favorite=bool(row["is_favorite"]),
+                    tle_group=str(row["tle_group"]),
+                    quality=quality,
+                    amsat_status=amsat_status,
+                )
+            )
+            self._all_norads.append(norad)
+
+        self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        """フィルターコンボの選択に従って衛星リストを再描画する。"""
+        filter_text = self._filter_combo.currentText()
+        self._sat_list.clear()
+        count = 0
+
+        for d in self._all_sat_data:
+            if filter_text == "★ Favorites" and not d["is_favorite"]:
+                continue
+            if filter_text == "Amateur" and d["tle_group"] != "amateur":
+                continue
+            if filter_text == "CubeSat" and d["tle_group"] != "cubesat":
+                continue
+            if filter_text == "Weather" and d["tle_group"] != "weather":
+                continue
+            if filter_text == "Operational (AMSAT)" and d["amsat_status"] != "operational":
+                continue
+
+            prefix = "★ " if d["is_favorite"] else ""
+            item = QListWidgetItem(prefix + d["name"])
+            item.setData(Qt.ItemDataRole.UserRole, d["norad"])
+
+            amsat_status = d["amsat_status"]
+            quality = d["quality"]
 
             if amsat_status == "operational":
                 item.setForeground(QColor("#2ecc71"))
@@ -486,7 +555,12 @@ class MainWindow(QMainWindow):
                 item.setForeground(QColor(color_hex))
 
             self._sat_list.addItem(item)
-            self._all_norads.append(norad)
+            count += 1
+
+        if filter_text == "All Satellites":
+            self._filter_label.setText(f"Showing: All ({count})")
+        else:
+            self._filter_label.setText(f"Showing: {filter_text} ({count})")
 
     # ------------------------------------------------------------------ #
     # バックグラウンド処理
@@ -647,6 +721,68 @@ class MainWindow(QMainWindow):
     # 衛星選択コールバック
     # ------------------------------------------------------------------ #
 
+    def _on_filter_changed(self, _: str) -> None:
+        """フィルターコンボ変更時に衛星リストを再描画する。"""
+        self._apply_filter()
+
+    def _on_sat_context_menu(self, pos: QPoint) -> None:
+        """衛星リストの右クリックコンテキストメニューを表示する。"""
+        item = self._sat_list.itemAt(pos)
+        if item is None:
+            return
+        norad = int(item.data(Qt.ItemDataRole.UserRole))
+
+        row_data = self._conn.execute(
+            "SELECT name, is_favorite FROM satellites WHERE norad_cat_id = ?",
+            (norad,),
+        ).fetchone()
+        if row_data is None:
+            return
+
+        name = str(row_data["name"])
+        is_fav = bool(row_data["is_favorite"])
+
+        menu = QMenu(self)
+        fav_label = "★ Remove from Favorites" if is_fav else "★ Add to Favorites"
+        fav_action = menu.addAction(fav_label)
+        info_action = menu.addAction("Satellite Info...")
+
+        action = menu.exec(self._sat_list.mapToGlobal(pos))
+        if action == fav_action:
+            self._toggle_favorite(norad, not is_fav)
+        elif action == info_action:
+            self._show_sat_info(norad, name)
+
+    def _toggle_favorite(self, norad: int, favorite: bool) -> None:
+        """お気に入り状態をDBに保存して衛星リストを再読み込みする。"""
+        self._conn.execute(
+            "UPDATE satellites SET is_favorite = ? WHERE norad_cat_id = ?",
+            (1 if favorite else 0, norad),
+        )
+        self._conn.commit()
+        self._load_satellites()
+
+    def _show_sat_info(self, norad: int, name: str) -> None:
+        """衛星情報ダイアログを表示する（NORAD番号・TLE epoch・品質）。"""
+        tle_row = self._conn.execute(
+            "SELECT epoch, quality_score, source, tle_group FROM tle_data WHERE norad_cat_id = ?",
+            (norad,),
+        ).fetchone()
+
+        info_parts = [f"Name: {name}", f"NORAD: {norad}"]
+        if tle_row:
+            epoch = str(tle_row["epoch"])[:16] if tle_row["epoch"] else "N/A"
+            info_parts += [
+                f"TLE Epoch: {epoch} UTC",
+                f"TLE Quality: {tle_row['quality_score']}",
+                f"Source: {tle_row['source']}",
+                f"Group: {tle_row['tle_group'] or 'amateur'}",
+            ]
+        else:
+            info_parts.append("TLE: Not available")
+
+        QMessageBox.information(self, f"Satellite Info — {name}", "\n".join(info_parts))
+
     def _on_sat_selected(self, row: int) -> None:
         """衛星リストで選択が変わったときのコールバック。"""
         if row < 0:
@@ -728,7 +864,10 @@ class MainWindow(QMainWindow):
             self._update_statusbar()
 
     def _on_settings(self) -> None:
-        QMessageBox.information(self, _("Settings"), _("Settings dialog not yet implemented."))
+        from ui.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self._conn, parent=self)
+        dialog.exec()
 
     def _on_add_transmitter(self) -> None:
         """Satellite > Add Transmitter... ハンドラー。"""
@@ -757,9 +896,10 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, _("Sync SATNOGS"), _("SATNOGS sync not yet implemented."))
 
     def _on_rig_settings(self) -> None:
-        QMessageBox.information(
-            self, _("Rig Settings"), _("Rig settings dialog not yet implemented.")
-        )
+        from ui.rig_dialog import RigSettingsDialog
+
+        dialog = RigSettingsDialog(self._conn, parent=self)
+        dialog.exec()
 
     def _on_rotator_settings(self) -> None:
         QMessageBox.information(

@@ -5,6 +5,7 @@ SQLite + alembic によるマイグレーション管理
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from pathlib import Path
 
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS satellites (
     alt_names       TEXT DEFAULT '[]',   -- JSON配列
     status          TEXT DEFAULT 'unknown'
                     CHECK(status IN ('alive','dead','unknown')),
+    is_favorite     INTEGER DEFAULT 0,
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -58,6 +60,7 @@ CREATE TABLE IF NOT EXISTS tle_data (
     epoch           DATETIME,
     source          TEXT DEFAULT 'celestrak'
                     CHECK(source IN ('celestrak','space-track','amsat','manual')),
+    tle_group       TEXT DEFAULT 'amateur',
     fetched_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     quality_score   TEXT DEFAULT 'unknown'
                     CHECK(quality_score IN ('excellent','good','fair','poor','unknown'))
@@ -112,6 +115,18 @@ def get_db_path() -> Path:
     return data_dir / "gpredict-improved.db"
 
 
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """既存DBに不足カラムを追加するマイグレーションを適用する。"""
+    migrations = [
+        "ALTER TABLE satellites ADD COLUMN is_favorite INTEGER DEFAULT 0",
+        "ALTER TABLE tle_data ADD COLUMN tle_group TEXT DEFAULT 'amateur'",
+    ]
+    for stmt in migrations:
+        with contextlib.suppress(Exception):
+            conn.execute(stmt)
+    conn.commit()
+
+
 def init_database(db_path: Path | None = None) -> sqlite3.Connection:
     """
     データベースを初期化して接続を返す。
@@ -121,5 +136,6 @@ def init_database(db_path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_SQL)
+    _apply_migrations(conn)
     conn.commit()
     return conn
