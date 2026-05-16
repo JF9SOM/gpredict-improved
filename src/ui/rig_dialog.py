@@ -3,7 +3,7 @@
 
 RigSettingsDialog — Radio > Rig Settings で開くダイアログ。
 Hamlib 直接接続 / NET (rigctld) 接続を選択できる。
-COM ポートの自動スキャン機能付き。
+Hamlib Python バインディングから全機種を取得し、検索フィルター付きで表示する。
 """
 
 from __future__ import annotations
@@ -32,16 +32,173 @@ from PySide6.QtWidgets import (
 
 from i18n import _
 
-# (model_id, display_name) の主要アマチュア衛星対応機リスト
-_RIG_MODELS: list[tuple[int, str]] = [
-    (3081, "IC-9700"),
-    (3070, "IC-9100"),
-    (3085, "IC-705"),
-    (428, "FT-991A"),
-    (1038, "TS-2000"),
-    (1220, "FT-817ND"),
-    (1, "Dummy / Test"),
+# ---------------------------------------------------------------------------
+# Hamlib Python バインディング（利用可能な場合のみ）
+# ---------------------------------------------------------------------------
+
+try:
+    import Hamlib as _hamlib_mod
+
+    _HAMLIB_OK: bool = True
+except ModuleNotFoundError:
+    _hamlib_mod = None
+    _HAMLIB_OK = False
+
+# ---------------------------------------------------------------------------
+# フォールバックモデルリスト（Hamlib Python バインディングが使えない環境用）
+# Hamlib 4.x の実際のモデル番号を使用
+# ---------------------------------------------------------------------------
+_FALLBACK_MODELS: list[tuple[int, str, str]] = [
+    # Hamlib 内部
+    (1, "Hamlib", "Dummy"),
+    (2, "Hamlib", "NET rigctl"),
+    (4, "FLRig", "FLRig"),
+    # Yaesu
+    (1001, "Yaesu", "FT-847"),
+    (1003, "Yaesu", "FT-100"),
+    (1010, "Yaesu", "FT-736R"),
+    (1015, "Yaesu", "FT-1000MP"),
+    (1020, "Yaesu", "FT-817"),
+    (1021, "Yaesu", "FT-817ND"),
+    (1022, "Yaesu", "FT-857"),
+    (1023, "Yaesu", "FT-897"),
+    (1024, "Yaesu", "FT-100D"),
+    (1027, "Yaesu", "FT-450"),
+    (1028, "Yaesu", "FT-950"),
+    (1029, "Yaesu", "FT-2000"),
+    (1030, "Yaesu", "FT-DX9000D"),
+    (1035, "Yaesu", "FT-991"),
+    (1036, "Yaesu", "FT-991A"),
+    (1037, "Yaesu", "FT-5000"),
+    (1040, "Yaesu", "FT-450D"),
+    (1043, "Yaesu", "FTDX-3000"),
+    (1044, "Yaesu", "FTDX-5000"),
+    (1045, "Yaesu", "FTDX-1200"),
+    (1046, "Yaesu", "FT-818ND"),
+    (1047, "Yaesu", "FTDX-10"),
+    (1048, "Yaesu", "FTDX-101MP"),
+    (1049, "Yaesu", "FTDX-101D"),
+    # Kenwood
+    (2001, "Kenwood", "TS-50S"),
+    (2002, "Kenwood", "TS-440S"),
+    (2003, "Kenwood", "TS-450S"),
+    (2004, "Kenwood", "TS-570D"),
+    (2005, "Kenwood", "TS-690S"),
+    (2006, "Kenwood", "TS-711A"),
+    (2007, "Kenwood", "TS-790E"),
+    (2009, "Kenwood", "TS-850S"),
+    (2010, "Kenwood", "TS-870S"),
+    (2011, "Kenwood", "TS-940S"),
+    (2012, "Kenwood", "TS-950SDX"),
+    (2014, "Kenwood", "TS-2000"),
+    (2015, "Kenwood", "TM-D700"),
+    (2016, "Kenwood", "TS-590S"),
+    (2017, "Kenwood", "TS-590SG"),
+    (2020, "Kenwood", "TM-V7"),
+    (2021, "Kenwood", "TM-D710"),
+    (2022, "Kenwood", "TS-990S"),
+    (2024, "Kenwood", "TS-480"),
+    (2025, "Kenwood", "TS-570S"),
+    (2026, "Kenwood", "TH-D74"),
+    (2027, "Kenwood", "TM-D710G"),
+    (2041, "Kenwood", "TS-890S"),
+    # Elecraft
+    (2029, "Elecraft", "K3"),
+    (2045, "Elecraft", "KX3"),
+    (2046, "Elecraft", "K3S"),
+    (2047, "Elecraft", "KX2"),
+    # Icom
+    (3001, "Icom", "IC-706"),
+    (3002, "Icom", "IC-706MkII"),
+    (3003, "Icom", "IC-706MkIIG"),
+    (3004, "Icom", "IC-718"),
+    (3005, "Icom", "IC-728"),
+    (3006, "Icom", "IC-729"),
+    (3007, "Icom", "IC-735"),
+    (3008, "Icom", "IC-736"),
+    (3009, "Icom", "IC-737"),
+    (3010, "Icom", "IC-738"),
+    (3011, "Icom", "IC-746"),
+    (3012, "Icom", "IC-756"),
+    (3013, "Icom", "IC-756Pro"),
+    (3014, "Icom", "IC-756ProII"),
+    (3015, "Icom", "IC-756ProIII"),
+    (3016, "Icom", "IC-765"),
+    (3017, "Icom", "IC-775"),
+    (3018, "Icom", "IC-781"),
+    (3019, "Icom", "IC-820H"),
+    (3020, "Icom", "IC-7000"),
+    (3021, "Icom", "IC-703"),
+    (3022, "Icom", "IC-7100"),
+    (3023, "Icom", "IC-746Pro"),
+    (3024, "Icom", "IC-7200"),
+    (3025, "Icom", "IC-7300"),
+    (3026, "Icom", "IC-7410"),
+    (3027, "Icom", "IC-7600"),
+    (3028, "Icom", "IC-7700"),
+    (3029, "Icom", "IC-7800"),
+    (3030, "Icom", "IC-7850"),
+    (3031, "Icom", "IC-7851"),
+    (3032, "Icom", "IC-910H"),
+    (3068, "Icom", "IC-9100"),
+    (3081, "Icom", "IC-9700"),
+    (3085, "Icom", "IC-705"),
+    (3090, "Icom", "IC-7610"),
+    # Alinco
+    (4001, "Alinco", "DX-77"),
+    (4006, "Alinco", "DR-135T"),
+    (4008, "Alinco", "DJ-X11"),
+    # TenTec
+    (6001, "TenTec", "Century 21"),
+    (6003, "TenTec", "Scout"),
+    (6014, "TenTec", "Orion"),
+    (6021, "TenTec", "Jupiter"),
+    # FlexRadio
+    (16503, "FlexRadio", "FLEX-6600"),
+    (16506, "FlexRadio", "FLEX-6400"),
+    (16507, "FlexRadio", "FLEX-6400M"),
+    # SDR
+    (3000801, "HPSDR", "Apache Labs ANAN-7000DLE MKII"),
 ]
+
+
+def _load_from_hamlib_api() -> list[tuple[int, str, str]]:
+    """``Hamlib.riglist`` 辞書から全サポートモデルを取得する。
+
+    ``Hamlib.riglist`` は ``{model_id: RigCaps}`` 形式の辞書で、
+    各値の ``.mfg_name`` / ``.model_name`` 属性からメーカー・機種名を取得できる。
+
+    Returns:
+        (model_id, manufacturer, model_name) のリスト。取得失敗時は空リスト。
+    """
+    if not _HAMLIB_OK or _hamlib_mod is None:
+        return []
+    models: list[tuple[int, str, str]] = []
+    try:
+        for model_id, info in _hamlib_mod.riglist.items():
+            name = str(getattr(info, "model_name", "") or "").strip()
+            mfg = str(getattr(info, "mfg_name", "") or "").strip()
+            if name:
+                models.append((int(model_id), mfg, name))
+    except (AttributeError, TypeError):
+        pass
+    return models
+
+
+def _load_hamlib_models() -> list[tuple[int, str, str]]:
+    """全 Hamlib サポートモデルを取得してメーカー・機種名順でソートして返す。
+
+    取得優先順位:
+        1. Hamlib Python バインディングの ``riglist`` 辞書
+        2. ハードコードされたフォールバックリスト
+
+    Returns:
+        (model_id, manufacturer, model_name) のリスト。
+    """
+    models = _load_from_hamlib_api()
+    if not models:
+        models = list(_FALLBACK_MODELS)
+    return sorted(models, key=lambda x: (x[1].lower(), x[2].lower()))
 
 
 def _scan_serial_ports() -> list[str]:
@@ -80,16 +237,25 @@ def _scan_serial_ports() -> list[str]:
 
 
 class RigSettingsDialog(QDialog):
-    """Radio > Rig Settings ダイアログ。接続モードと COM ポートを設定する。"""
+    """Radio > Rig Settings ダイアログ。
+
+    Hamlib がサポートする全機種を検索フィルター付きで表示する。
+    """
 
     def __init__(self, conn: Any, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._conn = conn
+        self._all_models: list[tuple[int, str, str]] = []
         self.setWindowTitle(_("Rig Settings"))
-        self.resize(480, 400)
+        self.resize(520, 480)
         self._setup_ui()
+        self._load_models()
         self._load_settings()
         self._on_scan_ports()
+
+    # ------------------------------------------------------------------ #
+    # UI 構築
+    # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -128,9 +294,13 @@ class RigSettingsDialog(QDialog):
         self._baud_combo.setCurrentText("9600")
         direct_form.addRow(_("Baud Rate:"), self._baud_combo)
 
+        self._model_search = QLineEdit()
+        self._model_search.setPlaceholderText(_("Search by manufacturer or model name..."))
+        self._model_search.textChanged.connect(self._on_model_search)
+        direct_form.addRow(_("Search:"), self._model_search)
+
         self._model_combo = QComboBox()
-        for mid, mname in _RIG_MODELS:
-            self._model_combo.addItem(f"{mid} — {mname}", mid)
+        self._model_combo.setMinimumWidth(280)
         direct_form.addRow(_("Rig Model:"), self._model_combo)
 
         layout.addWidget(self._direct_group)
@@ -160,8 +330,56 @@ class RigSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    # ------------------------------------------------------------------ #
+    # モデルリスト
+    # ------------------------------------------------------------------ #
+
+    def _load_models(self) -> None:
+        """Hamlib モデルリストを取得してコンボボックスを初期化する。"""
+        self._all_models = _load_hamlib_models()
+        self._populate_model_combo(self._all_models)
+        n = len(self._all_models)
+        self._status_label.setText(_("{n} rig models available").format(n=n))
+
+    def _populate_model_combo(self, models: list[tuple[int, str, str]]) -> None:
+        """モデルコンボボックスを指定リストで更新する。現在の選択を可能な限り維持する。"""
+        current_id: int | None = self._model_combo.currentData()
+        self._model_combo.clear()
+        for mid, mfg, name in models:
+            label = f"{mfg} — {name} (#{mid})" if mfg else f"{name} (#{mid})"
+            self._model_combo.addItem(label, mid)
+        # 前回の選択を復元
+        for i in range(self._model_combo.count()):
+            if self._model_combo.itemData(i) == current_id:
+                self._model_combo.setCurrentIndex(i)
+                break
+
+    def _on_model_search(self, text: str) -> None:
+        """検索テキストに応じてモデルリストをリアルタイムフィルタリングする。"""
+        query = text.lower().strip()
+        if not query:
+            self._populate_model_combo(self._all_models)
+            self._status_label.setText(
+                _("{n} rig models available").format(n=len(self._all_models))
+            )
+        else:
+            filtered = [
+                (mid, mfg, name)
+                for mid, mfg, name in self._all_models
+                if query in mfg.lower() or query in name.lower() or query in str(mid)
+            ]
+            self._populate_model_combo(filtered)
+            self._status_label.setText(
+                _("Showing {n} / {total} models").format(
+                    n=len(filtered), total=len(self._all_models)
+                )
+            )
+
+    # ------------------------------------------------------------------ #
+    # ポートスキャン / モード切り替え
+    # ------------------------------------------------------------------ #
+
     def _on_mode_toggled(self, _checked: bool) -> None:
-        """接続モード切り替えで表示グループを切り替える。"""
         is_direct = self._radio_direct.isChecked()
         self._direct_group.setVisible(is_direct)
         self._net_group.setVisible(not is_direct)
@@ -182,6 +400,10 @@ class RigSettingsDialog(QDialog):
                 self._port_combo.setCurrentIndex(idx)
             else:
                 self._port_combo.setEditText(current)
+
+    # ------------------------------------------------------------------ #
+    # 設定読み書き
+    # ------------------------------------------------------------------ #
 
     def _load_settings(self) -> None:
         if not hasattr(self._conn, "execute"):
