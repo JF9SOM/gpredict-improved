@@ -258,6 +258,10 @@ class MainWindow(QMainWindow):
         下  — パス予測一覧
     """
 
+    # バックグラウンドスレッドから _load_satellites を安全に呼ぶためのシグナル。
+    # QTimer.singleShot はイベントループのないスレッドでは動作しないため Signal を使う。
+    _satellite_list_refresh: Signal = Signal()
+
     def __init__(
         self,
         conn: sqlite3.Connection,
@@ -300,6 +304,8 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._build_statusbar()
+        # バックグラウンドスレッドからの衛星リスト更新要求を受け取るシグナルを接続
+        self._satellite_list_refresh.connect(self._load_satellites)
         self._load_satellites()
 
         if fastapi_app is not None:
@@ -607,8 +613,6 @@ class MainWindow(QMainWindow):
 
         # 起動時にAMSATステータスが古ければバックグラウンドで更新
         if self._amsat_fetcher.is_stale():
-            import threading
-
             threading.Thread(target=self._refresh_amsat_sync, daemon=True).start()
 
     def _refresh_tle_sync(self) -> None:
@@ -624,7 +628,7 @@ class MainWindow(QMainWindow):
         try:
             asyncio.run(self._amsat_fetcher.fetch_and_update())
             logger.info("AMSAT status refresh completed")
-            QTimer.singleShot(0, self._load_satellites)
+            self._satellite_list_refresh.emit()
         except Exception as exc:
             logger.warning("AMSAT status refresh failed: %s", exc)
 
@@ -885,7 +889,8 @@ class MainWindow(QMainWindow):
                     print(f"[TLE] Result: {result}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[TLE] Error fetching {source_name}: {exc}")
-            QTimer.singleShot(0, self._load_satellites)
+            # Signal emit はスレッドセーフ。Qt がメインスレッドへ自動キューイングする。
+            self._satellite_list_refresh.emit()
 
         threading.Thread(target=_fetch_all, daemon=True).start()
 
