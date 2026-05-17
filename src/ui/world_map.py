@@ -555,56 +555,64 @@ class WorldMapView(QWidget):
     def _draw_footprint(self, p: QPainter, w: float, h: float) -> None:
         """フットプリント（可視範囲の円）を等緯度経度図上に描画する。
 
-        球面幾何を使って地心角 rho の円周上の点を計算し、
-        半透明の青いポリゴンと白い輪郭線で描画する。
-        日付変更線を越える場合は連続する2点の経度差が180°を超える箇所で
-        ポリゴンを分割して別々に描画する。極付近でも同様に機能する。
+        1度刻み361点の方位角ベースで座標を計算し、画面上のX距離が
+        画面幅の1/3を超える線分をスキップする方式で描画する。
+        日付変更線越え・極付近でも正しく描画される。
         """
         if self._footprint is None:
             return
 
         _norad, lat0, lon0, alt_km = self._footprint
         earth_r = 6371.0
-        rho = math.acos(earth_r / (earth_r + max(alt_km, 1.0)))
-
+        cos_rho = earth_r / (earth_r + max(alt_km, 1.0))
+        rho = math.acos(min(cos_rho, 1.0))
         lat0_r = math.radians(lat0)
-        lon0_r = math.radians(lon0)
-        n_pts = 90
-        coords: list[tuple[float, float]] = []
 
-        for i in range(n_pts):
-            az = 2.0 * math.pi * i / n_pts
+        # 1度刻み361点の画面座標を計算
+        screen_pts: list[tuple[float, float]] = []
+        for i in range(361):
+            bearing = math.radians(i)
             sin_lat = math.sin(lat0_r) * math.cos(rho) + math.cos(lat0_r) * math.sin(
                 rho
-            ) * math.cos(az)
-            lat_r = math.asin(max(-1.0, min(1.0, sin_lat)))
-            dlon = math.atan2(
-                math.sin(az) * math.sin(rho) * math.cos(lat0_r),
-                math.cos(rho) - math.sin(lat0_r) * math.sin(lat_r),
+            ) * math.cos(bearing)
+            fp_lat = math.degrees(math.asin(max(-1.0, min(1.0, sin_lat))))
+            fp_lon = lon0 + math.degrees(
+                math.atan2(
+                    math.sin(bearing) * math.sin(rho) * math.cos(lat0_r),
+                    math.cos(rho) - math.sin(lat0_r) * math.sin(math.radians(fp_lat)),
+                )
             )
-            lat_deg = math.degrees(lat_r)
-            # -180〜+180 に正規化
-            lon_deg = ((math.degrees(lon0_r + dlon) + 180.0) % 360.0) - 180.0
-            coords.append((lat_deg, lon_deg))
+            fp_lon = ((fp_lon + 180.0) % 360.0) - 180.0
+            screen_pts.append(self.latlon_to_xy(fp_lat, fp_lon, w, h))
 
-        # 日付変更線をまたぐ箇所でポリゴンを分割する
-        sub_polygons: list[list[QPointF]] = []
-        current: list[QPointF] = []
-        for i, (lat, lon) in enumerate(coords):
-            if i > 0 and abs(lon - coords[i - 1][1]) > 180.0:
-                if len(current) >= 3:
-                    sub_polygons.append(current)
-                current = []
-            current.append(QPointF(*self.latlon_to_xy(lat, lon, w, h)))
-        if current:
-            sub_polygons.append(current)
+        threshold = w / 3.0
 
-        # 各サブポリゴンを半透明の青で塗りつぶし＋白い輪郭線で描画
-        p.setBrush(QColor(100, 180, 255, 80))
+        # 塗りつぶし: スキップ箇所でサブポリゴンに分割して描画
+        sub_polys: list[list[QPointF]] = []
+        cur_poly: list[QPointF] = []
+        for i, (x, y) in enumerate(screen_pts):
+            if i > 0 and abs(x - screen_pts[i - 1][0]) >= threshold:
+                if len(cur_poly) >= 3:
+                    sub_polys.append(cur_poly)
+                cur_poly = []
+            cur_poly.append(QPointF(x, y))
+        if cur_poly:
+            sub_polys.append(cur_poly)
+
+        p.setBrush(QColor(100, 180, 255, 60))
+        p.setPen(Qt.PenStyle.NoPen)
+        for poly in sub_polys:
+            if len(poly) >= 3:
+                p.drawPolygon(QPolygonF(poly))
+
+        # 輪郭線: 異常に長い線分（日付変更線越え）をスキップして描画
         p.setPen(QPen(QColor(255, 255, 255, 220), 2.0))
-        for qpts in sub_polygons:
-            if len(qpts) >= 3:
-                p.drawPolygon(QPolygonF(qpts))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(len(screen_pts) - 1):
+            x1, y1 = screen_pts[i]
+            x2, y2 = screen_pts[i + 1]
+            if abs(x2 - x1) < threshold:
+                p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
         # フットプリント中心に十字線
         cx, cy = self.latlon_to_xy(lat0, lon0, w, h)
