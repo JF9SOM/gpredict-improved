@@ -590,12 +590,16 @@ class MainWindow(QMainWindow):
             threading.Thread(target=self._refresh_amsat_sync, daemon=True).start()
 
     def _refresh_tle_sync(self) -> None:
-        """バックグラウンドスレッドから TLE を更新する（APScheduler ジョブ）。"""
-        try:
-            asyncio.run(self._tle_manager.fetch_and_update())
-            logger.info("TLE refresh completed")
-        except Exception as exc:
-            logger.warning("TLE refresh failed: %s", exc)
+        """バックグラウンドスレッドから有効な全 TLE ソースを更新する（APScheduler ジョブ）。"""
+        from ui.settings_dialog import SettingsDialog
+
+        enabled = SettingsDialog.get_enabled_sources(self._conn)
+        for source_name in enabled:
+            try:
+                asyncio.run(self._tle_manager.fetch_and_update(source_name))
+                logger.info("TLE refresh completed: %s", source_name)
+            except Exception as exc:
+                logger.warning("TLE refresh failed: %s — %s", source_name, exc)
 
     def _refresh_amsat_sync(self) -> None:
         """バックグラウンドスレッドから AMSAT 運用状況を更新する。"""

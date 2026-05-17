@@ -34,7 +34,14 @@ _SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "celestrak-science": "Science Satellites (CelesTrak)",
 }
 
-_DEFAULT_ENABLED = {"celestrak-amateur", "celestrak-stations"}
+_DEFAULT_ENABLED = {
+    "celestrak-stations",
+    "celestrak-amateur",
+    "celestrak-cubesat",
+    "celestrak-weather",
+    "celestrak-earth-obs",
+    "celestrak-science",
+}
 
 
 class SettingsDialog(QDialog):
