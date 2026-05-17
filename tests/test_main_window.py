@@ -3,7 +3,7 @@
 
 WorldMapView   — 世界地図ウィジェット
 SatDetailPanel — 衛星詳細パネル
-PassListPanel  — パス予測一覧パネル
+PassPanel      — パス予測パネル（タブ構成）
 MainWindow     — メインウィンドウ
 """
 
@@ -17,7 +17,8 @@ import pytest
 from core.engine import Observation, PassInfo
 from data.database import SCHEMA_SQL
 from data.tle_manager import TLEManager
-from ui.main_window import MainWindow, PassListPanel, SatDetailPanel
+from ui.main_window import MainWindow, SatDetailPanel
+from ui.pass_panel import PassPanel  # noqa: F401  (used in isinstance checks)
 from ui.world_map import WorldMapView
 
 # ---------------------------------------------------------------------------
@@ -152,66 +153,99 @@ class TestSatDetailPanel:
 
 
 # ---------------------------------------------------------------------------
-# PassListPanel
+# PassPanel
 # ---------------------------------------------------------------------------
 
 
 class TestPassListPanel:
     def test_create(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
         assert w is not None
 
     def test_initial_state_empty(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
-        assert w._table.rowCount() == 0
+        assert w._target_table.rowCount() == 0
         assert w._passes == []
 
     def test_set_passes_empty(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
         w.set_passes([])
-        assert w._table.rowCount() == 0
+        assert w._target_table.rowCount() == 0
 
     def test_set_passes_single(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
         w.set_passes([_make_pass_info()])
-        assert w._table.rowCount() == 1
+        assert w._target_table.rowCount() == 1
 
     def test_set_passes_multiple(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
         passes = [_make_pass_info(max_el=float(e)) for e in [15, 35, 65]]
         w.set_passes(passes)
-        assert w._table.rowCount() == 3
+        assert w._target_table.rowCount() == 3
         assert len(w._passes) == 3
 
     def test_set_passes_columns_populated(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
         w.set_passes([_make_pass_info(max_el=60.0, duration=600.0)])
-        assert w._table.item(0, 1) is not None  # Max El
-        assert "60.0" in w._table.item(0, 1).text()
+        assert w._target_table.item(0, 1) is not None  # Max El
+        assert "60.0" in w._target_table.item(0, 1).text()
 
     def test_clear(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
         w.set_passes([_make_pass_info()])
         w.clear()
-        assert w._table.rowCount() == 0
+        assert w._target_table.rowCount() == 0
         assert w._passes == []
 
     def test_pass_selected_signal_exists(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
         assert hasattr(w, "pass_selected")
 
     def test_column_count(self, qtbot) -> None:
-        w = PassListPanel()
+        w = PassPanel()
         qtbot.addWidget(w)
-        assert w._table.columnCount() == len(PassListPanel._COLUMNS)
+        assert w._target_table.columnCount() == len(PassPanel._TARGET_COLS)
+
+    def test_has_two_tabs(self, qtbot) -> None:
+        w = PassPanel()
+        qtbot.addWidget(w)
+        assert w._tabs.count() == 2
+
+    def test_group_tab_has_search_button(self, qtbot) -> None:
+        w = PassPanel()
+        qtbot.addWidget(w)
+        assert w._group_search_btn is not None
+
+    def test_group_tab_has_cancel_button(self, qtbot) -> None:
+        w = PassPanel()
+        qtbot.addWidget(w)
+        assert not w._group_cancel_btn.isEnabled()
+
+    def test_set_satellites_updates_list(self, qtbot) -> None:
+        w = PassPanel()
+        qtbot.addWidget(w)
+        w.set_satellites([(25544, "ISS"), (43017, "AO-91")])
+        assert w._sat_list == [(25544, "ISS"), (43017, "AO-91")]
+
+    def test_set_satellites_invalidates_cache(self, qtbot) -> None:
+        w = PassPanel()
+        qtbot.addWidget(w)
+        w._cache_key = ("dummy",)  # type: ignore[assignment]
+        w.set_satellites([(25544, "ISS")])
+        assert w._cache_key is None
+
+    def test_highlight_satellite_signal_exists(self, qtbot) -> None:
+        w = PassPanel()
+        qtbot.addWidget(w)
+        assert hasattr(w, "highlight_satellite")
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +302,7 @@ class TestMainWindow:
 
     def test_has_pass_list(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
-        assert isinstance(w._pass_list, PassListPanel)
+        assert isinstance(w._pass_list, PassPanel)
 
     def test_timer_is_active(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)

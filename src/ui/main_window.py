@@ -25,7 +25,6 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -39,20 +38,19 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from core.engine import Observation, PassInfo, PassPredictor, SatelliteEngine
+from core.engine import Observation, PassPredictor, SatelliteEngine
 from core.location import LocationManager
 from data.amsat_status import AMSATStatusFetcher
 from data.tle_manager import TLEManager
 from data.transmitter_manager import TransmitterManager
 from i18n import _
-from ui.pass_chart import QUALITY_COLORS, PassChartView, pass_quality
+from ui.pass_chart import PassChartView
+from ui.pass_panel import PassPanel
 from ui.radar_view import SAT_COLORS, RadarView, SatTrackData
 from ui.world_map import WorldMapView
 
@@ -173,77 +171,6 @@ class SatDetailPanel(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# PassListPanel
-# ---------------------------------------------------------------------------
-
-
-class PassListPanel(QWidget):
-    """
-    パス予測一覧を QTableWidget で表示するパネル。
-    行クリックで pass_selected シグナルを emit する。
-    """
-
-    pass_selected: Signal = Signal(object)  # PassInfo
-
-    _COLUMNS: tuple[str, ...] = ("AOS (UTC)", "Max El", "Duration", "AZ In", "Quality")
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._passes: list[PassInfo] = []
-        self._setup_ui()
-
-    def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(2)
-        layout.addWidget(QLabel(_("Upcoming Passes")))
-
-        self._table = QTableWidget(0, len(self._COLUMNS))
-        self._table.setHorizontalHeaderLabels(list(self._COLUMNS))
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.verticalHeader().setVisible(False)
-        self._table.itemSelectionChanged.connect(self._on_selection_changed)
-        layout.addWidget(self._table)
-
-    def set_passes(self, passes: list[PassInfo]) -> None:
-        """
-        パスリストを設定してテーブルを更新する。
-
-        Args:
-            passes: PassInfo のリスト（空でクリア）
-        """
-        self._passes = passes
-        self._table.setRowCount(0)
-        for p in passes:
-            row = self._table.rowCount()
-            self._table.insertRow(row)
-            self._table.setItem(row, 0, QTableWidgetItem(p.aos.strftime("%m/%d %H:%M")))
-            self._table.setItem(row, 1, QTableWidgetItem(f"{p.max_elevation_deg:.1f}°"))
-            mins, secs = divmod(int(p.duration_s), 60)
-            self._table.setItem(row, 2, QTableWidgetItem(f"{mins}m {secs:02d}s"))
-            self._table.setItem(row, 3, QTableWidgetItem(f"{p.aos_azimuth_deg:.0f}°"))
-            quality = pass_quality(p.max_elevation_deg)
-            quality_item = QTableWidgetItem(quality)
-            quality_item.setForeground(QUALITY_COLORS[quality])
-            self._table.setItem(row, 4, quality_item)
-
-    def clear(self) -> None:
-        """テーブルをクリアする。"""
-        self._passes = []
-        self._table.setRowCount(0)
-
-    def _on_selection_changed(self) -> None:
-        selected = self._table.selectedItems()
-        if not selected:
-            return
-        row = selected[0].row()
-        if 0 <= row < len(self._passes):
-            self.pass_selected.emit(self._passes[row])
-
-
-# ---------------------------------------------------------------------------
 # MainWindow
 # ---------------------------------------------------------------------------
 
@@ -305,6 +232,10 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._build_statusbar()
+        # PassPanel シグナル接続
+        self._pass_list.target_search_requested.connect(self._on_target_search_requested)
+        self._pass_list.highlight_satellite.connect(self._on_highlight_satellite)
+        self._pass_list.set_pass_predictor(self._pass_predictor)
         # バックグラウンドスレッドからの衛星リスト更新要求を受け取るシグナルを接続
         self._satellite_list_refresh.connect(self._load_satellites)
         self._load_satellites()
@@ -389,10 +320,10 @@ class MainWindow(QMainWindow):
         h_splitter.setStretchFactor(1, 1)
         h_splitter.setStretchFactor(2, 0)
 
-        # 下: パス予測一覧
-        self._pass_list = PassListPanel()
-        self._pass_list.setMaximumHeight(200)
-        self._pass_list.setMinimumHeight(80)
+        # 下: パス予測一覧 (PassPanel)
+        self._pass_list = PassPanel()
+        self._pass_list.setMaximumHeight(260)
+        self._pass_list.setMinimumHeight(100)
 
         v_splitter.addWidget(h_splitter)
         v_splitter.addWidget(self._pass_list)
@@ -540,6 +471,7 @@ class MainWindow(QMainWindow):
         search_query = self._search_box.text().strip().lower()
         self._sat_list.clear()
         count = 0
+        filtered_sats: list[tuple[int, str]] = []
 
         for d in self._all_sat_data:
             # カテゴリーフィルター
@@ -587,6 +519,7 @@ class MainWindow(QMainWindow):
                 item.setForeground(QColor(color_hex))
 
             self._sat_list.addItem(item)
+            filtered_sats.append((d["norad"], d["name"]))
             count += 1
 
         if search_query:
@@ -595,6 +528,8 @@ class MainWindow(QMainWindow):
             self._filter_label.setText(f"Showing: All ({count})")
         else:
             self._filter_label.setText(f"Showing: {filter_text} ({count})")
+
+        self._pass_list.set_satellites(filtered_sats)
 
     # ------------------------------------------------------------------ #
     # バックグラウンド処理
@@ -879,6 +814,27 @@ class MainWindow(QMainWindow):
         name = item.text() if item else ""
         self._pass_chart.set_passes(passes, sat_name=name)
 
+    def _on_target_search_requested(self, start: Any, end: Any) -> None:
+        """Target タブの Search ボタンが押されたときに呼ばれる。"""
+        if self._selected_norad is None or self._pass_predictor is None:
+            return
+        start_dt: datetime = start
+        end_dt: datetime = end
+        passes = self._pass_predictor.get_passes(self._selected_norad, start_dt, end_dt)
+        self._current_passes = passes
+        self._pass_list.set_passes(passes)
+        item = self._sat_list.currentItem()
+        name = item.text() if item else ""
+        self._pass_chart.set_passes(passes, sat_name=name)
+
+    def _on_highlight_satellite(self, norad: int) -> None:
+        """Group タブの Satellite 列クリック時に左リストの該当衛星をハイライトする。"""
+        for i in range(self._sat_list.count()):
+            item = self._sat_list.item(i)
+            if item is not None and int(item.data(Qt.ItemDataRole.UserRole)) == norad:
+                self._sat_list.setCurrentRow(i)
+                break
+
     # ------------------------------------------------------------------ #
     # メニューハンドラー
     # ------------------------------------------------------------------ #
@@ -909,6 +865,7 @@ class MainWindow(QMainWindow):
                 self._pass_predictor = PassPredictor(
                     self._tle_manager, loc.latitude_deg, loc.longitude_deg, loc.elevation_m
                 )
+            self._pass_list.set_pass_predictor(self._pass_predictor)
             self._update_statusbar()
 
     def _on_settings(self) -> None:
