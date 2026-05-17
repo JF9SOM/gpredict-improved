@@ -528,7 +528,10 @@ class WorldMapView(QWidget):
         label_font.setPointSize(8)
         p.setFont(label_font)
         dr = int(self._dot_radius)
-        for info in self._satellites.values():
+        sel_norad = self._footprint[0] if self._footprint is not None else None
+        for norad, info in self._satellites.items():
+            if norad == sel_norad:
+                continue  # 選択衛星は後で大きく描画
             sx, sy = self.latlon_to_xy(info[1], info[2], w, h)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(info[3])
@@ -536,6 +539,18 @@ class WorldMapView(QWidget):
             p.setPen(info[3])
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawText(int(sx) + dr + 2, int(sy) + 4, info[0])
+
+        # 選択衛星を大きい黄色い輪郭付きドット＋白ラベルで描画
+        if sel_norad is not None and sel_norad in self._satellites:
+            sel_info = self._satellites[sel_norad]
+            sx, sy = self.latlon_to_xy(sel_info[1], sel_info[2], w, h)
+            sel_r = 8
+            p.setPen(QPen(QColor(255, 220, 0, 230), 2))
+            p.setBrush(sel_info[3])
+            p.drawEllipse(int(sx) - sel_r, int(sy) - sel_r, sel_r * 2, sel_r * 2)
+            p.setPen(QColor(255, 255, 255))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawText(int(sx) + sel_r + 2, int(sy) + 4, sel_info[0])
 
     def _draw_footprint(self, p: QPainter, w: float, h: float) -> None:
         """フットプリント（可視範囲の円）を等緯度経度図上に描画する。
@@ -550,6 +565,8 @@ class WorldMapView(QWidget):
         _norad, lat0, lon0, alt_km = self._footprint
         earth_r = 6371.0
         rho = math.acos(earth_r / (earth_r + max(alt_km, 1.0)))
+        rho_deg = math.degrees(rho)
+        print(f"[Footprint] lat={lat0:.1f} lon={lon0:.1f} alt={alt_km:.0f}km rho={rho_deg:.1f}°")
 
         lat0_r = math.radians(lat0)
         lon0_r = math.radians(lon0)
@@ -580,11 +597,18 @@ class WorldMapView(QWidget):
             prev_lon = lon
 
         # 半透明の青い塗りつぶし + 白い輪郭線
-        p.setBrush(QColor(64, 164, 255, 55))
-        p.setPen(QPen(QColor(255, 255, 255, 200), 1.5))
+        p.setBrush(QColor(100, 180, 255, 80))
+        p.setPen(QPen(QColor(255, 255, 255, 220), 2.0))
         qpts = [QPointF(*self.latlon_to_xy(lat, lon, w, h)) for lat, lon in normalized]
         if len(qpts) >= 3:
             p.drawPolygon(QPolygonF(qpts))
+
+        # フットプリント中心に十字線
+        cx, cy = self.latlon_to_xy(lat0, lon0, w, h)
+        cross = 10
+        p.setPen(QPen(QColor(255, 255, 255, 200), 1.5))
+        p.drawLine(int(cx) - cross, int(cy), int(cx) + cross, int(cy))
+        p.drawLine(int(cx), int(cy) - cross, int(cx), int(cy) + cross)
 
     def _draw_star(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         """
