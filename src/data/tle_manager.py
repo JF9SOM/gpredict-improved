@@ -52,7 +52,7 @@ TLE_SOURCES: list[dict[str, Any]] = [
     {
         "name": "celestrak-earth-obs",
         "url": "https://celestrak.org/NORAD/elements/gp.php",
-        "params": {"GROUP": "EARTH-OBS", "FORMAT": "TLE"},
+        "params": {"GROUP": "resource", "FORMAT": "TLE"},
         "group": "earth-obs",
         "priority": 4,
         "update_interval_hours": 12,
