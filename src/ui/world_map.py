@@ -565,8 +565,6 @@ class WorldMapView(QWidget):
         _norad, lat0, lon0, alt_km = self._footprint
         earth_r = 6371.0
         rho = math.acos(earth_r / (earth_r + max(alt_km, 1.0)))
-        rho_deg = math.degrees(rho)
-        print(f"[Footprint] lat={lat0:.1f} lon={lon0:.1f} alt={alt_km:.0f}km rho={rho_deg:.1f}°")
 
         lat0_r = math.radians(lat0)
         lon0_r = math.radians(lon0)

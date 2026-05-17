@@ -197,7 +197,7 @@ class SatelliteEngine:
             return None
         t = self._to_skyfield_time(at)
         geocentric = sat.at(t)
-        sp = wgs84.subpoint_of(geocentric)
+        sp = wgs84.geographic_position_of(geocentric)
         return (
             float(sp.latitude.degrees),
             float(sp.longitude.degrees),
