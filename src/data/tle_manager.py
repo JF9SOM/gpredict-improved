@@ -277,9 +277,10 @@ class TLEManager:
         return stats
 
     async def fetch_single(self, norad_cat_id: int) -> bool:
-        """
-        1衛星のTLEをSpace-TrackまたはCelesTrakから取得する。
-        特定衛星だけ手動更新したいときに使用。
+        """1衛星のTLEをCelesTrakから取得してDBに追加する。
+
+        グループ取得に含まれない衛星（例: ORIGAMI-2 / NORAD 57168）を
+        個別に追加したい場合に使用する。
         """
         url = "https://celestrak.org/NORAD/elements/gp.php"
         params = {"CATNR": str(norad_cat_id), "FORMAT": "TLE"}
@@ -289,12 +290,10 @@ class TLEManager:
                 r.raise_for_status()
                 lines = [ln.strip() for ln in r.text.splitlines() if ln.strip()]
                 if len(lines) >= 3:
-                    result = await self.fetch_and_update.__func__(  # type: ignore[attr-defined]
-                        self, "celestrak-single"
-                    )
-                    return bool(result["errors"] == 0)
-        except httpx.HTTPError:
-            pass
+                    name, line1, line2 = lines[0], lines[1], lines[2]
+                    return self.add_manual_tle(norad_cat_id, name, line1, line2)
+        except httpx.HTTPError as e:
+            print(f"[TLEManager] fetch_single error: {e}")
         return False
 
     def add_manual_tle(

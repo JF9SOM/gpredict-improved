@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -343,11 +344,20 @@ class MainWindow(QMainWindow):
                 "Amateur",
                 "CubeSat",
                 "Weather",
+                "Earth Observation",
+                "Science",
+                "Space Stations",
                 "Operational (AMSAT)",
             ]
         )
         self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
         left_layout.addWidget(self._filter_combo)
+
+        self._search_box = QLineEdit()
+        self._search_box.setPlaceholderText(_("Search satellites..."))
+        self._search_box.setClearButtonEnabled(True)
+        self._search_box.textChanged.connect(self._on_search_changed)
+        left_layout.addWidget(self._search_box)
 
         self._sat_list = QListWidget()
         self._sat_list.currentRowChanged.connect(self._on_sat_selected)
@@ -407,6 +417,7 @@ class MainWindow(QMainWindow):
             sat_menu.addAction(_("Add Transmitter..."), self._on_add_transmitter)
             sat_menu.addSeparator()
             sat_menu.addAction(_("Add Satellite..."), self._on_add_satellite)
+            sat_menu.addAction(_("Add Manual TLE..."), self._on_add_manual_tle)
             sat_menu.addAction(_("Update TLE"), self._on_update_tle)
             sat_menu.addAction(_("Sync SATNOGS"), self._on_sync_satnogs)
 
@@ -521,12 +532,14 @@ class MainWindow(QMainWindow):
         self._apply_filter()
 
     def _apply_filter(self) -> None:
-        """フィルターコンボの選択に従って衛星リストを再描画する。"""
+        """フィルターコンボと検索ボックスに従って衛星リストを再描画する。"""
         filter_text = self._filter_combo.currentText()
+        search_query = self._search_box.text().strip().lower()
         self._sat_list.clear()
         count = 0
 
         for d in self._all_sat_data:
+            # カテゴリーフィルター
             if filter_text == "★ Favorites" and not d["is_favorite"]:
                 continue
             if filter_text == "Amateur" and d["tle_group"] != "amateur":
@@ -535,7 +548,16 @@ class MainWindow(QMainWindow):
                 continue
             if filter_text == "Weather" and d["tle_group"] != "weather":
                 continue
+            if filter_text == "Earth Observation" and d["tle_group"] != "earth-obs":
+                continue
+            if filter_text == "Science" and d["tle_group"] != "science":
+                continue
+            if filter_text == "Space Stations" and d["tle_group"] != "stations":
+                continue
             if filter_text == "Operational (AMSAT)" and d["amsat_status"] != "operational":
+                continue
+            # 検索フィルター（大文字小文字を区別しない部分一致）
+            if search_query and search_query not in d["name"].lower():
                 continue
 
             prefix = "★ " if d["is_favorite"] else ""
@@ -564,7 +586,9 @@ class MainWindow(QMainWindow):
             self._sat_list.addItem(item)
             count += 1
 
-        if filter_text == "All Satellites":
+        if search_query:
+            self._filter_label.setText(f"Search: '{search_query}' — {count} matches")
+        elif filter_text == "All Satellites":
             self._filter_label.setText(f"Showing: All ({count})")
         else:
             self._filter_label.setText(f"Showing: {filter_text} ({count})")
@@ -728,6 +752,10 @@ class MainWindow(QMainWindow):
 
     def _on_filter_changed(self, _: str) -> None:
         """フィルターコンボ変更時に衛星リストを再描画する。"""
+        self._apply_filter()
+
+    def _on_search_changed(self, _text: str) -> None:
+        """検索ボックスのテキスト変更時に衛星リストを再フィルタリングする。"""
         self._apply_filter()
 
     def _on_sat_context_menu(self, pos: QPoint) -> None:
@@ -911,6 +939,21 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, _("Add Satellite"), _("Add satellite dialog not yet implemented.")
         )
+
+    def _on_add_manual_tle(self) -> None:
+        """Satellite > Add Manual TLE... ハンドラー。"""
+        from ui.manual_tle_dialog import ManualTLEDialog
+
+        dialog = ManualTLEDialog(self._tle_manager, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.added_norad is not None:
+            self._load_satellites()
+            QMessageBox.information(
+                self,
+                _("Add Manual TLE"),
+                _("Satellite TLE added successfully (NORAD {n}).").format(
+                    n=dialog.added_norad
+                ),
+            )
 
     def _on_update_tle(self) -> None:
         QMessageBox.information(
