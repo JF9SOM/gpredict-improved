@@ -692,6 +692,17 @@ class MainWindow(QMainWindow):
 
         self._world_map.set_satellites(sat_data)
 
+        # 選択衛星のフットプリントを更新（毎秒動的に移動）
+        if self._selected_norad is not None:
+            swa = self._engine.subpoint_with_alt(self._selected_norad)
+            if swa is not None:
+                fp_lat, fp_lon, alt_km = swa
+                self._world_map.draw_footprint(self._selected_norad, fp_lat, fp_lon, alt_km)
+            else:
+                self._world_map.clear_footprint()
+        else:
+            self._world_map.clear_footprint()
+
     def _update_selected_satellite(self) -> None:
         """選択中衛星の観測値・レーダービューを更新する。"""
         if self._engine is None or self._selected_norad is None:
@@ -824,6 +835,7 @@ class MainWindow(QMainWindow):
         if row < 0:
             self._selected_norad = None
             self._detail_panel.clear()
+            self._world_map.clear_footprint()
             return
         item = self._sat_list.item(row)
         if item is None:
@@ -953,9 +965,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 _("Add Manual TLE"),
-                _("Satellite TLE added successfully (NORAD {n}).").format(
-                    n=dialog.added_norad
-                ),
+                _("Satellite TLE added successfully (NORAD {n}).").format(n=dialog.added_norad),
             )
 
     def _on_update_tle(self) -> None:

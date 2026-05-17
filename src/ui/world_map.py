@@ -393,6 +393,8 @@ class WorldMapView(QWidget):
         self._observer_lon: float | None = None
         self._dot_radius: float = 5.0
         self._hit_radius: float = 12.0
+        # 選択衛星フットプリント: (norad, lat_deg, lon_deg, alt_km)
+        self._footprint: tuple[int, float, float, float] | None = None
 
     def sizeHint(self) -> QSize:
         return QSize(800, 400)
@@ -409,6 +411,26 @@ class WorldMapView(QWidget):
         """
         self._satellites = satellites
         self.update()
+
+    def draw_footprint(self, norad: int, lat: float, lon: float, alt_km: float) -> None:
+        """選択衛星のフットプリント（可視範囲）を更新する。
+
+        次の paintEvent で半透明の青い円として描画される。
+
+        Args:
+            norad:   NORAD カタログ番号
+            lat:     衛星直下点緯度（度）
+            lon:     衛星直下点経度（度）
+            alt_km:  衛星高度（km）
+        """
+        self._footprint = (norad, lat, lon, alt_km)
+        self.update()
+
+    def clear_footprint(self) -> None:
+        """フットプリント表示をクリアする。"""
+        if self._footprint is not None:
+            self._footprint = None
+            self.update()
 
     def set_observer_location(self, lat: float, lon: float) -> None:
         """
@@ -498,6 +520,9 @@ class WorldMapView(QWidget):
             p.setBrush(QColor("#FFFF00"))
             self._draw_star(p, ox, oy, 8.0)
 
+        # フットプリント（衛星ドットより先に描画して重なりを正しく表示）
+        self._draw_footprint(p, w, h)
+
         # 衛星ドット + ラベル
         label_font = QFont()
         label_font.setPointSize(8)
@@ -511,6 +536,55 @@ class WorldMapView(QWidget):
             p.setPen(info[3])
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawText(int(sx) + dr + 2, int(sy) + 4, info[0])
+
+    def _draw_footprint(self, p: QPainter, w: float, h: float) -> None:
+        """フットプリント（可視範囲の円）を等緯度経度図上に描画する。
+
+        球面幾何を使って地心角 rho の円周上の点を計算し、
+        半透明の青いポリゴンと白い輪郭線で描画する。
+        日付変更線をまたぐ場合は経度を連続に正規化して QPainter に渡す。
+        """
+        if self._footprint is None:
+            return
+
+        _norad, lat0, lon0, alt_km = self._footprint
+        earth_r = 6371.0
+        rho = math.acos(earth_r / (earth_r + max(alt_km, 1.0)))
+
+        lat0_r = math.radians(lat0)
+        lon0_r = math.radians(lon0)
+        n_pts = 90
+        raw: list[tuple[float, float]] = []
+
+        for i in range(n_pts):
+            az = 2.0 * math.pi * i / n_pts
+            sin_lat = math.sin(lat0_r) * math.cos(rho) + math.cos(lat0_r) * math.sin(
+                rho
+            ) * math.cos(az)
+            lat_r = math.asin(max(-1.0, min(1.0, sin_lat)))
+            dlon = math.atan2(
+                math.sin(az) * math.sin(rho) * math.cos(lat0_r),
+                math.cos(rho) - math.sin(lat0_r) * math.sin(lat_r),
+            )
+            raw.append((math.degrees(lat_r), math.degrees(lon0_r + dlon)))
+
+        # 日付変更線をまたぐ場合に経度を連続的に正規化する
+        normalized: list[tuple[float, float]] = [raw[0]]
+        prev_lon = raw[0][1]
+        for lat, lon in raw[1:]:
+            while lon - prev_lon > 180.0:
+                lon -= 360.0
+            while lon - prev_lon < -180.0:
+                lon += 360.0
+            normalized.append((lat, lon))
+            prev_lon = lon
+
+        # 半透明の青い塗りつぶし + 白い輪郭線
+        p.setBrush(QColor(64, 164, 255, 55))
+        p.setPen(QPen(QColor(255, 255, 255, 200), 1.5))
+        qpts = [QPointF(*self.latlon_to_xy(lat, lon, w, h)) for lat, lon in normalized]
+        if len(qpts) >= 3:
+            p.drawPolygon(QPolygonF(qpts))
 
     def _draw_star(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         """

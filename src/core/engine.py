@@ -178,6 +178,32 @@ class SatelliteEngine:
         sp = wgs84.subpoint_of(geocentric)
         return float(sp.latitude.degrees), float(sp.longitude.degrees)
 
+    def subpoint_with_alt(
+        self,
+        norad_cat_id: int,
+        at: datetime | None = None,
+    ) -> tuple[float, float, float] | None:
+        """衛星の直下点（緯度・経度・高度 km）を返す。
+
+        Args:
+            norad_cat_id: NORAD 衛星番号
+            at: 計算基準時刻（UTC）。None なら現在時刻。
+
+        Returns:
+            (latitude_deg, longitude_deg, altitude_km)。TLE が存在しない場合は None。
+        """
+        sat = self._get_satellite(norad_cat_id)
+        if sat is None:
+            return None
+        t = self._to_skyfield_time(at)
+        geocentric = sat.at(t)
+        sp = wgs84.subpoint_of(geocentric)
+        return (
+            float(sp.latitude.degrees),
+            float(sp.longitude.degrees),
+            float(sp.elevation.km),
+        )
+
     def subpoints(
         self,
         norad_cat_ids: list[int],
