@@ -326,12 +326,13 @@ class MainWindow(QMainWindow):
 
         # 下: パス予測一覧 (PassPanel)
         self._pass_list = PassPanel()
-        self._pass_list.setMinimumHeight(120)
+        self._pass_list.setMinimumHeight(200)
 
         v_splitter.addWidget(h_splitter)
         v_splitter.addWidget(self._pass_list)
         v_splitter.setStretchFactor(0, 3)
-        v_splitter.setStretchFactor(1, 1)
+        v_splitter.setStretchFactor(1, 2)
+        v_splitter.setSizes([600, 400])
 
     def _build_menu(self) -> None:
         """メニューバーを構築する。"""

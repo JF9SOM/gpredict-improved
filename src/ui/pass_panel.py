@@ -208,6 +208,7 @@ class PassPanel(QWidget):
         self._target_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._target_table.horizontalHeader().setStretchLastSection(True)
         self._target_table.verticalHeader().setVisible(False)
+        self._target_table.verticalHeader().setDefaultSectionSize(22)
         self._target_table.itemSelectionChanged.connect(self._on_target_selection_changed)
         vbox.addWidget(self._target_table)
 
@@ -269,6 +270,7 @@ class PassPanel(QWidget):
         self._group_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._group_table.horizontalHeader().setStretchLastSection(True)
         self._group_table.verticalHeader().setVisible(False)
+        self._group_table.verticalHeader().setDefaultSectionSize(22)
         self._group_table.cellClicked.connect(self._on_group_cell_clicked)
         self._group_table.itemSelectionChanged.connect(self._on_group_selection_changed)
         vbox.addWidget(self._group_table)
