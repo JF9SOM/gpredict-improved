@@ -557,7 +557,8 @@ class WorldMapView(QWidget):
 
         球面幾何を使って地心角 rho の円周上の点を計算し、
         半透明の青いポリゴンと白い輪郭線で描画する。
-        日付変更線をまたぐ場合は経度を連続に正規化して QPainter に渡す。
+        日付変更線を越える場合は連続する2点の経度差が180°を超える箇所で
+        ポリゴンを分割して別々に描画する。極付近でも同様に機能する。
         """
         if self._footprint is None:
             return
@@ -569,7 +570,7 @@ class WorldMapView(QWidget):
         lat0_r = math.radians(lat0)
         lon0_r = math.radians(lon0)
         n_pts = 90
-        raw: list[tuple[float, float]] = []
+        coords: list[tuple[float, float]] = []
 
         for i in range(n_pts):
             az = 2.0 * math.pi * i / n_pts
@@ -581,25 +582,29 @@ class WorldMapView(QWidget):
                 math.sin(az) * math.sin(rho) * math.cos(lat0_r),
                 math.cos(rho) - math.sin(lat0_r) * math.sin(lat_r),
             )
-            raw.append((math.degrees(lat_r), math.degrees(lon0_r + dlon)))
+            lat_deg = math.degrees(lat_r)
+            # -180〜+180 に正規化
+            lon_deg = ((math.degrees(lon0_r + dlon) + 180.0) % 360.0) - 180.0
+            coords.append((lat_deg, lon_deg))
 
-        # 日付変更線をまたぐ場合に経度を連続的に正規化する
-        normalized: list[tuple[float, float]] = [raw[0]]
-        prev_lon = raw[0][1]
-        for lat, lon in raw[1:]:
-            while lon - prev_lon > 180.0:
-                lon -= 360.0
-            while lon - prev_lon < -180.0:
-                lon += 360.0
-            normalized.append((lat, lon))
-            prev_lon = lon
+        # 日付変更線をまたぐ箇所でポリゴンを分割する
+        sub_polygons: list[list[QPointF]] = []
+        current: list[QPointF] = []
+        for i, (lat, lon) in enumerate(coords):
+            if i > 0 and abs(lon - coords[i - 1][1]) > 180.0:
+                if len(current) >= 3:
+                    sub_polygons.append(current)
+                current = []
+            current.append(QPointF(*self.latlon_to_xy(lat, lon, w, h)))
+        if current:
+            sub_polygons.append(current)
 
-        # 半透明の青い塗りつぶし + 白い輪郭線
+        # 各サブポリゴンを半透明の青で塗りつぶし＋白い輪郭線で描画
         p.setBrush(QColor(100, 180, 255, 80))
         p.setPen(QPen(QColor(255, 255, 255, 220), 2.0))
-        qpts = [QPointF(*self.latlon_to_xy(lat, lon, w, h)) for lat, lon in normalized]
-        if len(qpts) >= 3:
-            p.drawPolygon(QPolygonF(qpts))
+        for qpts in sub_polygons:
+            if len(qpts) >= 3:
+                p.drawPolygon(QPolygonF(qpts))
 
         # フットプリント中心に十字線
         cx, cy = self.latlon_to_xy(lat0, lon0, w, h)
