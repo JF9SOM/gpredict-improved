@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.engine import Observation, PassPredictor, SatelliteEngine
+from core.engine import DopplerCalculator, Observation, PassPredictor, SatelliteEngine
 from core.location import LocationManager
 from data.amsat_status import AMSATStatusFetcher
 from data.tle_manager import TLEManager
@@ -52,6 +52,7 @@ from i18n import _
 from ui.pass_chart import PassChartView
 from ui.pass_panel import PassPanel
 from ui.radar_view import SAT_COLORS, RadarView, SatTrackData
+from ui.radio_control_widget import RadioControlWidget
 from ui.world_map import WorldMapView
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,7 @@ class MainWindow(QMainWindow):
         self._all_norads: list[int] = []
         self._all_sat_data: list[_SatData] = []
         self._current_passes: list[Any] = []
+        self._current_transmitter: dict[str, Any] | None = None
         self._web_server: Any | None = None
         self._web_server_url: str = ""
         self._scheduler: Any | None = None
@@ -299,15 +301,17 @@ class MainWindow(QMainWindow):
         left.setMaximumWidth(240)
         h_splitter.addWidget(left)
 
-        # 中央: タブ（世界地図 / レーダー / パスチャート）
+        # 中央: タブ（世界地図 / レーダー / パスチャート / Radio Control）
         self._tab_widget = QTabWidget()
         self._world_map = WorldMapView()
         self._radar_view = RadarView()
         self._pass_chart = PassChartView()
+        self._radio_control = RadioControlWidget()
         self._pass_chart.range_changed.connect(self._on_chart_range_changed)
         self._tab_widget.addTab(self._world_map, _("World Map"))
         self._tab_widget.addTab(self._radar_view, _("Radar"))
         self._tab_widget.addTab(self._pass_chart, _("Pass Chart"))
+        self._tab_widget.addTab(self._radio_control, _("Radio Control"))
         h_splitter.addWidget(self._tab_widget)
 
         # 右: 衛星詳細パネル
@@ -322,13 +326,12 @@ class MainWindow(QMainWindow):
 
         # 下: パス予測一覧 (PassPanel)
         self._pass_list = PassPanel()
-        self._pass_list.setMaximumHeight(260)
-        self._pass_list.setMinimumHeight(100)
+        self._pass_list.setMinimumHeight(120)
 
         v_splitter.addWidget(h_splitter)
         v_splitter.addWidget(self._pass_list)
-        v_splitter.setStretchFactor(0, 1)
-        v_splitter.setStretchFactor(1, 0)
+        v_splitter.setStretchFactor(0, 3)
+        v_splitter.setStretchFactor(1, 1)
 
     def _build_menu(self) -> None:
         """メニューバーを構築する。"""
@@ -686,6 +689,29 @@ class MainWindow(QMainWindow):
             )
             self._radar_view.set_tracks([track])
 
+        # Radio Control: ドップラー補正をリアルタイム更新
+        if obs is not None and self._current_transmitter is not None:
+            rr = obs.range_rate_km_s
+            dl_nom = self._current_transmitter.get("downlink_low")
+            ul_nom = self._current_transmitter.get("uplink_low")
+            invert = bool(self._current_transmitter.get("invert", False))
+            mode = self._current_transmitter.get("mode")
+            ctcss = self._current_transmitter.get("ctcss_tone")
+            dl_corr, dl_shift = (
+                DopplerCalculator.correct_downlink(float(dl_nom), rr)
+                if dl_nom is not None
+                else (None, None)
+            )
+            ul_corr, ul_shift = (
+                DopplerCalculator.correct_uplink(float(ul_nom), rr, invert=invert)
+                if ul_nom is not None
+                else (None, None)
+            )
+            self._radio_control.update_doppler(
+                dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss
+            )
+        self._radio_control.refresh_status()
+
     def _update_statusbar(self) -> None:
         """ステータスバーの QTH テキストと TLE 最終更新日時を更新する。"""
         if self._location_manager is not None:
@@ -769,7 +795,9 @@ class MainWindow(QMainWindow):
         """衛星リストで選択が変わったときのコールバック。"""
         if row < 0:
             self._selected_norad = None
+            self._current_transmitter = None
             self._detail_panel.clear()
+            self._radio_control.clear_satellite()
             self._world_map.clear_footprint()
             return
         item = self._sat_list.item(row)
@@ -778,7 +806,30 @@ class MainWindow(QMainWindow):
         norad = int(item.data(Qt.ItemDataRole.UserRole))
         self._selected_norad = norad
         self._detail_panel.set_satellite(norad, item.text())
+        self._radio_control.set_satellite(norad, item.text())
         self._refresh_passes()
+        self._refresh_radio_control(norad)
+
+    def _refresh_radio_control(self, norad: int) -> None:
+        """選択衛星のトランスミッター情報を取得してRadio Controlパネルを更新する。"""
+        row = self._conn.execute(
+            "SELECT downlink_low, uplink_low, mode, ctcss_tone, invert "
+            "FROM transmitters "
+            "WHERE norad_cat_id = ? AND alive = 1 "
+            "ORDER BY downlink_low DESC LIMIT 1",
+            (norad,),
+        ).fetchone()
+        self._current_transmitter = dict(row) if row else None
+        if self._current_transmitter:
+            dl = self._current_transmitter.get("downlink_low")
+            ul = self._current_transmitter.get("uplink_low")
+            mode = self._current_transmitter.get("mode")
+            ctcss = self._current_transmitter.get("ctcss_tone")
+            self._radio_control.update_doppler(dl, dl, None, ul, ul, None, mode, ctcss)
+        else:
+            self._radio_control.update_doppler(
+                None, None, None, None, None, None
+            )
 
     def _refresh_passes(self) -> None:
         """選択衛星のパス予測を取得してパスリストとチャートを更新する。"""

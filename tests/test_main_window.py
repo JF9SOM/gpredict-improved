@@ -19,6 +19,7 @@ from data.database import SCHEMA_SQL
 from data.tle_manager import TLEManager
 from ui.main_window import MainWindow, SatDetailPanel
 from ui.pass_panel import PassPanel  # noqa: F401  (used in isinstance checks)
+from ui.radio_control_widget import RadioControlWidget
 from ui.world_map import WorldMapView
 
 # ---------------------------------------------------------------------------
@@ -249,6 +250,91 @@ class TestPassListPanel:
 
 
 # ---------------------------------------------------------------------------
+# RadioControlWidget
+# ---------------------------------------------------------------------------
+
+
+class TestRadioControlWidget:
+    def test_create(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert w is not None
+
+    def test_initial_satellite_is_dash(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert w._sat_name_label.text() == "—"
+        assert w._norad_label.text() == "—"
+
+    def test_set_satellite(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        w.set_satellite(25544, "ISS (ZARYA)")
+        assert w._sat_name_label.text() == "ISS (ZARYA)"
+        assert w._norad_label.text() == "25544"
+
+    def test_clear_satellite(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        w.set_satellite(25544, "ISS")
+        w.clear_satellite()
+        assert w._sat_name_label.text() == "—"
+        assert w._norad_label.text() == "—"
+
+    def test_update_doppler_downlink(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        w.update_doppler(
+            downlink_nominal_hz=437_550_000.0,
+            downlink_corrected_hz=437_548_000.0,
+            downlink_shift_hz=-2000.0,
+            uplink_nominal_hz=None,
+            uplink_corrected_hz=None,
+            uplink_shift_hz=None,
+            mode="FM",
+            ctcss_hz=67.0,
+        )
+        assert "437" in w._downlink_label.text()
+        assert "-2000" in w._downlink_doppler_label.text()
+        assert w._mode_label.text() == "FM"
+        assert "67.0" in w._ctcss_label.text()
+
+    def test_update_doppler_none_clears(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        w.update_doppler(None, None, None, None, None, None)
+        assert w._downlink_label.text() == "—"
+        assert w._uplink_label.text() == "—"
+
+    def test_update_rotator(self, qtbot) -> None:
+        from rig.controller import RotatorState
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        w.update_rotator(RotatorState(azimuth_deg=180.5, elevation_deg=45.0))
+        assert "180.5" in w._rot_az_label.text()
+        assert "45.0" in w._rot_el_label.text()
+
+    def test_update_rotator_none(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        w.update_rotator(None)
+        assert w._rot_az_label.text() == "—"
+        assert w._rot_el_label.text() == "—"
+
+    def test_no_rig_buttons_disabled(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert not w._connect_rig_btn.isEnabled()
+        assert not w._connect_rot_btn.isEnabled()
+
+    def test_rig_status_not_configured(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert "configured" in w._rig_status_label.text().lower()
+
+
+# ---------------------------------------------------------------------------
 # MainWindow
 # ---------------------------------------------------------------------------
 
@@ -269,10 +355,10 @@ class TestMainWindow:
         w = self._make_window(qtbot, db, tle_manager)
         assert "GPredict" in w.windowTitle()
 
-    def test_has_tab_widget_with_three_tabs(self, qtbot, db, tle_manager) -> None:
+    def test_has_tab_widget_with_four_tabs(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
         assert w._tab_widget is not None
-        assert w._tab_widget.count() == 3
+        assert w._tab_widget.count() == 4
 
     def test_tab_has_world_map(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
@@ -289,6 +375,12 @@ class TestMainWindow:
 
         w = self._make_window(qtbot, db, tle_manager)
         assert isinstance(w._pass_chart, PassChartView)
+
+    def test_tab_has_radio_control(self, qtbot, db, tle_manager) -> None:
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = self._make_window(qtbot, db, tle_manager)
+        assert isinstance(w._radio_control, RadioControlWidget)
 
     def test_has_satellite_list(self, qtbot, db, tle_manager) -> None:
         from PySide6.QtWidgets import QListWidget

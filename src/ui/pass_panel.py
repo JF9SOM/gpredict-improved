@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -157,10 +158,14 @@ class PassPanel(QWidget):
     # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(2)
+        layout.setContentsMargins(2, 2, 2, 0)
+        layout.setSpacing(0)
         self._tabs = QTabWidget()
+        title = QLabel("  Upcoming Passes  ")
+        title.setStyleSheet("font-weight: bold; color: black;")
+        self._tabs.setCornerWidget(title, Qt.Corner.TopRightCorner)
         self._tabs.addTab(self._build_target_tab(), _("Target"))
         self._tabs.addTab(self._build_group_tab(), _("Group"))
         layout.addWidget(self._tabs)
