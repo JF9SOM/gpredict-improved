@@ -535,6 +535,14 @@ class MainWindow(QMainWindow):
 
         self._pass_list.set_satellites(filtered_sats)
 
+        # World Map をフィルターに連動させる
+        # "All Satellites" かつ検索なし → 全衛星表示 (None)
+        # それ以外 → フィルター後の NORAD セットのみ表示
+        if filter_text == "All Satellites" and not search_query:
+            self._world_map.set_visible_norads(None)
+        else:
+            self._world_map.set_visible_norads({n for n, _ in filtered_sats})
+
     # ------------------------------------------------------------------ #
     # バックグラウンド処理
     # ------------------------------------------------------------------ #

@@ -395,6 +395,8 @@ class WorldMapView(QWidget):
         self._hit_radius: float = 12.0
         # 選択衛星フットプリント: (norad, lat_deg, lon_deg, alt_km)
         self._footprint: tuple[int, float, float, float] | None = None
+        # フィルター: None = 全表示、set = 指定 NORAD のみ表示
+        self._visible_norads: set[int] | None = None
 
     def sizeHint(self) -> QSize:
         return QSize(800, 400)
@@ -410,6 +412,16 @@ class WorldMapView(QWidget):
             satellites: {norad_cat_id: (name, lat_deg, lon_deg, QColor)}
         """
         self._satellites = satellites
+        self.update()
+
+    def set_visible_norads(self, norads: set[int] | None) -> None:
+        """
+        表示する衛星を NORAD 番号のセットで絞り込む。
+
+        Args:
+            norads: 表示対象の NORAD 番号セット。None で全衛星表示。
+        """
+        self._visible_norads = norads
         self.update()
 
     def draw_footprint(self, norad: int, lat: float, lon: float, alt_km: float) -> None:
@@ -530,6 +542,8 @@ class WorldMapView(QWidget):
         dr = int(self._dot_radius)
         sel_norad = self._footprint[0] if self._footprint is not None else None
         for norad, info in self._satellites.items():
+            if self._visible_norads is not None and norad not in self._visible_norads:
+                continue  # フィルター外の衛星はスキップ
             if norad == sel_norad:
                 continue  # 選択衛星は後で大きく描画
             sx, sy = self.latlon_to_xy(info[1], info[2], w, h)
@@ -541,6 +555,7 @@ class WorldMapView(QWidget):
             p.drawText(int(sx) + dr + 2, int(sy) + 4, info[0])
 
         # 選択衛星を大きい黄色い輪郭付きドット＋白ラベルで描画
+        # フィルター外であっても選択衛星は常に表示する
         if sel_norad is not None and sel_norad in self._satellites:
             sel_info = self._satellites[sel_norad]
             sx, sy = self.latlon_to_xy(sel_info[1], sel_info[2], w, h)

@@ -132,6 +132,27 @@ class TestWorldMapView:
         qtbot.addWidget(w)
         assert hasattr(w, "sat_clicked")
 
+    def test_visible_norads_initial_none(self, qtbot) -> None:
+        """初期状態では _visible_norads は None（全衛星表示）。"""
+        w = WorldMapView()
+        qtbot.addWidget(w)
+        assert w._visible_norads is None
+
+    def test_set_visible_norads_stores_set(self, qtbot) -> None:
+        """set_visible_norads でフィルターセットが保存される。"""
+        w = WorldMapView()
+        qtbot.addWidget(w)
+        w.set_visible_norads({25544, 43017})
+        assert w._visible_norads == {25544, 43017}
+
+    def test_set_visible_norads_none_resets(self, qtbot) -> None:
+        """set_visible_norads(None) で全衛星表示に戻る。"""
+        w = WorldMapView()
+        qtbot.addWidget(w)
+        w.set_visible_norads({25544})
+        w.set_visible_norads(None)
+        assert w._visible_norads is None
+
     def test_set_observer_location_initial_none(self, qtbot) -> None:
         """初期状態では自局位置は None。"""
         w = WorldMapView()
