@@ -420,6 +420,9 @@ class MainWindow(QMainWindow):
             sat_menu.addAction(_("Add Manual TLE..."), self._on_add_manual_tle)
             sat_menu.addAction(_("Update TLE"), self._on_update_tle)
             sat_menu.addAction(_("Sync SATNOGS"), self._on_sync_satnogs)
+            sat_menu.addAction(
+                _("Sync Satellite Names from SATNOGS"), self._on_sync_satellite_names
+            )
 
         # Radio
         radio_menu = mb.addMenu(_("Radio"))
@@ -962,6 +965,26 @@ class MainWindow(QMainWindow):
 
     def _on_sync_satnogs(self) -> None:
         QMessageBox.information(self, _("Sync SATNOGS"), _("SATNOGS sync not yet implemented."))
+
+    def _on_sync_satellite_names(self) -> None:
+        """Satellite > Sync Satellite Names from SATNOGS ハンドラー。
+
+        バックグラウンドスレッドで SATNOGS から衛星名を取得し、
+        satellites テーブルの name 列を更新する。
+        """
+
+        def _do_sync() -> None:
+            try:
+                result = asyncio.run(self._transmitter_manager.sync_satellite_names())
+                logger.info("SATNOGS name sync completed: %s", result)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("SATNOGS name sync failed: %s", exc)
+            self._satellite_list_refresh.emit()
+
+        threading.Thread(target=_do_sync, daemon=True).start()
+        sb = self.statusBar()
+        if sb:
+            sb.showMessage(_("Syncing satellite names from SATNOGS..."), 5000)
 
     def _on_rig_settings(self) -> None:
         from ui.rig_dialog import RigSettingsDialog

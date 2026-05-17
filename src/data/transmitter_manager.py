@@ -293,6 +293,70 @@ class TransmitterManager:
         self._log_sync("satnogs", stats)
         return stats
 
+    async def sync_satellite_names(
+        self,
+        progress_callback: Any = None,
+    ) -> dict[str, int]:
+        """SATNOGSから全衛星名を取得してsatellitesテーブルのnameを更新する。
+
+        CelesTrakは暫定名（OBJECT C など）を使うことがあるため、
+        正式名をSATNOGSから取得して上書きする。
+        DBに存在しない衛星（TLE未取得）はスキップする。
+
+        Returns:
+            {"updated": N, "skipped": N}
+        """
+        stats = {"updated": 0, "skipped": 0}
+        now = datetime.now(UTC).isoformat()
+        params: dict[str, Any] = {"format": "json"}
+        next_url: str | None = SATNOGS_SATELLITES_URL
+        total_processed = 0
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            while next_url:
+                r = await client.get(next_url, params=params)
+                r.raise_for_status()
+                data = r.json()
+                params = {}
+
+                if isinstance(data, dict):
+                    satellites: list[Any] = list(data.get("results", []))
+                    next_raw = data.get("next")
+                    next_url = str(next_raw) if next_raw else None
+                else:
+                    satellites = list(data)
+                    next_url = None
+
+                for sat in satellites:
+                    norad_raw = sat.get("norad_cat_id")
+                    name = str(sat.get("name", "")).strip()
+                    if not norad_raw or not name:
+                        stats["skipped"] += 1
+                        continue
+
+                    norad = int(norad_raw)
+                    existing = self._conn.execute(
+                        "SELECT norad_cat_id FROM satellites WHERE norad_cat_id = ?",
+                        (norad,),
+                    ).fetchone()
+
+                    if existing:
+                        self._conn.execute(
+                            "UPDATE satellites SET name = ?, updated_at = ? WHERE norad_cat_id = ?",
+                            (name, now, norad),
+                        )
+                        stats["updated"] += 1
+                    else:
+                        stats["skipped"] += 1
+
+                    total_processed += 1
+                    if progress_callback:
+                        progress_callback(total_processed)
+
+        self._conn.commit()
+        self._log_sync("satnogs_names", stats)
+        return stats
+
     def _log_sync(self, sync_type: str, stats: dict[str, int]) -> None:
         self._conn.execute(
             """
