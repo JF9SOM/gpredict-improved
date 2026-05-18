@@ -341,6 +341,122 @@ class TestRootPage:
 # ---------------------------------------------------------------------------
 
 
+class TestApiSatellitesGroupFilter:
+    def test_no_group_returns_all(self, populated_client: TestClient) -> None:
+        data = populated_client.get("/api/satellites").json()
+        assert len(data) == 2
+
+    def test_group_all_returns_all(self, populated_client: TestClient) -> None:
+        data = populated_client.get("/api/satellites?group=all").json()
+        assert len(data) == 2
+
+    def test_group_amateur_returns_subset(self, populated_client: TestClient) -> None:
+        # ISS has tle_data with tle_group='amateur' (default), FOX-1D has no TLE
+        data = populated_client.get("/api/satellites?group=amateur").json()
+        assert len(data) == 1
+        assert data[0]["norad_cat_id"] == 25544
+
+    def test_group_unknown_returns_empty(self, populated_client: TestClient) -> None:
+        data = populated_client.get("/api/satellites?group=nonexistent_xyz").json()
+        assert data == []
+
+    def test_group_favorites_returns_all(self, populated_client: TestClient) -> None:
+        # favorites filtering is client-side; server treats it like 'all'
+        data = populated_client.get("/api/satellites?group=favorites").json()
+        assert len(data) == 2
+
+    def test_group_operational_no_amsat_data_returns_empty(
+        self, populated_client: TestClient
+    ) -> None:
+        data = populated_client.get("/api/satellites?group=operational").json()
+        assert data == []
+
+    def test_group_operational_with_amsat_data(
+        self, db: sqlite3.Connection, tle_manager: TLEManager
+    ) -> None:
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name) VALUES (?, ?)",
+            (25544, "ISS (ZARYA)"),
+        )
+        db.execute(
+            "INSERT INTO tle_data (norad_cat_id, name, line1, line2) VALUES (?, ?, ?, ?)",
+            (
+                25544,
+                "ISS (ZARYA)",
+                "1 25544U 98067A   21001.00000000  .00001000  00000-0  10000-3 0  9990",
+                "2 25544  51.6416  95.2127 0001000  10.0000 350.0000 15.48900000100000",
+            ),
+        )
+        db.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+            ("amsat_status_data", json.dumps({"iss": "operational"}), "2026-01-01"),
+        )
+        db.commit()
+        app = create_app(conn=db, tle_manager=TLEManager(db))
+        from fastapi.testclient import TestClient as TC
+
+        c = TC(app, raise_server_exceptions=True)
+        data = c.get("/api/satellites?group=operational").json()
+        assert len(data) == 1
+        assert data[0]["norad_cat_id"] == 25544
+
+
+class TestApiGroupPasses:
+    def test_no_predictor_returns_empty(self, populated_client: TestClient) -> None:
+        resp = populated_client.get("/api/passes/group?group=amateur")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_default_group_returns_200(self, populated_client: TestClient) -> None:
+        resp = populated_client.get("/api/passes/group")
+        assert resp.status_code == 200
+
+    def test_invalid_from_dt_returns_422(self, populated_client: TestClient) -> None:
+        resp = populated_client.get("/api/passes/group?from_dt=not-a-date")
+        assert resp.status_code == 422
+
+    def test_invalid_to_dt_returns_422(self, populated_client: TestClient) -> None:
+        resp = populated_client.get("/api/passes/group?from_dt=2026-05-18T00:00&to_dt=bad")
+        assert resp.status_code == 422
+
+    def test_to_before_from_returns_422(self, populated_client: TestClient) -> None:
+        resp = populated_client.get(
+            "/api/passes/group?from_dt=2026-05-18T12:00&to_dt=2026-05-18T10:00"
+        )
+        assert resp.status_code == 422
+
+    def test_min_el_out_of_range_returns_422(self, populated_client: TestClient) -> None:
+        resp = populated_client.get("/api/passes/group?min_el=91")
+        assert resp.status_code == 422
+
+    def test_group_stations_returns_200(self, populated_client: TestClient) -> None:
+        resp = populated_client.get("/api/passes/group?group=stations")
+        assert resp.status_code == 200
+
+
+class TestApiPassesDateRange:
+    def test_from_to_dt_accepted(self, populated_client: TestClient) -> None:
+        resp = populated_client.get(
+            "/api/satellites/25544/passes?from_dt=2026-05-18T00:00&to_dt=2026-05-19T00:00"
+        )
+        assert resp.status_code == 200
+
+    def test_invalid_from_dt_rejected(self, populated_client: TestClient) -> None:
+        resp = populated_client.get("/api/satellites/25544/passes?from_dt=not-a-date")
+        assert resp.status_code == 422
+
+    def test_to_before_from_returns_422(self, populated_client: TestClient) -> None:
+        resp = populated_client.get(
+            "/api/satellites/25544/passes?from_dt=2026-05-19T00:00&to_dt=2026-05-18T00:00"
+        )
+        assert resp.status_code == 422
+
+    def test_only_from_dt_uses_hours_fallback(self, populated_client: TestClient) -> None:
+        # Only from_dt without to_dt → fallback to hours-based range
+        resp = populated_client.get("/api/satellites/25544/passes?from_dt=2026-05-18T00:00")
+        assert resp.status_code == 200
+
+
 class TestApiAmsat:
     def test_empty_db_returns_empty_dict(self, client: TestClient) -> None:
         resp = client.get("/api/amsat")

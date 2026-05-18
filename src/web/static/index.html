@@ -35,13 +35,9 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
 #ws-status.connected { background: #1a4731; color: #2ecc71; }
 #ws-status.disconnected { background: #3d1a1a; color: #e74c3c; }
 
-.main {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
+.main { display: flex; flex: 1; overflow: hidden; }
 
-/* ── Sidebar (satellite list) ── */
+/* ── Sidebar ── */
 .sidebar {
   width: 200px;
   min-width: 160px;
@@ -52,12 +48,29 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
 }
 @media (max-width: 600px) {
   .main { flex-direction: column; }
-  .sidebar { width: 100%; height: 140px; border-right: none; border-bottom: 1px solid #30363d; }
+  .sidebar { width: 100%; height: 190px; border-right: none; border-bottom: 1px solid #30363d; }
 }
-.sidebar-search {
-  padding: 6px;
+.sidebar-filter {
+  padding: 4px 6px;
   background: #161b22;
   border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+.sidebar-filter select {
+  width: 100%;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  padding: 4px 6px;
+  font-size: 12px;
+  outline: none;
+}
+.sidebar-search {
+  padding: 5px 6px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
 }
 .sidebar-search input {
   width: 100%;
@@ -70,62 +83,58 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
   outline: none;
 }
 .sidebar-search input:focus { border-color: #58a6ff; }
-#sat-list {
-  flex: 1;
-  overflow-y: auto;
-  list-style: none;
-}
+#sat-list { flex: 1; overflow-y: auto; list-style: none; }
 #sat-list li {
-  padding: 5px 10px;
+  padding: 5px 8px;
   cursor: pointer;
   border-bottom: 1px solid #21262d;
   font-size: 12px;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 #sat-list li:hover { background: #21262d; }
 #sat-list li.selected { background: #1c2c3e; color: #58a6ff; }
 #sat-list li.operational { color: #2ecc71; }
 #sat-list li.non_operational { color: #7f8c8d; font-style: italic; }
+.fav-btn {
+  cursor: pointer;
+  color: #555;
+  font-size: 11px;
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1;
+}
+.fav-btn.active { color: #f1c40f; }
+.sat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
 /* ── Main panel ── */
-.content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+.content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .tabs {
   display: flex;
   background: #161b22;
   border-bottom: 1px solid #30363d;
   flex-shrink: 0;
+  overflow-x: auto;
 }
 .tab-btn {
-  padding: 6px 14px;
+  padding: 6px 12px;
   border: none;
   background: transparent;
   color: #8b949e;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   border-bottom: 2px solid transparent;
+  white-space: nowrap;
 }
 .tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
 .tab-pane { display: none; flex: 1; overflow: hidden; }
 .tab-pane.active { display: flex; flex-direction: column; }
 
-/* ── Tracking panel ── */
-#pane-track {
-  flex-direction: row;
-  flex-wrap: wrap;
-  overflow-y: auto;
-}
-.track-info {
-  padding: 12px;
-  min-width: 160px;
-  flex: 1;
-}
+/* ── Tracking tab ── */
+#pane-track { flex-direction: row; flex-wrap: wrap; overflow-y: auto; }
+.track-info { padding: 12px; min-width: 150px; flex: 0 0 auto; }
 .track-info h2 { font-size: 14px; color: #58a6ff; margin-bottom: 8px; }
 .info-grid {
   display: grid;
@@ -137,25 +146,77 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
 .info-value { color: #e6edf3; font-variant-numeric: tabular-nums; }
 .info-value.visible { color: #2ecc71; font-weight: 600; }
 .info-value.hidden { color: #e74c3c; }
-
 .radar-wrap {
+  flex: 1;
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 8px;
-  flex: 1;
+  min-width: 200px;
   min-height: 200px;
+  padding: 8px;
 }
 canvas#radar { background: transparent; }
 
-/* ── Pass list ── */
-#pane-passes { overflow-y: auto; }
-#pane-passes table {
+/* ── Pass controls ── */
+.pass-controls {
+  padding: 6px 8px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+.dt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.dt-label { color: #8b949e; font-size: 11px; white-space: nowrap; min-width: 56px; }
+.dt-row input[type="datetime-local"],
+.dt-row select {
+  flex: 1;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #c9d1d9;
+  font-size: 11px;
+  padding: 3px 5px;
+  min-width: 0;
+  outline: none;
+}
+.quick-row { display: flex; gap: 4px; margin-top: 2px; }
+.quick-btn {
+  flex: 1;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 0;
+}
+.quick-btn:hover { background: #30363d; color: #c9d1d9; }
+.search-btn {
+  background: #1c2c3e;
+  border: 1px solid #58a6ff;
+  border-radius: 4px;
+  color: #58a6ff;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 10px;
+}
+.search-btn:hover { background: #234456; }
+
+/* ── Pass table ── */
+.pass-table-wrap, .gp-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+}
+.pass-table-wrap table, .gp-table-wrap table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
 }
-#pane-passes th {
+.pass-table-wrap th, .gp-table-wrap th {
   background: #161b22;
   color: #8b949e;
   padding: 6px 8px;
@@ -163,18 +224,68 @@ canvas#radar { background: transparent; }
   border-bottom: 1px solid #30363d;
   position: sticky;
   top: 0;
+  z-index: 1;
 }
-#pane-passes td {
+.pass-table-wrap td, .gp-table-wrap td {
   padding: 5px 8px;
   border-bottom: 1px solid #21262d;
 }
-#pane-passes tr:hover td { background: #161b22; }
+.pass-table-wrap tr:hover td, .gp-table-wrap tr:hover td { background: #161b22; }
 .quality-excellent { color: #2ecc71; }
 .quality-good { color: #3498db; }
 .quality-fair { color: #f1c40f; }
 .quality-low { color: #95a5a6; }
 
-/* Scrollbar */
+/* ── Group Pass controls ── */
+.gp-controls {
+  padding: 6px 8px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+.gp-options-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.gp-options-row label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #8b949e; }
+.gp-options-row input[type="number"] {
+  width: 44px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #c9d1d9;
+  font-size: 11px;
+  padding: 2px 4px;
+  outline: none;
+}
+
+/* ── Pagination ── */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: #161b22;
+  border-top: 1px solid #30363d;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.pagination button {
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #c9d1d9;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+.pagination button:disabled { opacity: 0.4; cursor: default; }
+.pagination button:hover:not(:disabled) { background: #30363d; }
+.pag-info { flex: 1; text-align: center; color: #8b949e; }
+
+/* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 </style>
@@ -182,36 +293,48 @@ canvas#radar { background: transparent; }
 <body>
 
 <header>
-  <h1>🛰 GPredict-Improved</h1>
+  <h1>&#128752; GPredict-Improved</h1>
   <span id="ws-status" class="disconnected">WS: OFF</span>
 </header>
 
 <div class="main">
-  <!-- Satellite list -->
   <aside class="sidebar">
+    <div class="sidebar-filter">
+      <select id="group-filter" onchange="onGroupChange()">
+        <option value="all">All Satellites</option>
+        <option value="favorites">&#9733; Favorites</option>
+        <option value="amateur">Amateur</option>
+        <option value="cubesat">CubeSat</option>
+        <option value="weather">Weather</option>
+        <option value="earth-obs">Earth Observation</option>
+        <option value="science">Science</option>
+        <option value="stations">Space Stations</option>
+        <option value="operational">Operational (AMSAT)</option>
+      </select>
+    </div>
     <div class="sidebar-search">
-      <input type="search" id="sat-search" placeholder="Search satellites..." oninput="filterSats()">
+      <input type="search" id="sat-search" placeholder="Search..." oninput="filterSats()">
     </div>
     <ul id="sat-list"></ul>
   </aside>
 
-  <!-- Main content -->
   <div class="content">
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab('track', this)">Tracking</button>
       <button class="tab-btn" onclick="switchTab('passes', this)">Pass Prediction</button>
+      <button class="tab-btn" onclick="switchTab('group', this)">Group Pass</button>
     </div>
 
     <!-- Tracking tab -->
     <div id="pane-track" class="tab-pane active">
       <div class="track-info">
         <h2 id="sat-name">Select a satellite</h2>
-        <div class="info-grid" id="track-grid">
-          <span class="info-label">Elevation</span><span class="info-value" id="val-el">—</span>
-          <span class="info-label">Azimuth</span><span class="info-value" id="val-az">—</span>
-          <span class="info-label">Range</span><span class="info-value" id="val-range">—</span>
-          <span class="info-label">Range rate</span><span class="info-value" id="val-rate">—</span>
-          <span class="info-label">Visible</span><span class="info-value" id="val-vis">—</span>
+        <div class="info-grid">
+          <span class="info-label">Elevation</span><span class="info-value" id="val-el">&#8212;</span>
+          <span class="info-label">Azimuth</span><span class="info-value" id="val-az">&#8212;</span>
+          <span class="info-label">Range</span><span class="info-value" id="val-range">&#8212;</span>
+          <span class="info-label">Range rate</span><span class="info-value" id="val-rate">&#8212;</span>
+          <span class="info-label">Visible</span><span class="info-value" id="val-vis">&#8212;</span>
         </div>
       </div>
       <div class="radar-wrap">
@@ -219,20 +342,83 @@ canvas#radar { background: transparent; }
       </div>
     </div>
 
-    <!-- Pass prediction tab -->
+    <!-- Pass Prediction tab -->
     <div id="pane-passes" class="tab-pane">
-      <table>
-        <thead>
-          <tr>
-            <th>AOS (UTC)</th>
-            <th>Max El</th>
-            <th>Duration</th>
-            <th>AZ (IN→OUT)</th>
-            <th>Quality</th>
-          </tr>
-        </thead>
-        <tbody id="pass-tbody"></tbody>
-      </table>
+      <div class="pass-controls">
+        <div class="dt-row">
+          <span class="dt-label">From (UTC)</span>
+          <input type="datetime-local" id="pass-from">
+        </div>
+        <div class="dt-row">
+          <span class="dt-label">To (UTC)</span>
+          <input type="datetime-local" id="pass-to">
+        </div>
+        <div class="quick-row">
+          <button class="quick-btn" onclick="setPassRange(6)">+6h</button>
+          <button class="quick-btn" onclick="setPassRange(24)">+24h</button>
+          <button class="quick-btn" onclick="setPassRange(72)">+3d</button>
+          <button class="quick-btn" onclick="setPassRange(168)">+7d</button>
+          <button class="search-btn" onclick="if(selectedNorad)loadPasses(selectedNorad)">Search</button>
+        </div>
+      </div>
+      <div class="pass-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>AOS (UTC)</th><th>Max El</th><th>Duration</th><th>AZ In</th><th>Quality</th>
+            </tr>
+          </thead>
+          <tbody id="pass-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Group Pass tab -->
+    <div id="pane-group" class="tab-pane">
+      <div class="gp-controls">
+        <div class="dt-row">
+          <span class="dt-label">Group</span>
+          <select id="gp-group">
+            <option value="amateur">Amateur</option>
+            <option value="cubesat">CubeSat</option>
+            <option value="weather">Weather</option>
+            <option value="earth-obs">Earth Observation</option>
+            <option value="science">Science</option>
+            <option value="stations">Space Stations</option>
+            <option value="operational">Operational (AMSAT)</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+        <div class="dt-row">
+          <span class="dt-label">From (UTC)</span>
+          <input type="datetime-local" id="gp-from">
+        </div>
+        <div class="dt-row">
+          <span class="dt-label">To (UTC)</span>
+          <input type="datetime-local" id="gp-to">
+        </div>
+        <div class="gp-options-row">
+          <label class="dt-label">Min El
+            <input type="number" id="gp-minel" value="5" min="0" max="90" step="1">&#176;
+          </label>
+          <button class="search-btn" onclick="searchGroupPasses()">Search</button>
+        </div>
+      </div>
+      <div class="gp-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Satellite</th><th>AOS (UTC)</th><th>Max El</th><th>Duration</th><th>Quality</th>
+            </tr>
+          </thead>
+          <tbody id="gp-tbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="gp-pagination" style="display:none">
+        <button id="gp-prev" onclick="setGpPage(gpPage-1)">&#9664;</button>
+        <span class="pag-info" id="gp-info"></span>
+        <button id="gp-next" onclick="setGpPage(gpPage+1)">&#9654;</button>
+      </div>
     </div>
   </div>
 </div>
@@ -241,52 +427,85 @@ canvas#radar { background: transparent; }
 <script>
 'use strict';
 
-// ---------------------------------------------------------------------------
-// Global state
-// ---------------------------------------------------------------------------
+/* ── State ── */
+let allSatsFull = [];
 let allSats = [];
 let amsatMap = {};
+let favorites = new Set(JSON.parse(localStorage.getItem('gpreFavs') || '[]'));
 let selectedNorad = null;
 let ws = null;
 let radarView = null;
-let lastObs = null;
 let currentPassTrack = [];
 let currentPassAos = null;
 let currentPassLos = null;
+let gpAllResults = [];
+let gpPage = 0;
+const GP_PAGE_SIZE = 20;
 
-// ---------------------------------------------------------------------------
-// Tab switching
-// ---------------------------------------------------------------------------
+/* ── Helpers ── */
+const pad = n => String(n).padStart(2, '0');
+
+function utcLocalStr(d) {
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+function formatDuration(sec) {
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  return `${m}m ${pad(s)}s`;
+}
+
+function fmtAOS(iso) {
+  const d = new Date(iso);
+  return `${d.getUTCMonth()+1}/${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+function localInputToUTCMs(val) {
+  if (!val) return Date.now();
+  const [datePart, timePart] = val.split('T');
+  const [y, mo, dy] = datePart.split('-').map(Number);
+  const [h, mi, sc = 0] = timePart.split(':').map(Number);
+  return Date.UTC(y, mo - 1, dy, h, mi, sc);
+}
+
+/* ── Tab switching ── */
 function switchTab(id, btn) {
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('pane-' + id).classList.add('active');
   btn.classList.add('active');
+  if (id === 'track') setTimeout(resizeRadar, 50);
 }
 
-// ---------------------------------------------------------------------------
-// AMSAT matching
-// ---------------------------------------------------------------------------
+/* ── AMSAT matching ── */
 function getAmsatStatus(satName) {
   const lower = satName.toLowerCase();
   if (amsatMap[lower] !== undefined) return amsatMap[lower];
   for (const [key, status] of Object.entries(amsatMap)) {
     const idx = lower.indexOf(key);
     if (idx === -1) continue;
-    const before = idx === 0 ? true : !/[a-z0-9]/.test(lower[idx - 1]);
-    const after = (idx + key.length >= lower.length) ? true : !/[a-z0-9]/.test(lower[idx + key.length]);
+    const before = idx === 0 || !/[a-z0-9]/.test(lower[idx - 1]);
+    const after = idx + key.length >= lower.length || !/[a-z0-9]/.test(lower[idx + key.length]);
     if (before && after) return status;
   }
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Satellite list
-// ---------------------------------------------------------------------------
+/* ── Favorites ── */
+function toggleFav(norad) {
+  if (favorites.has(norad)) favorites.delete(norad);
+  else favorites.add(norad);
+  localStorage.setItem('gpreFavs', JSON.stringify([...favorites]));
+  if (document.getElementById('group-filter').value === 'favorites') {
+    allSats = allSatsFull.filter(s => favorites.has(s.norad_cat_id));
+  }
+  renderSatList();
+}
+
+/* ── Satellite list ── */
 function filterSats() {
   const q = document.getElementById('sat-search').value.toLowerCase();
   document.querySelectorAll('#sat-list li').forEach(li => {
-    li.style.display = li.dataset.name.includes(q) ? '' : 'none';
+    li.style.display = !q || li.dataset.name.includes(q) ? '' : 'none';
   });
 }
 
@@ -295,15 +514,41 @@ function renderSatList() {
   ul.innerHTML = '';
   allSats.forEach(sat => {
     const li = document.createElement('li');
-    li.textContent = sat.name;
-    li.dataset.name = sat.name.toLowerCase();
-    li.dataset.norad = sat.norad_cat_id;
+    const isFav = favorites.has(sat.norad_cat_id);
     const status = getAmsatStatus(sat.name);
     if (status === 'operational') li.classList.add('operational');
     else if (status === 'non_operational') li.classList.add('non_operational');
-    li.onclick = () => selectSat(sat.norad_cat_id, sat.name, li);
+    if (sat.norad_cat_id === selectedNorad) li.classList.add('selected');
+    li.dataset.name = sat.name.toLowerCase();
+    li.dataset.norad = sat.norad_cat_id;
+
+    const favSpan = document.createElement('span');
+    favSpan.className = 'fav-btn' + (isFav ? ' active' : '');
+    favSpan.textContent = isFav ? '★' : '☆';
+    favSpan.addEventListener('click', e => { e.stopPropagation(); toggleFav(sat.norad_cat_id); });
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'sat-name';
+    nameSpan.textContent = sat.name;
+
+    li.appendChild(favSpan);
+    li.appendChild(nameSpan);
+    li.addEventListener('click', () => selectSat(sat.norad_cat_id, sat.name, li));
     ul.appendChild(li);
   });
+}
+
+async function onGroupChange() {
+  const group = document.getElementById('group-filter').value;
+  if (group === 'favorites') {
+    allSats = allSatsFull.filter(s => favorites.has(s.norad_cat_id));
+  } else {
+    const url = group === 'all'
+      ? '/api/satellites'
+      : `/api/satellites?group=${encodeURIComponent(group)}`;
+    allSats = await fetch(url).then(r => r.json()).catch(() => []);
+  }
+  renderSatList();
 }
 
 function selectSat(norad, name, liElem) {
@@ -328,133 +573,56 @@ function resetTrackDisplay() {
   if (radarView) radarView.setTracks([]);
 }
 
-// ---------------------------------------------------------------------------
-// Pass track computation (approximation from pass API data)
-// ---------------------------------------------------------------------------
-function computePassTrack(p, nPoints = 20) {
-  const aosMs = new Date(p.aos).getTime();
-  const losMs = new Date(p.los).getTime();
-  const tcaMs = aosMs + (losMs - aosMs) / 2;
-  const maxEl = p.max_elevation_deg;
-  const aosAz = p.aos_azimuth_deg;
-  const losAz = p.los_azimuth_deg;
-
-  // Handle azimuth wrap-around for linear interpolation
-  let azDiff = losAz - aosAz;
-  if (azDiff > 180) azDiff -= 360;
-  if (azDiff < -180) azDiff += 360;
-
-  const points = [];
-  const totalPts = nPoints * 2 + 1;
-
-  for (let i = 0; i < totalPts; i++) {
-    const t = i / (totalPts - 1);
-    const ms = aosMs + t * (losMs - aosMs);
-
-    let el;
-    if (ms <= tcaMs) {
-      const t1 = tcaMs > aosMs ? (ms - aosMs) / (tcaMs - aosMs) : 0;
-      el = maxEl * Math.sin(Math.PI * t1 / 2);
-    } else {
-      const t1 = losMs > tcaMs ? (ms - tcaMs) / (losMs - tcaMs) : 1;
-      el = maxEl * Math.cos(Math.PI * t1 / 2);
-    }
-
-    const az = ((aosAz + t * azDiff) + 360) % 360;
-    points.push({ az, el: Math.max(0, el) });
-  }
-
-  return points;
-}
-
-// ---------------------------------------------------------------------------
-// WebSocket
-// ---------------------------------------------------------------------------
-function connectWS(norad) {
-  if (ws) { ws.close(); ws = null; }
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const url = `${proto}://${location.host}/ws/tracking?norad=${norad}`;
-  let sock;
-  try {
-    sock = new WebSocket(url);
-  } catch (e) {
-    setWsStatus(false);
-    return;
-  }
-  ws = sock;
-
-  ws.onopen = () => setWsStatus(true);
-  ws.onclose = () => {
-    setWsStatus(false);
-    ws = null;
-    // Auto-reconnect after 3 s if the same satellite is still selected
-    if (selectedNorad === norad) {
-      setTimeout(() => { if (selectedNorad === norad) connectWS(norad); }, 3000);
-    }
-  };
-  ws.onerror = () => setWsStatus(false);
-  ws.onmessage = e => {
-    try { updateTracking(JSON.parse(e.data)); }
-    catch (_) {}
-  };
-}
-
-function setWsStatus(on) {
-  const el = document.getElementById('ws-status');
-  el.textContent = on ? 'WS: ON' : 'WS: OFF';
-  el.className = on ? 'connected' : 'disconnected';
-}
-
-function updateTracking(data) {
-  if (data.error) return;
-  lastObs = data;
-
-  const el = data.elevation_deg.toFixed(1) + '°';
-  const az = data.azimuth_deg.toFixed(1) + '°';
-  const range = (data.range_km).toFixed(1) + ' km';
-  const rate = data.range_rate_km_s.toFixed(3) + ' km/s';
-  const vis = data.is_above_horizon;
-
-  document.getElementById('val-el').textContent = el;
-  document.getElementById('val-az').textContent = az;
-  document.getElementById('val-range').textContent = range;
-  document.getElementById('val-rate').textContent = rate;
-  const visEl = document.getElementById('val-vis');
-  visEl.textContent = vis ? 'Visible ▲' : 'Below horizon';
-  visEl.className = 'info-value ' + (vis ? 'visible' : 'hidden');
-
-  // Radar update with pass track
-  if (radarView && selectedNorad !== null) {
-    radarView.setTracks([{
-      name: document.getElementById('sat-name').textContent,
-      norad: selectedNorad,
-      azimuth: data.azimuth_deg,
-      elevation: data.elevation_deg,
-      isVisible: data.is_above_horizon,
-      track: currentPassTrack,
-      aosTime: currentPassAos,
-      losTime: currentPassLos,
-    }]);
+/* ── Radar resize ── */
+function resizeRadar() {
+  const wrap = document.querySelector('.radar-wrap');
+  if (!wrap) return;
+  const canvas = document.getElementById('radar');
+  const w = wrap.clientWidth - 16;
+  const h = wrap.clientHeight - 16;
+  const size = Math.max(180, Math.min(w, h));
+  if (canvas.width !== size || canvas.height !== size) {
+    canvas.width = size;
+    canvas.height = size;
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pass prediction
-// ---------------------------------------------------------------------------
+/* ── Pass prediction date range ── */
+function initDates() {
+  const now = new Date();
+  const plus24 = new Date(now.getTime() + 24 * 3600 * 1000);
+  document.getElementById('pass-from').value = utcLocalStr(now);
+  document.getElementById('pass-to').value = utcLocalStr(plus24);
+  document.getElementById('gp-from').value = utcLocalStr(now);
+  document.getElementById('gp-to').value = utcLocalStr(plus24);
+}
+
+function setPassRange(hours) {
+  const fromVal = document.getElementById('pass-from').value;
+  const fromMs = localInputToUTCMs(fromVal);
+  document.getElementById('pass-to').value = utcLocalStr(new Date(fromMs + hours * 3600 * 1000));
+  if (selectedNorad) loadPasses(selectedNorad);
+}
+
 function loadPasses(norad) {
+  const fromVal = document.getElementById('pass-from').value;
+  const toVal = document.getElementById('pass-to').value;
+  let url = `/api/satellites/${norad}/passes?track=true&min_el=5`;
+  if (fromVal && toVal) {
+    url += `&from_dt=${encodeURIComponent(fromVal)}&to_dt=${encodeURIComponent(toVal)}`;
+  }
   document.getElementById('pass-tbody').innerHTML =
-    '<tr><td colspan="5" style="text-align:center;color:#8b949e">Loading...</td></tr>';
-  fetch(`/api/satellites/${norad}/passes?hours=24&min_el=5&track=true`)
+    '<tr><td colspan="5" style="text-align:center;color:#8b949e">Loading…</td></tr>';
+  fetch(url)
     .then(r => r.json())
     .then(passes => {
       renderPasses(passes);
-      // Use server-computed track points for the next upcoming pass
       const now = Date.now();
-      const nextPass = passes.find(p => new Date(p.los).getTime() > now);
-      if (nextPass) {
-        currentPassTrack = nextPass.track_points || computePassTrack(nextPass);
-        currentPassAos = nextPass.aos;
-        currentPassLos = nextPass.los;
+      const next = passes.find(p => new Date(p.los).getTime() > now);
+      if (next) {
+        currentPassTrack = next.track_points || computePassTrack(next);
+        currentPassAos = next.aos;
+        currentPassLos = next.los;
       } else {
         currentPassTrack = [];
         currentPassAos = null;
@@ -474,36 +642,169 @@ function renderPasses(passes) {
     return;
   }
   tbody.innerHTML = passes.map(p => {
-    const aos = new Date(p.aos).toUTCString().slice(5, 22);
-    const dur = formatDuration(p.duration_seconds);
     const q = p.quality;
-    const az = `${p.aos_azimuth_deg.toFixed(0)}° → ${p.los_azimuth_deg.toFixed(0)}°`;
     return `<tr>
-      <td>${aos}</td>
+      <td>${fmtAOS(p.aos)}</td>
       <td class="quality-${q}">${p.max_elevation_deg.toFixed(1)}°</td>
-      <td>${dur}</td>
-      <td>${az}</td>
+      <td>${formatDuration(p.duration_seconds)}</td>
+      <td>${p.aos_azimuth_deg.toFixed(0)}°</td>
       <td class="quality-${q}">${q}</td>
     </tr>`;
   }).join('');
 }
 
-function formatDuration(sec) {
-  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
-  return `${m}m ${String(s).padStart(2,'0')}s`;
+/* ── Group Pass ── */
+async function searchGroupPasses() {
+  const group = document.getElementById('gp-group').value;
+  const fromVal = document.getElementById('gp-from').value;
+  const toVal = document.getElementById('gp-to').value;
+  const minEl = document.getElementById('gp-minel').value || '5';
+  document.getElementById('gp-tbody').innerHTML =
+    '<tr><td colspan="5" style="text-align:center;color:#8b949e">Searching…</td></tr>';
+  document.getElementById('gp-pagination').style.display = 'none';
+  let url = `/api/passes/group?group=${encodeURIComponent(group)}&min_el=${minEl}`;
+  if (fromVal) url += `&from_dt=${encodeURIComponent(fromVal)}`;
+  if (toVal) url += `&to_dt=${encodeURIComponent(toVal)}`;
+  gpAllResults = await fetch(url).then(r => r.json()).catch(() => []);
+  gpPage = 0;
+  renderGroupPassPage();
 }
 
-// ---------------------------------------------------------------------------
-// Init
-// ---------------------------------------------------------------------------
+function renderGroupPassPage() {
+  const tbody = document.getElementById('gp-tbody');
+  const pag = document.getElementById('gp-pagination');
+  if (!gpAllResults.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#8b949e">No passes found</td></tr>';
+    pag.style.display = 'none';
+    return;
+  }
+  const totalPages = Math.ceil(gpAllResults.length / GP_PAGE_SIZE);
+  const start = gpPage * GP_PAGE_SIZE;
+  const page = gpAllResults.slice(start, start + GP_PAGE_SIZE);
+  tbody.innerHTML = page.map(p => {
+    const q = p.quality;
+    const isOp = getAmsatStatus(p.sat_name) === 'operational';
+    return `<tr>
+      <td${isOp ? ' class="operational"' : ''}>${escHtml(p.sat_name)}</td>
+      <td>${fmtAOS(p.aos)}</td>
+      <td class="quality-${q}">${p.max_elevation_deg.toFixed(1)}°</td>
+      <td>${formatDuration(p.duration_seconds)}</td>
+      <td class="quality-${q}">${q}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('gp-info').textContent =
+    `${start+1}–${Math.min(start+GP_PAGE_SIZE, gpAllResults.length)} / ${gpAllResults.length}`;
+  document.getElementById('gp-prev').disabled = gpPage === 0;
+  document.getElementById('gp-next').disabled = gpPage >= totalPages - 1;
+  pag.style.display = 'flex';
+}
+
+function setGpPage(page) {
+  const total = Math.ceil(gpAllResults.length / GP_PAGE_SIZE);
+  gpPage = Math.max(0, Math.min(page, total - 1));
+  renderGroupPassPage();
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ── WebSocket ── */
+function connectWS(norad) {
+  if (ws) { ws.close(); ws = null; }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  let sock;
+  try { sock = new WebSocket(`${proto}://${location.host}/ws/tracking?norad=${norad}`); }
+  catch (_) { setWsStatus(false); return; }
+  ws = sock;
+  ws.onopen = () => setWsStatus(true);
+  ws.onclose = () => {
+    setWsStatus(false);
+    ws = null;
+    if (selectedNorad === norad) setTimeout(() => { if (selectedNorad === norad) connectWS(norad); }, 3000);
+  };
+  ws.onerror = () => setWsStatus(false);
+  ws.onmessage = e => { try { updateTracking(JSON.parse(e.data)); } catch (_) {} };
+}
+
+function setWsStatus(on) {
+  const el = document.getElementById('ws-status');
+  el.textContent = on ? 'WS: ON' : 'WS: OFF';
+  el.className = on ? 'connected' : 'disconnected';
+}
+
+function updateTracking(data) {
+  if (data.error) return;
+  document.getElementById('val-el').textContent = data.elevation_deg.toFixed(1) + '°';
+  document.getElementById('val-az').textContent = data.azimuth_deg.toFixed(1) + '°';
+  document.getElementById('val-range').textContent = data.range_km.toFixed(1) + ' km';
+  document.getElementById('val-rate').textContent = data.range_rate_km_s.toFixed(3) + ' km/s';
+  const visEl = document.getElementById('val-vis');
+  visEl.textContent = data.is_above_horizon ? 'Visible ▲' : 'Below horizon';
+  visEl.className = 'info-value ' + (data.is_above_horizon ? 'visible' : 'hidden');
+  if (radarView && selectedNorad !== null) {
+    radarView.setTracks([{
+      name: document.getElementById('sat-name').textContent,
+      norad: selectedNorad,
+      azimuth: data.azimuth_deg,
+      elevation: data.elevation_deg,
+      isVisible: data.is_above_horizon,
+      track: currentPassTrack,
+      aosTime: currentPassAos,
+      losTime: currentPassLos,
+    }]);
+  }
+}
+
+/* ── Pass track approximation ── */
+function computePassTrack(p, nPoints = 20) {
+  const aosMs = new Date(p.aos).getTime();
+  const losMs = new Date(p.los).getTime();
+  const tcaMs = aosMs + (losMs - aosMs) / 2;
+  const maxEl = p.max_elevation_deg;
+  const aosAz = p.aos_azimuth_deg;
+  const losAz = p.los_azimuth_deg;
+  let azDiff = losAz - aosAz;
+  if (azDiff > 180) azDiff -= 360;
+  if (azDiff < -180) azDiff += 360;
+  const totalPts = nPoints * 2 + 1;
+  const points = [];
+  for (let i = 0; i < totalPts; i++) {
+    const t = i / (totalPts - 1);
+    const ms = aosMs + t * (losMs - aosMs);
+    let el;
+    if (ms <= tcaMs) {
+      const t1 = tcaMs > aosMs ? (ms - aosMs) / (tcaMs - aosMs) : 0;
+      el = maxEl * Math.sin(Math.PI * t1 / 2);
+    } else {
+      const t1 = losMs > tcaMs ? (ms - tcaMs) / (losMs - tcaMs) : 1;
+      el = maxEl * Math.cos(Math.PI * t1 / 2);
+    }
+    points.push({ az: ((aosAz + t * azDiff) + 360) % 360, el: Math.max(0, el) });
+  }
+  return points;
+}
+
+/* ── Init ── */
 async function init() {
   radarView = new RadarView('radar');
+  initDates();
+
+  const wrap = document.querySelector('.radar-wrap');
+  if (wrap) {
+    if (window.ResizeObserver) {
+      new ResizeObserver(() => resizeRadar()).observe(wrap);
+    }
+    window.addEventListener('resize', resizeRadar);
+    setTimeout(resizeRadar, 100);
+  }
 
   const [sats, amsat] = await Promise.all([
     fetch('/api/satellites').then(r => r.json()).catch(() => []),
     fetch('/api/amsat').then(r => r.json()).catch(() => ({})),
   ]);
 
+  allSatsFull = sats;
   allSats = sats;
   amsatMap = amsat;
   renderSatList();

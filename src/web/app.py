@@ -106,6 +106,21 @@ class PassOut(BaseModel):
     track_points: list[dict[str, float]] | None = None  # track=true 時のみ返す
 
 
+class GroupPassOut(BaseModel):
+    """グループパス予測レスポンス"""
+
+    norad_cat_id: int
+    sat_name: str
+    aos: str
+    tca: str
+    los: str
+    max_elevation_deg: float
+    aos_azimuth_deg: float
+    los_azimuth_deg: float
+    duration_seconds: float
+    quality: str
+
+
 class TLEStatusOut(BaseModel):
     """TLE 品質情報レスポンス"""
 
@@ -204,6 +219,42 @@ def _build_tracking_payload(norad: int, engine: SatelliteEngine | None) -> dict[
 # ---------------------------------------------------------------------------
 # アプリファクトリー
 # ---------------------------------------------------------------------------
+
+
+def _get_amsat_map(db: sqlite3.Connection) -> dict[str, str]:
+    """AMSAT 運用状況マップを DB から取得する。"""
+    row = db.execute("SELECT value FROM app_settings WHERE key = 'amsat_status_data'").fetchone()
+    if row is None or not row[0]:
+        return {}
+    try:
+        return dict(json.loads(row[0]))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+
+def _amsat_status(name: str, amsat_map: dict[str, str]) -> str | None:
+    """AMSAT 運用状況マップから衛星の運用状況を返す（単語境界マッチング）。"""
+    lower = name.lower()
+    if lower in amsat_map:
+        return amsat_map[lower]
+    for key, status in amsat_map.items():
+        idx = lower.find(key)
+        if idx == -1:
+            continue
+        before_ok = idx == 0 or not lower[idx - 1].isalnum()
+        after_idx = idx + len(key)
+        after_ok = after_idx >= len(lower) or not lower[after_idx].isalnum()
+        if before_ok and after_ok:
+            return status
+    return None
+
+
+def _parse_dt_utc(s: str) -> datetime:
+    """ISO 8601 文字列を UTC aware datetime に変換する。タイムゾーン未指定は UTC とみなす。"""
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 
 
 def _compute_track_points(
@@ -318,12 +369,41 @@ def create_app(
 
     @app.get("/api/satellites", response_model=list[SatelliteOut])
     async def list_satellites(
+        group: str | None = Query(default=None, description="tle_group フィルター"),
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[SatelliteOut]:
-        """衛星一覧を名前順で返す。"""
-        rows = db.execute(
-            "SELECT norad_cat_id, name, alt_names, status, updated_at FROM satellites ORDER BY name"
-        ).fetchall()
+        """衛星一覧を名前順で返す。group を指定するとグループでフィルタリング。"""
+        if group == "operational":
+            amsat_map = _get_amsat_map(db)
+            rows = db.execute(
+                "SELECT norad_cat_id, name, alt_names, status, updated_at"
+                " FROM satellites ORDER BY name"
+            ).fetchall()
+            return [
+                SatelliteOut(
+                    norad_cat_id=row["norad_cat_id"],
+                    name=row["name"],
+                    alt_names=_parse_alt_names(row["alt_names"]),
+                    status=row["status"] or "unknown",
+                    updated_at=row["updated_at"],
+                )
+                for row in rows
+                if _amsat_status(str(row["name"]), amsat_map) == "operational"
+            ]
+        if group and group not in ("all", "favorites"):
+            rows = db.execute(
+                "SELECT s.norad_cat_id, s.name, s.alt_names, s.status, s.updated_at"
+                " FROM satellites s"
+                " JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id"
+                " WHERE t.tle_group = ?"
+                " ORDER BY s.name",
+                (group,),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT norad_cat_id, name, alt_names, status, updated_at"
+                " FROM satellites ORDER BY name"
+            ).fetchall()
         return [
             SatelliteOut(
                 norad_cat_id=row["norad_cat_id"],
@@ -383,12 +463,15 @@ def create_app(
         hours: float = Query(default=24.0, gt=0, le=168, description="予測時間幅（時間）"),
         min_el: float = Query(default=5.0, ge=0, le=90, description="最低仰角（度）"),
         track: bool = Query(default=False, description="15秒刻みの軌跡点（az, el）を含める"),
+        from_dt: str | None = Query(default=None, description="開始日時 (ISO 8601)"),
+        to_dt: str | None = Query(default=None, description="終了日時 (ISO 8601)"),
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[PassOut]:
         """
         指定衛星のパス予測を返す。
 
         track=true を指定すると各パスに 15 秒刻みの仰角・方位角リストが付く。
+        from_dt/to_dt を指定すると任意の期間を検索できる。省略時は now から hours 時間。
         pass_predictor が None の場合は常に空リストを返す（エンジンなし状態）。
         """
         if (
@@ -397,13 +480,23 @@ def create_app(
         ):
             raise HTTPException(status_code=404, detail=f"Satellite {norad} not found")
 
+        now = datetime.now(UTC)
+        if from_dt is not None or to_dt is not None:
+            try:
+                start = _parse_dt_utc(from_dt) if from_dt is not None else now
+                end = _parse_dt_utc(to_dt) if to_dt is not None else start + timedelta(hours=hours)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid datetime: {exc}") from exc
+            if end <= start:
+                raise HTTPException(status_code=422, detail="to_dt must be after from_dt")
+        else:
+            start = now
+            end = now + timedelta(hours=hours)
+
         if pass_predictor is None:
             return []
 
-        now = datetime.now(UTC)
-        passes = pass_predictor.get_passes(
-            norad, now, now + timedelta(hours=hours), min_elevation_deg=min_el
-        )
+        passes = pass_predictor.get_passes(norad, start, end, min_elevation_deg=min_el)
         result: list[PassOut] = []
         for p in passes:
             tp = (
@@ -428,6 +521,76 @@ def create_app(
                 )
             )
         return result
+
+    @app.get("/api/passes/group", response_model=list[GroupPassOut])
+    async def get_group_passes(
+        group: str = Query(default="amateur", description="グループフィルター"),
+        from_dt: str | None = Query(default=None, description="開始日時 (ISO 8601)"),
+        to_dt: str | None = Query(default=None, description="終了日時 (ISO 8601)"),
+        min_el: float = Query(default=5.0, ge=0, le=90, description="最低仰角（度）"),
+        db: sqlite3.Connection = Depends(get_conn),
+    ) -> list[GroupPassOut]:
+        """グループ内全衛星のパス予測を AOS 順で返す。pass_predictor が None の場合は空リスト。"""
+        now = datetime.now(UTC)
+        try:
+            start = _parse_dt_utc(from_dt) if from_dt is not None else now
+            end = _parse_dt_utc(to_dt) if to_dt is not None else now + timedelta(hours=24)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid datetime: {exc}") from exc
+        if end <= start:
+            raise HTTPException(status_code=422, detail="to_dt must be after from_dt")
+
+        if pass_predictor is None:
+            return []
+
+        if group == "operational":
+            amsat_map = _get_amsat_map(db)
+            all_sat_rows = db.execute(
+                "SELECT s.norad_cat_id, s.name FROM satellites s"
+                " JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id"
+            ).fetchall()
+            sat_rows = [
+                r for r in all_sat_rows if _amsat_status(str(r["name"]), amsat_map) == "operational"
+            ]
+        elif group == "all":
+            sat_rows = db.execute(
+                "SELECT s.norad_cat_id, s.name FROM satellites s"
+                " JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id"
+            ).fetchall()
+        else:
+            sat_rows = db.execute(
+                "SELECT s.norad_cat_id, s.name FROM satellites s"
+                " JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id"
+                " WHERE t.tle_group = ?",
+                (group,),
+            ).fetchall()
+
+        results: list[GroupPassOut] = []
+        for row in sat_rows:
+            norad = int(row["norad_cat_id"])
+            name = str(row["name"])
+            try:
+                passes = pass_predictor.get_passes(norad, start, end, min_elevation_deg=min_el)
+            except Exception as exc:
+                logger.warning("group_passes: skip norad=%d: %s", norad, exc)
+                continue
+            for p in passes:
+                results.append(
+                    GroupPassOut(
+                        norad_cat_id=norad,
+                        sat_name=name,
+                        aos=p.aos.isoformat(),
+                        tca=p.tca.isoformat(),
+                        los=p.los.isoformat(),
+                        max_elevation_deg=p.max_elevation_deg,
+                        aos_azimuth_deg=p.aos_azimuth_deg,
+                        los_azimuth_deg=p.los_azimuth_deg,
+                        duration_seconds=p.duration_s,
+                        quality=pass_quality(p.max_elevation_deg),
+                    )
+                )
+        results.sort(key=lambda x: x.aos)
+        return results
 
     @app.get("/api/tle/status", response_model=list[TLEStatusOut])
     async def tle_status(
