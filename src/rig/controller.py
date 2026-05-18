@@ -18,6 +18,7 @@ import contextlib
 import logging
 import socket
 import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -219,6 +220,23 @@ class RigController(ABC):
     @abstractmethod
     def set_vfo(self, vfo: str) -> bool:
         """アクティブ VFO を切り替える（"VFOA" / "VFOB" / "Main" / "Sub"）。"""
+
+    def set_vfo_frequencies(
+        self,
+        vfoa_hz: float | None,
+        vfob_hz: float | None,
+    ) -> bool:
+        """VFOA・VFOB の周波数を安全に設定する。
+
+        サブクラスでオーバーライド可能。デフォルトは set_frequency を順次呼ぶ。
+        未接続時は False。失敗時は RigControlError を送出する。
+        """
+        ok = True
+        if vfoa_hz is not None:
+            ok = self.set_frequency(vfoa_hz, "VFOA") and ok
+        if vfob_hz is not None:
+            ok = self.set_frequency(vfob_hz, "VFOB") and ok
+        return ok
 
     # -- ユーティリティ --
 
@@ -645,15 +663,8 @@ class HamlibNetController(RigController):
 
     # -- 周波数・モード --
 
-    def set_frequency(self, freq_hz: float, vfo: str = "VFOA") -> bool:
-        """周波数を設定する。
-
-        未接続時は False を返す。
-        接続中にコマンドが失敗した場合は RigControlError を送出する。
-        split コマンドは送信しない（FTX-1 等の split 問題を回避するため）。
-        """
-        if not self.is_connected:
-            return False
+    def _set_one_vfo(self, vfo: str, freq_hz: float) -> None:
+        """単一 VFO の周波数を設定する内部ヘルパー。失敗時は RigControlError。"""
         norm_vfo = self._normalize_vfo(vfo)
         if self._vfo_mode:
             resp = self._cmd(f"\\set_freq {norm_vfo} {int(freq_hz)}")
@@ -666,6 +677,44 @@ class HamlibNetController(RigController):
             raise RigControlError(f"set_frequency({freq_hz!r}, {norm_vfo!r}) failed: {resp!r}")
         with self._lock:
             self._freq_state.freq_hz = freq_hz
+
+    def set_frequency(self, freq_hz: float, vfo: str = "VFOA") -> bool:
+        """周波数を設定する。
+
+        未接続時は False を返す。
+        接続中にコマンドが失敗した場合は RigControlError を送出する。
+        split コマンドは送信しない（FTX-1 等の split 問題を回避するため）。
+        """
+        if not self.is_connected:
+            return False
+        self._set_one_vfo(vfo, freq_hz)
+        return True
+
+    def set_vfo_frequencies(
+        self,
+        vfoa_hz: float | None,
+        vfob_hz: float | None,
+    ) -> bool:
+        """VFOA・VFOB の周波数を安定したシーケンスで設定し、最後に VFOA へ戻す。
+
+        - コマンド間に 50 ms のウェイトを挿入して VFO 切り替えを安定させる
+        - vfo_mode=False では最後に V VFOA を送信してアクティブ VFO をダウンリンク側に戻す
+        - vfo_mode=True では \\set_freq で直接指定するため VFO 切り替えは発生しない
+        - split コマンドは送信しない（FTX-1 の split 問題を回避するため）
+        """
+        if not self.is_connected:
+            return False
+        if vfoa_hz is not None:
+            self._set_one_vfo("VFOA", vfoa_hz)
+        if vfob_hz is not None:
+            time.sleep(0.05)
+            self._set_one_vfo("VFOB", vfob_hz)
+        # vfo_mode=False かつ VFOB を操作したときはアクティブ VFO を VFOA へ戻す
+        if not self._vfo_mode and vfob_hz is not None:
+            time.sleep(0.05)
+            resp = self._cmd("V VFOA")
+            if "RPRT 0" not in resp:
+                raise RigControlError(f"restore VFOA failed: {resp!r}")
         return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:

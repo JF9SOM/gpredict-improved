@@ -735,10 +735,7 @@ class MainWindow(QMainWindow):
             # 接続中の無線機にドップラー補正済み周波数を送信
             if self._rig_controller is not None and self._rig_controller.is_connected:
                 try:
-                    if dl_corr is not None:
-                        self._rig_controller.set_frequency(dl_corr, "VFOA")
-                    if ul_corr is not None:
-                        self._rig_controller.set_frequency(ul_corr, "VFOB")
+                    self._rig_controller.set_vfo_frequencies(dl_corr, ul_corr)
                 except RigControlError as exc:
                     logger.warning("RigControlError: %s", exc)
                     sb = self.statusBar()

@@ -407,6 +407,68 @@ class TestHamlibNetController:
         assert b"V VFOB\n" in sent
         assert b"F 145900000\n" in sent
 
+    # -- set_vfo_frequencies --
+
+    def test_set_vfo_frequencies_disconnected_returns_false(self) -> None:
+        """未接続のとき False を返す（例外なし）。"""
+        ctrl = self._make_ctrl()
+        assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
+
+    def test_set_vfo_frequencies_vfo_mode_false_full_sequence(self) -> None:
+        """vfo_mode=False: V VFOA→F→V VFOB→F→V VFOA(リストア) の順で送信する。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._vfo_mode = False
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        with patch("rig.controller.time.sleep"):
+            ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+        # 全コマンドが含まれていること
+        sent = b"".join(calls)
+        assert b"V VFOA\n" in sent
+        assert b"F 145000000\n" in sent
+        assert b"V VFOB\n" in sent
+        assert b"F 144000000\n" in sent
+        # 最後の V VFOA（リストア）が最後の F コマンドより後にある
+        last_restore = max(i for i, c in enumerate(calls) if c == b"V VFOA\n")
+        last_freq = max(i for i, c in enumerate(calls) if c.startswith(b"F "))
+        assert last_restore > last_freq
+
+    def test_set_vfo_frequencies_vfo_mode_true_no_v_command(self) -> None:
+        """vfo_mode=True: \\\\set_freq を使い V コマンドを送らない（リストア不要）。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._vfo_mode = True
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        with patch("rig.controller.time.sleep"):
+            ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+        sent = b"".join(calls)
+        assert b"\\set_freq VFOA 145000000\n" in sent
+        assert b"\\set_freq VFOB 144000000\n" in sent
+        # VFO 切り替えコマンドなし
+        assert b"V VFOA\n" not in sent
+        assert b"V VFOB\n" not in sent
+
+    def test_set_vfo_frequencies_vfoa_only_no_restore(self) -> None:
+        """VFOB が None のとき V VFOA リストアは送信しない。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._vfo_mode = False
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        with patch("rig.controller.time.sleep"):
+            ctrl.set_vfo_frequencies(145_000_000.0, None)
+        assert b"V VFOB\n" not in b"".join(calls)
+        # V VFOA は VFOA 設定の 1 回のみ（リストア用は不要）
+        assert b"".join(calls).count(b"V VFOA\n") == 1
+
+    def test_set_vfo_frequencies_sleep_called_between_commands(self) -> None:
+        """VFOB 設定前後に time.sleep が呼ばれる（計 2 回）。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._vfo_mode = False
+        with patch("rig.controller.time.sleep") as mock_sleep:
+            ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_called_with(0.05)
+
 
 # ---------------------------------------------------------------------------
 # HamlibRotatorController
