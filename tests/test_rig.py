@@ -414,60 +414,41 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
-    def test_set_vfo_frequencies_vfo_mode_false_full_sequence(self) -> None:
-        """vfo_mode=False: V VFOA→F→V VFOB→F→V VFOA(リストア) の順で送信する。"""
+    def test_set_vfo_frequencies_sends_main_sub(self) -> None:
+        """\\set_freq Main / \\set_freq Sub を送信し V コマンドを一切送らない。"""
         ctrl = self._make_connected_ctrl()
-        ctrl._vfo_mode = False
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
-        with patch("rig.controller.time.sleep"):
-            ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
-        # 全コマンドが含まれていること
+        ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
-        assert b"V VFOA\n" in sent
-        assert b"F 145000000\n" in sent
-        assert b"V VFOB\n" in sent
-        assert b"F 144000000\n" in sent
-        # 最後の V VFOA（リストア）が最後の F コマンドより後にある
-        last_restore = max(i for i, c in enumerate(calls) if c == b"V VFOA\n")
-        last_freq = max(i for i, c in enumerate(calls) if c.startswith(b"F "))
-        assert last_restore > last_freq
-
-    def test_set_vfo_frequencies_vfo_mode_true_no_v_command(self) -> None:
-        """vfo_mode=True: \\\\set_freq を使い V コマンドを送らない（リストア不要）。"""
-        ctrl = self._make_connected_ctrl()
-        ctrl._vfo_mode = True
-        calls: list[bytes] = []
-        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
-        with patch("rig.controller.time.sleep"):
-            ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
-        sent = b"".join(calls)
-        assert b"\\set_freq VFOA 145000000\n" in sent
-        assert b"\\set_freq VFOB 144000000\n" in sent
-        # VFO 切り替えコマンドなし
+        assert b"\\set_freq Main 145000000\n" in sent
+        assert b"\\set_freq Sub 144000000\n" in sent
         assert b"V VFOA\n" not in sent
         assert b"V VFOB\n" not in sent
 
-    def test_set_vfo_frequencies_vfoa_only_no_restore(self) -> None:
-        """VFOB が None のとき V VFOA リストアは送信しない。"""
+    def test_set_vfo_frequencies_vfoa_only(self) -> None:
+        """vfob_hz=None のとき \\set_freq Main のみ送信し Sub は送らない。"""
         ctrl = self._make_connected_ctrl()
-        ctrl._vfo_mode = False
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
-        with patch("rig.controller.time.sleep"):
-            ctrl.set_vfo_frequencies(145_000_000.0, None)
-        assert b"V VFOB\n" not in b"".join(calls)
-        # V VFOA は VFOA 設定の 1 回のみ（リストア用は不要）
-        assert b"".join(calls).count(b"V VFOA\n") == 1
+        ctrl.set_vfo_frequencies(145_000_000.0, None)
+        sent = b"".join(calls)
+        assert b"\\set_freq Main 145000000\n" in sent
+        assert b"\\set_freq Sub" not in sent
 
-    def test_set_vfo_frequencies_sleep_called_between_commands(self) -> None:
-        """VFOB 設定前後に time.sleep が呼ばれる（計 2 回）。"""
-        ctrl = self._make_connected_ctrl()
-        ctrl._vfo_mode = False
-        with patch("rig.controller.time.sleep") as mock_sleep:
+    def test_set_vfo_frequencies_vfo_mode_irrelevant(self) -> None:
+        """vfo_mode の値に関わらず \\set_freq Main/Sub を使い V コマンドを送らない。"""
+        for vfo_mode in (True, False):
+            ctrl = self._make_connected_ctrl()
+            ctrl._vfo_mode = vfo_mode
+            calls: list[bytes] = []
+            ctrl._sock.sendall.side_effect = lambda data, c=calls: c.append(data)  # type: ignore[union-attr]
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
-        assert mock_sleep.call_count == 2
-        mock_sleep.assert_called_with(0.05)
+            sent = b"".join(calls)
+            assert b"\\set_freq Main 145000000\n" in sent, f"vfo_mode={vfo_mode}"
+            assert b"\\set_freq Sub 144000000\n" in sent, f"vfo_mode={vfo_mode}"
+            assert b"V VFOA\n" not in sent, f"vfo_mode={vfo_mode}"
+            assert b"V VFOB\n" not in sent, f"vfo_mode={vfo_mode}"
 
 
 # ---------------------------------------------------------------------------
