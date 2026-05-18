@@ -428,10 +428,9 @@ canvas#radar { background: transparent; }
 'use strict';
 
 /* ── State ── */
-let allSatsFull = [];
 let allSats = [];
 let amsatMap = {};
-let favorites = new Set(JSON.parse(localStorage.getItem('gpreFavs') || '[]'));
+let favorites = new Set();
 let selectedNorad = null;
 let ws = null;
 let radarView = null;
@@ -491,12 +490,16 @@ function getAmsatStatus(satName) {
 }
 
 /* ── Favorites ── */
-function toggleFav(norad) {
-  if (favorites.has(norad)) favorites.delete(norad);
+async function toggleFav(norad) {
+  const wasFav = favorites.has(norad);
+  const resp = await fetch(`/api/favorites/${norad}`, {
+    method: wasFav ? 'DELETE' : 'POST'
+  }).catch(() => null);
+  if (!resp || !resp.ok) return;
+  if (wasFav) favorites.delete(norad);
   else favorites.add(norad);
-  localStorage.setItem('gpreFavs', JSON.stringify([...favorites]));
   if (document.getElementById('group-filter').value === 'favorites') {
-    allSats = allSatsFull.filter(s => favorites.has(s.norad_cat_id));
+    allSats = await fetch('/api/satellites?group=favorites').then(r => r.json()).catch(() => allSats);
   }
   renderSatList();
 }
@@ -540,14 +543,10 @@ function renderSatList() {
 
 async function onGroupChange() {
   const group = document.getElementById('group-filter').value;
-  if (group === 'favorites') {
-    allSats = allSatsFull.filter(s => favorites.has(s.norad_cat_id));
-  } else {
-    const url = group === 'all'
-      ? '/api/satellites'
-      : `/api/satellites?group=${encodeURIComponent(group)}`;
-    allSats = await fetch(url).then(r => r.json()).catch(() => []);
-  }
+  const url = group === 'all'
+    ? '/api/satellites'
+    : `/api/satellites?group=${encodeURIComponent(group)}`;
+  allSats = await fetch(url).then(r => r.json()).catch(() => []);
   renderSatList();
 }
 
@@ -799,14 +798,15 @@ async function init() {
     setTimeout(resizeRadar, 100);
   }
 
-  const [sats, amsat] = await Promise.all([
+  const [sats, amsat, favSats] = await Promise.all([
     fetch('/api/satellites').then(r => r.json()).catch(() => []),
     fetch('/api/amsat').then(r => r.json()).catch(() => ({})),
+    fetch('/api/favorites').then(r => r.json()).catch(() => []),
   ]);
 
-  allSatsFull = sats;
   allSats = sats;
   amsatMap = amsat;
+  favorites = new Set(favSats.map(s => s.norad_cat_id));
   renderSatList();
 }
 
