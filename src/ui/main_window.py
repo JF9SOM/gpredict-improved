@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import sqlite3
@@ -49,6 +50,12 @@ from data.amsat_status import AMSATStatusFetcher
 from data.tle_manager import TLEManager
 from data.transmitter_manager import TransmitterManager
 from i18n import _
+from rig.controller import (
+    HamlibDirectController,
+    HamlibNetController,
+    RigControlError,
+    RigController,
+)
 from ui.pass_chart import PassChartView
 from ui.pass_panel import PassPanel
 from ui.radar_view import SAT_COLORS, RadarView, SatTrackData
@@ -227,6 +234,7 @@ class MainWindow(QMainWindow):
         self._scheduler: Any | None = None
         self._amsat_fetcher = AMSATStatusFetcher(conn)
         self._transmitter_manager = TransmitterManager(conn)
+        self._rig_controller: RigController | None = None
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
@@ -241,6 +249,7 @@ class MainWindow(QMainWindow):
         # バックグラウンドスレッドからの衛星リスト更新要求を受け取るシグナルを接続
         self._satellite_list_refresh.connect(self._load_satellites)
         self._load_satellites()
+        self._load_rig_settings()
 
         if fastapi_app is not None:
             self._start_web_server(fastapi_app, web_port)
@@ -723,7 +732,20 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(
                 dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss
             )
+            # 接続中の無線機にドップラー補正済み周波数を送信
+            if self._rig_controller is not None and self._rig_controller.is_connected:
+                try:
+                    if dl_corr is not None:
+                        self._rig_controller.set_frequency(dl_corr, "VFOA")
+                    if ul_corr is not None:
+                        self._rig_controller.set_frequency(ul_corr, "VFOB")
+                except RigControlError as exc:
+                    logger.warning("RigControlError: %s", exc)
+                    sb = self.statusBar()
+                    if sb:
+                        sb.showMessage(f"RIG: {exc}", 3000)
         self._radio_control.refresh_status()
+        self._update_rig_label()
 
     def _update_statusbar(self) -> None:
         """ステータスバーの QTH テキストと TLE 最終更新日時を更新する。"""
@@ -1019,7 +1041,43 @@ class MainWindow(QMainWindow):
         from ui.rig_dialog import RigSettingsDialog
 
         dialog = RigSettingsDialog(self._conn, parent=self)
-        dialog.exec()
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._load_rig_settings()
+
+    def _load_rig_settings(self) -> None:
+        """DB から無線機設定を読み込みコントローラーを生成する。"""
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'rig_settings'"
+            ).fetchone()
+            if row is None:
+                return
+            settings: dict[str, Any] = json.loads(row["value"])
+            mode = settings.get("mode", "net")
+            if mode == "net":
+                host = str(settings.get("host", "localhost"))
+                port = int(settings.get("net_port", 4532))
+                self._rig_controller = HamlibNetController(host=host, port=port)
+            else:
+                model_id = int(settings.get("model_id", 1))
+                serial_port = str(settings.get("port", "/dev/ttyUSB0"))
+                baud = int(settings.get("baud_rate", 9600))
+                self._rig_controller = HamlibDirectController(
+                    model_id=model_id, port=serial_port, baud_rate=baud
+                )
+            self._radio_control.set_rig(self._rig_controller)
+            self._update_rig_label()
+        except Exception as exc:
+            logger.warning("Failed to load rig settings: %s", exc)
+
+    def _update_rig_label(self) -> None:
+        """ステータスバーの RIG ラベルを更新する。"""
+        if self._rig_controller is None:
+            self._rig_label.setText(_("RIG: 未接続"))
+        elif self._rig_controller.is_connected:
+            self._rig_label.setText(_("RIG: 接続中"))
+        else:
+            self._rig_label.setText(_("RIG: 切断"))
 
     def _on_rotator_settings(self) -> None:
         QMessageBox.information(

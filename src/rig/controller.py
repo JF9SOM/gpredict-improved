@@ -143,6 +143,10 @@ class VersionInfo:
             )
 
 
+class RigControlError(Exception):
+    """無線機制御エラー（rigctld コマンド失敗・通信エラー時に送出）。"""
+
+
 # ---------------------------------------------------------------------------
 # 抽象基底クラス — RigController
 # ---------------------------------------------------------------------------
@@ -508,8 +512,15 @@ class HamlibNetController(RigController):
         self._host = host
         self._port = port
         self._sock: socket.socket | None = None
+        self._vfo_mode: bool = False
 
     # -- 接続管理 --
+
+    @property
+    def is_connected(self) -> bool:
+        """接続中かつソケットが有効なときのみ True。"""
+        with self._lock:
+            return self._state == RigState.CONNECTED and self._sock is not None
 
     def connect(self) -> bool:
         """rigctld への TCP 接続を確立する。"""
@@ -525,7 +536,13 @@ class HamlibNetController(RigController):
             self._sock = sock
             with self._lock:
                 self._state = RigState.CONNECTED
-            logger.info("RigNet: connected to %s:%d", self._host, self._port)
+            self._vfo_mode = self._detect_vfo_mode()
+            logger.info(
+                "RigNet: connected to %s:%d (vfo_mode=%s)",
+                self._host,
+                self._port,
+                self._vfo_mode,
+            )
             return True
         except OSError as exc:
             with self._lock:
@@ -551,35 +568,77 @@ class HamlibNetController(RigController):
     # -- 低レベル通信 --
 
     def _cmd(self, command: str) -> str:
-        """rigctld にコマンドを送り、応答を返す。エラー時は空文字列。"""
+        """rigctld にコマンドを送り、応答を返す。
+
+        拡張コマンド（\\ で始まる）は RPRT 行まで、
+        通常コマンドは最初の改行まで読む。
+        OSError 発生時はソケットを閉じて DISCONNECTED に遷移する。
+        """
         if self._sock is None:
             return ""
         try:
             self._sock.sendall((command + "\n").encode())
             data = b""
+            is_extended = command.startswith("\\")
             while True:
                 chunk = self._sock.recv(4096)
                 if not chunk:
                     break
                 data += chunk
-                if b"\n" in data:
-                    break
+                if is_extended:
+                    if b"RPRT" in data:
+                        break
+                else:
+                    if b"\n" in data:
+                        break
             return data.decode(errors="replace").strip()
         except OSError as exc:
             logger.error("RigNet._cmd(%r): %s", command, exc)
+            with contextlib.suppress(OSError):
+                if self._sock:
+                    self._sock.close()
+            self._sock = None
             with self._lock:
-                self._state = RigState.ERROR
+                self._state = RigState.DISCONNECTED
             return ""
+
+    # -- 内部ユーティリティ --
+
+    def _detect_vfo_mode(self) -> bool:
+        """\\chk_vfo を送信して rigctld の VFO モードを検出する。"""
+        resp = self._cmd(r"\chk_vfo")
+        return "ChkVFO: 1" in resp
+
+    @staticmethod
+    def _normalize_vfo(vfo: str) -> str:
+        """VFO 文字列を rigctld が受け付ける形式に正規化する。"""
+        _map = {"VFOA": "VFOA", "VFOB": "VFOB", "Main": "Main", "Sub": "Sub"}
+        return _map.get(vfo, vfo)
 
     # -- 周波数・モード --
 
     def set_frequency(self, freq_hz: float, vfo: str = "VFOA") -> bool:
-        resp = self._cmd(f"F {int(freq_hz)}")
-        ok = "RPRT 0" in resp
-        if ok:
-            with self._lock:
-                self._freq_state.freq_hz = freq_hz
-        return ok
+        """周波数を設定する。
+
+        未接続時は False を返す。
+        接続中にコマンドが失敗した場合は RigControlError を送出する。
+        split コマンドは送信しない（FTX-1 等の split 問題を回避するため）。
+        """
+        if not self.is_connected:
+            return False
+        norm_vfo = self._normalize_vfo(vfo)
+        if self._vfo_mode:
+            resp = self._cmd(f"\\set_freq {norm_vfo} {int(freq_hz)}")
+        else:
+            vfo_resp = self._cmd(f"V {norm_vfo}")
+            if "RPRT 0" not in vfo_resp:
+                raise RigControlError(f"set_vfo({norm_vfo!r}) failed: {vfo_resp!r}")
+            resp = self._cmd(f"F {int(freq_hz)}")
+        if "RPRT 0" not in resp:
+            raise RigControlError(f"set_frequency({freq_hz!r}, {norm_vfo!r}) failed: {resp!r}")
+        with self._lock:
+            self._freq_state.freq_hz = freq_hz
+        return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
         resp = self._cmd("f")

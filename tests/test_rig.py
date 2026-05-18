@@ -20,6 +20,7 @@ from rig.controller import (
     HamlibNetController,
     HamlibRotatorController,
     HamlibVersionChecker,
+    RigControlError,
     RigInfo,
     RigState,
     RotatorState,
@@ -316,6 +317,78 @@ class TestHamlibNetController:
         ctrl.disconnect()
         sock.close.assert_called()  # type: ignore[union-attr]
         assert ctrl.state == RigState.DISCONNECTED
+
+    # -- VFO 制御 --
+
+    def test_is_connected_false_when_sock_none(self) -> None:
+        """ソケットが None のとき is_connected は False（状態が CONNECTED でも）。"""
+        ctrl = self._make_ctrl()
+        with ctrl._lock:
+            ctrl._state = RigState.CONNECTED
+        assert ctrl._sock is None
+        assert ctrl.is_connected is False
+
+    def test_normalize_vfo_known_names(self) -> None:
+        """_normalize_vfo は既知の VFO 文字列をそのまま返す。"""
+        assert HamlibNetController._normalize_vfo("VFOA") == "VFOA"
+        assert HamlibNetController._normalize_vfo("VFOB") == "VFOB"
+        assert HamlibNetController._normalize_vfo("Main") == "Main"
+        assert HamlibNetController._normalize_vfo("Sub") == "Sub"
+
+    def test_vfo_mode_false_sends_v_then_f(self) -> None:
+        """vfo_mode=False のとき V {vfo}\\nF {freq} の順でコマンドを送信する。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._vfo_mode = False
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_frequency(144_800_000.0, "VFOA")
+        sent = b"".join(calls)
+        assert b"V VFOA\n" in sent
+        assert b"F 144800000\n" in sent
+        assert sent.index(b"V VFOA\n") < sent.index(b"F 144800000\n")
+
+    def test_vfo_mode_true_sends_set_freq(self) -> None:
+        """vfo_mode=True のとき \\\\set_freq {vfo} {freq} を送信する。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._vfo_mode = True
+        ctrl.set_frequency(144_800_000.0, "VFOA")
+        ctrl._sock.sendall.assert_called_with(b"\\set_freq VFOA 144800000\n")  # type: ignore[union-attr]
+
+    def test_set_frequency_raises_rig_control_error_on_failure(self) -> None:
+        """接続中に RPRT != 0 が返ったとき RigControlError を送出する。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._vfo_mode = True
+        ctrl._sock.recv.return_value = b"RPRT -1\n"  # type: ignore[union-attr]
+        with pytest.raises(RigControlError):
+            ctrl.set_frequency(144_800_000.0, "VFOA")
+
+    def test_detect_vfo_mode_true(self) -> None:
+        """ChkVFO: 1 を含む応答のとき _detect_vfo_mode() は True を返す。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._sock.recv.return_value = b"ChkVFO: 1\nRPRT 0\n"  # type: ignore[union-attr]
+        assert ctrl._detect_vfo_mode() is True
+
+    def test_detect_vfo_mode_false(self) -> None:
+        """ChkVFO: 0 を含む応答のとき _detect_vfo_mode() は False を返す。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._sock.recv.return_value = b"ChkVFO: 0\nRPRT 0\n"  # type: ignore[union-attr]
+        assert ctrl._detect_vfo_mode() is False
+
+    def test_set_frequency_disconnected_returns_false(self) -> None:
+        """未接続のとき set_frequency は False を返す（例外なし）。"""
+        ctrl = self._make_ctrl()
+        assert ctrl.set_frequency(144_800_000.0, "VFOA") is False
+
+    def test_set_frequency_vfob(self) -> None:
+        """VFOB 指定で V VFOB と F コマンドが送信される。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._vfo_mode = False
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_frequency(145_900_000.0, "VFOB")
+        sent = b"".join(calls)
+        assert b"V VFOB\n" in sent
+        assert b"F 145900000\n" in sent
 
 
 # ---------------------------------------------------------------------------
