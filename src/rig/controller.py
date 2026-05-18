@@ -536,13 +536,9 @@ class HamlibNetController(RigController):
             self._sock = sock
             with self._lock:
                 self._state = RigState.CONNECTED
+            logger.info("RigNet: connected to %s:%d", self._host, self._port)
             self._vfo_mode = self._detect_vfo_mode()
-            logger.info(
-                "RigNet: connected to %s:%d (vfo_mode=%s)",
-                self._host,
-                self._port,
-                self._vfo_mode,
-            )
+            logger.debug("RigNet: vfo_mode=%s", self._vfo_mode)
             return True
         except OSError as exc:
             with self._lock:
@@ -605,9 +601,41 @@ class HamlibNetController(RigController):
     # -- 内部ユーティリティ --
 
     def _detect_vfo_mode(self) -> bool:
-        """\\chk_vfo を送信して rigctld の VFO モードを検出する。"""
-        resp = self._cmd(r"\chk_vfo")
-        return "ChkVFO: 1" in resp
+        """\\chk_vfo を送信して rigctld の VFO モードを検出する。
+
+        _cmd() を経由せず直接 socket を操作することで、タイムアウトや
+        コマンド非対応時でも接続を破壊せずに False を返す。
+
+        応答形式（rigctld）:
+          vfo_mode=on  → "1\\nRPRT 0\\n"
+          vfo_mode=off → "0\\nRPRT 0\\n"
+          非対応        → "RPRT -1\\n"
+          タイムアウト  → OSError (socket.timeout)
+        """
+        if self._sock is None:
+            return False
+        prev_timeout = self._sock.gettimeout()
+        try:
+            self._sock.settimeout(2.0)
+            self._sock.sendall(b"\\chk_vfo\n")
+            data = b""
+            while True:
+                chunk = self._sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+                if b"RPRT" in data:
+                    break
+            resp = data.decode(errors="replace").strip()
+            lines = resp.splitlines()
+            return bool(lines and lines[0].strip() == "1")
+        except OSError as exc:
+            logger.warning("RigNet: \\chk_vfo failed (vfo_mode=False assumed): %s", exc)
+            return False
+        finally:
+            with contextlib.suppress(OSError):
+                if self._sock is not None:
+                    self._sock.settimeout(prev_timeout)
 
     @staticmethod
     def _normalize_vfo(vfo: str) -> str:

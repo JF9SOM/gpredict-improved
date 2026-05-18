@@ -363,16 +363,33 @@ class TestHamlibNetController:
             ctrl.set_frequency(144_800_000.0, "VFOA")
 
     def test_detect_vfo_mode_true(self) -> None:
-        """ChkVFO: 1 を含む応答のとき _detect_vfo_mode() は True を返す。"""
+        """rigctld が "1\\nRPRT 0" を返すとき _detect_vfo_mode() は True を返す。"""
         ctrl = self._make_connected_ctrl()
-        ctrl._sock.recv.return_value = b"ChkVFO: 1\nRPRT 0\n"  # type: ignore[union-attr]
+        ctrl._sock.recv.return_value = b"1\nRPRT 0\n"  # type: ignore[union-attr]
         assert ctrl._detect_vfo_mode() is True
 
     def test_detect_vfo_mode_false(self) -> None:
-        """ChkVFO: 0 を含む応答のとき _detect_vfo_mode() は False を返す。"""
+        """rigctld が "0\\nRPRT 0" を返すとき _detect_vfo_mode() は False を返す。"""
         ctrl = self._make_connected_ctrl()
-        ctrl._sock.recv.return_value = b"ChkVFO: 0\nRPRT 0\n"  # type: ignore[union-attr]
+        ctrl._sock.recv.return_value = b"0\nRPRT 0\n"  # type: ignore[union-attr]
         assert ctrl._detect_vfo_mode() is False
+
+    def test_detect_vfo_mode_unsupported(self) -> None:
+        """rigctld が RPRT -1（非対応）を返すとき _detect_vfo_mode() は False を返す。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._sock.recv.return_value = b"RPRT -1\n"  # type: ignore[union-attr]
+        assert ctrl._detect_vfo_mode() is False
+
+    def test_detect_vfo_mode_timeout_keeps_connection(self) -> None:
+        """タイムアウト時に接続を破壊せず False を返す。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
+        result = ctrl._detect_vfo_mode()
+        assert result is False
+        # ソケットは閉じられていない
+        assert ctrl._sock is not None
+        # 接続状態は CONNECTED のまま
+        assert ctrl.state == RigState.CONNECTED
 
     def test_set_frequency_disconnected_returns_false(self) -> None:
         """未接続のとき set_frequency は False を返す（例外なし）。"""
