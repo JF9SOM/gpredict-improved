@@ -407,3 +407,25 @@ sudo usermod -aG dialout $USER
 3. **初心者ファースト**: デフォルト設定で「インストールして起動するだけ」で動作。高度な設定はオプション
 4. **GPredict互換性**: NET Controlモードで従来のrigctld/rotctldとの互換性を維持
 5. **マルチプラットフォーム**: OS固有コードを最小化。プラットフォーム分岐は `src/core/platform.py` に集約
+
+---
+
+## 実装済み機能一覧（2026年5月18日時点）
+
+- 衛星追尾エンジン（Skyfield）
+- Qt6デスクトップUI（世界地図・レーダー・Pass Chart・Radio Control）
+- FastAPI内蔵Webサーバー（ポート8080）
+- スマホブラウザUI（グループフィルター・Favorites・Group Pass・レーダー）
+- Hamlib内蔵リグ制御（Direct/NET Control）
+- SATNOGS周波数DB同期・手動追加
+- TLE自動更新（CelesTrak: Amateur/CubeSat/Weather/Earth-Obs/Science/Stations）
+- AMSAT運用状況スクレイピング・色分け表示
+- お気に入り機能（デスクトップ・スマホ共通DB）
+- フットプリント表示
+- Upcoming Passes（Target/Groupタブ・カレンダー選択・CSV出力）
+- 409テスト全パス・CI緑
+
+## 次回の作業候補
+1. ドップラー補正の実動作確認
+2. ローテーター設定ダイアログ
+3. AppImageビルド（配布パッケージ）
