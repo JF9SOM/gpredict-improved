@@ -840,9 +840,7 @@ class MainWindow(QMainWindow):
             ctcss = self._current_transmitter.get("ctcss_tone")
             self._radio_control.update_doppler(dl, dl, None, ul, ul, None, mode, ctcss)
         else:
-            self._radio_control.update_doppler(
-                None, None, None, None, None, None
-            )
+            self._radio_control.update_doppler(None, None, None, None, None, None)
 
     def _refresh_passes(self) -> None:
         """選択衛星のパス予測を取得してパスリストとチャートを更新する。"""

@@ -134,10 +134,20 @@ class PassPanel(QWidget):
 
     _PAGE_SIZE: int = 50
     _TARGET_COLS: tuple[str, ...] = (
-        "AOS (UTC)", "Max El", "Duration", "AZ In", "AZ Out", "Quality"
+        "AOS (UTC)",
+        "Max El",
+        "Duration",
+        "AZ In",
+        "AZ Out",
+        "Quality",
     )
     _GROUP_COLS: tuple[str, ...] = (
-        "Satellite", "AOS (UTC)", "Max El", "Duration", "AZ In", "Quality"
+        "Satellite",
+        "AOS (UTC)",
+        "Max El",
+        "Duration",
+        "AZ In",
+        "Quality",
     )
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -407,9 +417,7 @@ class PassPanel(QWidget):
         self._group_search_btn.setEnabled(False)
         self._group_cancel_btn.setEnabled(True)
         self._pending_cache_key = key
-        self._worker = _GroupSearchWorker(
-            self._predictor, self._sat_list, start, end, min_el, self
-        )
+        self._worker = _GroupSearchWorker(self._predictor, self._sat_list, start, end, min_el, self)
         self._worker.progress.connect(self._on_group_progress)
         self._worker.finished_results.connect(self._on_group_results)
         self._worker.start()
@@ -467,31 +475,39 @@ class PassPanel(QWidget):
         if not self._group_results:
             QMessageBox.information(self, _("Export CSV"), _("No results to export."))
             return
-        path, _filter = QFileDialog.getSaveFileName(
-            self, _("Export CSV"), "", "CSV Files (*.csv)"
-        )
+        path, _filter = QFileDialog.getSaveFileName(self, _("Export CSV"), "", "CSV Files (*.csv)")
         if not path:
             return
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow(
-                    ["Satellite", "NORAD", "AOS (UTC)", "Max El (deg)",
-                     "Duration", "AZ In (deg)", "AZ Out (deg)", "Quality"]
+                    [
+                        "Satellite",
+                        "NORAD",
+                        "AOS (UTC)",
+                        "Max El (deg)",
+                        "Duration",
+                        "AZ In (deg)",
+                        "AZ Out (deg)",
+                        "Quality",
+                    ]
                 )
                 for r in self._group_results:
                     p = r.pass_info
                     mins, secs = divmod(int(p.duration_s), 60)
-                    writer.writerow([
-                        r.sat_name,
-                        r.norad_cat_id,
-                        p.aos.strftime("%Y-%m-%d %H:%M:%S"),
-                        f"{p.max_elevation_deg:.1f}",
-                        f"{mins}m {secs:02d}s",
-                        f"{p.aos_azimuth_deg:.0f}",
-                        f"{p.los_azimuth_deg:.0f}",
-                        pass_quality(p.max_elevation_deg),
-                    ])
+                    writer.writerow(
+                        [
+                            r.sat_name,
+                            r.norad_cat_id,
+                            p.aos.strftime("%Y-%m-%d %H:%M:%S"),
+                            f"{p.max_elevation_deg:.1f}",
+                            f"{mins}m {secs:02d}s",
+                            f"{p.aos_azimuth_deg:.0f}",
+                            f"{p.los_azimuth_deg:.0f}",
+                            pass_quality(p.max_elevation_deg),
+                        ]
+                    )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, _("Export Error"), str(exc))
 
