@@ -694,25 +694,30 @@ class HamlibNetController(RigController):
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        """Main/Sub VFO の周波数を \\set_freq で直接設定する。
+        """標準 rigctld split プロトコルでダウンリンク・アップリンク周波数を設定する。
 
-        \\set_freq Main / \\set_freq Sub を使うことで VFO 切り替えコマンド
-        （V VFOA / V VFOB）を一切送信しない。
-        これにより FTX-1 の Sub VFO が TX 状態になる問題（Hamlib Issue #1972）を回避する。
-        split コマンドも送信しない。vfo_mode の値によらず常に同じコマンドを使う。
+        ダウンリンク（RX）: F {dl_hz}
+        アップリンク（TX）: \\set_split_freq {ul_hz} + \\set_split_vfo 1 VFOA VFOB
+
+        ul_hz が None の場合は F {dl_hz} のみ（split なし）。
+        Hamlib バックエンドが機種固有の VFO 名（FTX-1 の Main/Sub 等）に変換するため、
+        アプリ側に機種固有コードを持たない。
         """
         if not self.is_connected:
             return False
         if vfoa_hz is not None:
-            resp = self._cmd(f"\\set_freq Main {int(vfoa_hz)}")
+            resp = self._cmd(f"F {int(vfoa_hz)}")
             if "RPRT 0" not in resp:
-                raise RigControlError(f"set_freq Main failed: {resp!r}")
+                raise RigControlError(f"set RX freq failed: {resp!r}")
             with self._lock:
                 self._freq_state.freq_hz = vfoa_hz
         if vfob_hz is not None:
-            resp = self._cmd(f"\\set_freq Sub {int(vfob_hz)}")
+            resp = self._cmd(f"\\set_split_freq {int(vfob_hz)}")
             if "RPRT 0" not in resp:
-                raise RigControlError(f"set_freq Sub failed: {resp!r}")
+                raise RigControlError(f"set_split_freq failed: {resp!r}")
+            resp = self._cmd("\\set_split_vfo 1 VFOA VFOB")
+            if "RPRT 0" not in resp:
+                raise RigControlError(f"set_split_vfo failed: {resp!r}")
         return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:

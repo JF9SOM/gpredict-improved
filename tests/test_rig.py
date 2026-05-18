@@ -414,41 +414,36 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
-    def test_set_vfo_frequencies_sends_main_sub(self) -> None:
-        """\\set_freq Main / \\set_freq Sub を送信し V コマンドを一切送らない。"""
+    def test_set_vfo_frequencies_sends_split_protocol(self) -> None:
+        """標準 split プロトコル F / \\set_split_freq / \\set_split_vfo を送信する。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
-        assert b"\\set_freq Main 145000000\n" in sent
-        assert b"\\set_freq Sub 144000000\n" in sent
+        assert b"F 145000000\n" in sent
+        assert b"\\set_split_freq 144000000\n" in sent
+        assert b"\\set_split_vfo 1 VFOA VFOB\n" in sent
         assert b"V VFOA\n" not in sent
         assert b"V VFOB\n" not in sent
 
-    def test_set_vfo_frequencies_vfoa_only(self) -> None:
-        """vfob_hz=None のとき \\set_freq Main のみ送信し Sub は送らない。"""
+    def test_set_vfo_frequencies_dl_only_no_split(self) -> None:
+        """ul_hz=None のとき F コマンドのみ送信し split コマンドを送らない。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, None)
         sent = b"".join(calls)
-        assert b"\\set_freq Main 145000000\n" in sent
-        assert b"\\set_freq Sub" not in sent
+        assert b"F 145000000\n" in sent
+        assert b"\\set_split_freq" not in sent
+        assert b"\\set_split_vfo" not in sent
 
-    def test_set_vfo_frequencies_vfo_mode_irrelevant(self) -> None:
-        """vfo_mode の値に関わらず \\set_freq Main/Sub を使い V コマンドを送らない。"""
-        for vfo_mode in (True, False):
-            ctrl = self._make_connected_ctrl()
-            ctrl._vfo_mode = vfo_mode
-            calls: list[bytes] = []
-            ctrl._sock.sendall.side_effect = lambda data, c=calls: c.append(data)  # type: ignore[union-attr]
+    def test_set_vfo_frequencies_raises_on_rprt_error(self) -> None:
+        """RPRT != 0 のとき RigControlError を送出する。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._sock.recv.return_value = b"RPRT -1\n"  # type: ignore[union-attr]
+        with pytest.raises(RigControlError):
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
-            sent = b"".join(calls)
-            assert b"\\set_freq Main 145000000\n" in sent, f"vfo_mode={vfo_mode}"
-            assert b"\\set_freq Sub 144000000\n" in sent, f"vfo_mode={vfo_mode}"
-            assert b"V VFOA\n" not in sent, f"vfo_mode={vfo_mode}"
-            assert b"V VFOB\n" not in sent, f"vfo_mode={vfo_mode}"
 
 
 # ---------------------------------------------------------------------------
