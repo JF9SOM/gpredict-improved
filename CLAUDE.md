@@ -360,6 +360,41 @@ MODE_MAP = {
 
 ---
 
+## コミットメッセージ規則
+
+形式: `<type>(<scope>): <概要（英語・50文字以内）>`
+
+**type一覧:**
+
+| type | 用途 |
+|------|------|
+| `feat` | 新機能追加 |
+| `fix` | バグ修正 |
+| `refactor` | リファクタリング（動作変更なし） |
+| `test` | テスト追加・修正のみ |
+| `chore` | 設定・ビルド・CI等 |
+
+**scope一覧:**
+
+| scope | 対象 |
+|-------|------|
+| `rig` | リグ制御関連 |
+| `data` | DB・TLE・SatNOGS関連 |
+| `ui` | Qt UIコンポーネント |
+| `core` | 軌道計算・ドップラー計算 |
+| `web` | WebサーバーAPI |
+| `ci` | GitHub Actions |
+
+**例:**
+```
+feat(rig): add set_vfo_frequencies for stable FTX-1 VFO control
+fix(rig): resolve chk_vfo timeout disconnecting socket
+feat(data): add SatNOGS type mapping in sync_from_satnogs
+test(rig): add coverage for VFO sequence and timeout handling
+```
+
+---
+
 ## テスト方針
 
 - `tests/` 以下にpytest
