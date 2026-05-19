@@ -712,6 +712,7 @@ class MainWindow(QMainWindow):
             self._radar_view.set_tracks([track])
 
         # Radio Control: ドップラー補正をリアルタイム更新
+        # 仰角の正負を問わず、TLEと周波数データが揃っていれば常に計算・送信する
         if obs is not None and self._current_transmitter is not None:
             rr = obs.range_rate_km_s
             dl_nom = self._current_transmitter.get("downlink_low")
@@ -732,7 +733,7 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(
                 dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss
             )
-            # 接続中の無線機にドップラー補正済み周波数を送信
+            # 接続中の無線機にドップラー補正済み周波数を送信（仰角の正負を問わない）
             if self._rig_controller is not None and self._rig_controller.is_connected:
                 try:
                     self._rig_controller.set_vfo_frequencies(dl_corr, ul_corr)
