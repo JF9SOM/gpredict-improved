@@ -556,9 +556,11 @@ class HamlibNetController(RigController):
             with self._lock:
                 self._state = RigState.CONNECTED
             logger.info("RigNet: connected to %s:%d", self._host, self._port)
-            self._cached_model_name = self._fetch_model_name()
-            self._vfo_mode = self._detect_vfo_mode()
-            logger.debug("RigNet: vfo_mode=%s", self._vfo_mode)
+            # _ と \chk_vfo はオプショナルな情報取得コマンド。
+            # raw socket で 2s タイムアウト付きで送ると、FTX-1 等の低速バックエンドでは
+            # タイムアウト後に応答がバッファに残留し、後続の _cmd() 呼び出しが
+            # 別コマンドの応答を誤読する（コマンド/応答ずれ）。
+            # 接続シーケンスでは送らず、S 1 Main のみ送る。
             self._init_vfo()
             return True
         except OSError as exc:
