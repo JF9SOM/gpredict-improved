@@ -304,12 +304,16 @@ class TestHamlibNetController:
         ctrl._sock.recv.return_value = b"USB\n"  # type: ignore[union-attr]
         assert ctrl.get_mode() == "SSB"
 
-    def test_get_rig_info_returns_host_port(self) -> None:
+    def test_get_rig_info_returns_cached_model_name(self) -> None:
+        """get_rig_info はキャッシュ済みモデル名を返しソケット I/O を行わない。"""
         ctrl = self._make_connected_ctrl()
-        ctrl._sock.recv.return_value = b"IC-9700\n"  # type: ignore[union-attr]
+        ctrl._cached_model_name = "IC-9700"
+        ctrl._sock.reset_mock()  # type: ignore[union-attr]
         info = ctrl.get_rig_info()
         assert info is not None
         assert "localhost" in info.port
+        assert info.model_name == "IC-9700"
+        ctrl._sock.sendall.assert_not_called()  # type: ignore[union-attr]
 
     def test_disconnect_closes_socket(self) -> None:
         ctrl = self._make_connected_ctrl()

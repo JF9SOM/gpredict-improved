@@ -530,6 +530,8 @@ class HamlibNetController(RigController):
         self._port = port
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
+        self._cmd_lock = threading.Lock()  # send+recv を直列化してレスポンスのズレを防ぐ
+        self._cached_model_name: str = ""  # 接続時に一度だけ取得してキャッシュする
 
     # -- 接続管理 --
 
@@ -556,6 +558,7 @@ class HamlibNetController(RigController):
             logger.info("RigNet: connected to %s:%d", self._host, self._port)
             self._vfo_mode = self._detect_vfo_mode()
             logger.debug("RigNet: vfo_mode=%s", self._vfo_mode)
+            self._cached_model_name = self._fetch_model_name()
             return True
         except OSError as exc:
             with self._lock:
@@ -585,35 +588,42 @@ class HamlibNetController(RigController):
 
         拡張コマンド（\\ で始まる）は RPRT 行まで、
         通常コマンドは最初の改行まで読む。
+        _cmd_lock で send+recv を直列化して複数スレッドの応答ズレを防ぐ。
         OSError 発生時はソケットを閉じて DISCONNECTED に遷移する。
         """
-        if self._sock is None:
-            return ""
-        try:
-            self._sock.sendall((command + "\n").encode())
-            data = b""
-            is_extended = command.startswith("\\")
-            while True:
-                chunk = self._sock.recv(4096)
-                if not chunk:
-                    break
-                data += chunk
-                if is_extended:
-                    if b"RPRT" in data:
+        with self._cmd_lock:
+            if self._sock is None:
+                return ""
+            try:
+                self._sock.sendall((command + "\n").encode())
+                data = b""
+                is_extended = command.startswith("\\")
+                while True:
+                    chunk = self._sock.recv(4096)
+                    if not chunk:
                         break
-                else:
-                    if b"\n" in data:
-                        break
-            return data.decode(errors="replace").strip()
-        except OSError as exc:
-            logger.error("RigNet._cmd(%r): %s", command, exc)
-            with contextlib.suppress(OSError):
-                if self._sock:
-                    self._sock.close()
-            self._sock = None
-            with self._lock:
-                self._state = RigState.DISCONNECTED
-            return ""
+                    data += chunk
+                    if is_extended:
+                        if b"RPRT" in data:
+                            break
+                    else:
+                        if b"\n" in data:
+                            break
+                return data.decode(errors="replace").strip()
+            except OSError as exc:
+                logger.error("RigNet._cmd(%r): %s", command, exc)
+                with contextlib.suppress(OSError):
+                    if self._sock:
+                        self._sock.close()
+                self._sock = None
+                with self._lock:
+                    self._state = RigState.DISCONNECTED
+                return ""
+
+    def _fetch_model_name(self) -> str:
+        """接続時に一度だけ _ コマンドでモデル名を取得する。"""
+        resp = self._cmd("_")
+        return resp.strip() or f"{self._host}:{self._port}"
 
     # -- 内部ユーティリティ --
 
@@ -761,11 +771,9 @@ class HamlibNetController(RigController):
     def get_rig_info(self) -> RigInfo | None:
         if not self.is_connected:
             return None
-        resp = self._cmd("_")  # get_info コマンド
-        model_name = resp.strip() or f"{self._host}:{self._port}"
         return RigInfo(
             model_id=0,
-            model_name=model_name,
+            model_name=self._cached_model_name or f"{self._host}:{self._port}",
             port=f"{self._host}:{self._port}",
             baud_rate=0,
             state=self.state,
