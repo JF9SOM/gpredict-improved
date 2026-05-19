@@ -418,31 +418,31 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
-    def test_set_vfo_frequencies_sends_F_and_I_commands(self) -> None:
-        """F（RX）と I（TX）のみ送信し、f/i 読み捨てコマンドは送らない。"""
+    def test_set_vfo_frequencies_sends_F_f_I_i_sequence(self) -> None:
+        """本家 gpredict の F→f→I→i シーケンスを送信する。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
         assert b"F 145000000\n" in sent
+        assert b"f\n" in sent
         assert b"I 144000000\n" in sent
-        assert b"f\n" not in sent
-        assert b"i\n" not in sent
+        assert b"i\n" in sent
         assert b"\\set_freq" not in sent
         assert b"\\set_split_freq" not in sent
         assert b"\\set_split_vfo" not in sent
 
     def test_set_vfo_frequencies_dl_only_no_tx(self) -> None:
-        """ul_hz=None のとき F のみ送信し I/f/i コマンドを送らない。"""
+        """ul_hz=None のとき F/f のみ送信し I/i コマンドを送らない。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, None)
         sent = b"".join(calls)
         assert b"F 145000000\n" in sent
+        assert b"f\n" in sent
         assert b"I " not in sent
-        assert b"f\n" not in sent
         assert b"i\n" not in sent
 
     def test_set_vfo_frequencies_raises_on_rprt_error(self) -> None:
