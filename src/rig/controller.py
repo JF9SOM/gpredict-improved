@@ -740,14 +740,13 @@ class HamlibNetController(RigController):
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        """本家 gpredict の F/f/I/i サイクルで RX/TX 周波数を設定する。
+        """毎秒の追尾ループで RX/TX 周波数を設定する。
 
-        tcpdump で確認したシーケンス（毎秒ループ）:
-          F {dl_hz}  → RPRT 0
-          f          → 周波数値（フィードバック確認、読み捨て）
-          I {ul_hz}  → RPRT 0
-          i          → 周波数値（同上）
-        ul_hz が None の場合は F/f のみ実行する。
+        connect() 時に _init_vfo() が S 1 Main（split ON、TX VFO=Main）を
+        1回だけ送信済み。以降このメソッドは F と I のみ送る：
+          F {dl_hz}  → Sub（RX/ダウンリンク）に書き込み  → RPRT 0 確認
+          I {ul_hz}  → Main（TX/アップリンク）に書き込み → RPRT 0 確認
+        ul_hz が None の場合は F のみ実行する。
         """
         if not self.is_connected:
             return False
