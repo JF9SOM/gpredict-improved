@@ -758,13 +758,11 @@ class HamlibNetController(RigController):
                 raise RigControlError(f"set RX freq failed: {resp!r}")
             with self._lock:
                 self._freq_state.freq_hz = vfoa_hz
-            self._cmd("f")  # readback, discard
         if vfob_hz is not None:
             logger.info("RigNet: sending I %d", int(vfob_hz))
             resp = self._cmd(f"I {int(vfob_hz)}")
             if "RPRT 0" not in resp:
                 raise RigControlError(f"set TX freq failed: {resp!r}")
-            self._cmd("i")  # readback, discard
         return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
