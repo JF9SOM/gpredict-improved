@@ -278,7 +278,7 @@ class TestHamlibNetController:
 
     def test_get_frequency_parses_response(self) -> None:
         ctrl = self._make_connected_ctrl()
-        ctrl._sock.recv.return_value = b"145800000\n"  # type: ignore[union-attr]
+        ctrl._sock.recv.return_value = b"145800000\nRPRT 0\n"  # type: ignore[union-attr]
         freq = ctrl.get_frequency()
         assert freq == 145_800_000.0
 
@@ -296,12 +296,12 @@ class TestHamlibNetController:
 
     def test_get_mode_parses_fm(self) -> None:
         ctrl = self._make_connected_ctrl()
-        ctrl._sock.recv.return_value = b"FM\n"  # type: ignore[union-attr]
+        ctrl._sock.recv.return_value = b"FM\nRPRT 0\n"  # type: ignore[union-attr]
         assert ctrl.get_mode() == "FM"
 
     def test_get_mode_parses_usb_as_ssb(self) -> None:
         ctrl = self._make_connected_ctrl()
-        ctrl._sock.recv.return_value = b"USB\n"  # type: ignore[union-attr]
+        ctrl._sock.recv.return_value = b"USB\nRPRT 0\n"  # type: ignore[union-attr]
         assert ctrl.get_mode() == "SSB"
 
     def test_get_rig_info_returns_cached_model_name(self) -> None:
@@ -418,29 +418,29 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
-    def test_set_vfo_frequencies_sends_split_protocol(self) -> None:
-        """標準 split プロトコル F / \\set_split_freq / \\set_split_vfo を送信する。"""
+    def test_set_vfo_frequencies_sends_f_and_i_commands(self) -> None:
+        """本家 gpredict 互換プロトコル: F（RX）と I（TX）コマンドを送信する。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
         assert b"F 145000000\n" in sent
-        assert b"\\set_split_freq 144000000\n" in sent
-        assert b"\\set_split_vfo 1 VFOA VFOB\n" in sent
+        assert b"I 144000000\n" in sent
+        assert b"\\set_split_freq" not in sent
+        assert b"\\set_split_vfo" not in sent
         assert b"V VFOA\n" not in sent
         assert b"V VFOB\n" not in sent
 
-    def test_set_vfo_frequencies_dl_only_no_split(self) -> None:
-        """ul_hz=None のとき F コマンドのみ送信し split コマンドを送らない。"""
+    def test_set_vfo_frequencies_dl_only_no_tx(self) -> None:
+        """ul_hz=None のとき F コマンドのみ送信し I コマンドを送らない。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, None)
         sent = b"".join(calls)
         assert b"F 145000000\n" in sent
-        assert b"\\set_split_freq" not in sent
-        assert b"\\set_split_vfo" not in sent
+        assert b"I " not in sent
 
     def test_set_vfo_frequencies_raises_on_rprt_error(self) -> None:
         """RPRT != 0 のとき RigControlError を送出する。"""
@@ -448,6 +448,18 @@ class TestHamlibNetController:
         ctrl._sock.recv.return_value = b"RPRT -1\n"  # type: ignore[union-attr]
         with pytest.raises(RigControlError):
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+
+    def test_connect_sends_setup_split(self) -> None:
+        """connect() 時に S 1 VFOA（split ON）を送信する。"""
+        ctrl = self._make_ctrl()
+        with patch("rig.controller.socket.socket") as mock_cls:
+            mock_sock = MagicMock()
+            mock_sock.recv.return_value = b"RPRT 0\n"
+            mock_cls.return_value = mock_sock
+            result = ctrl.connect()
+        assert result is True
+        sent = b"".join(call.args[0] for call in mock_sock.sendall.call_args_list)
+        assert b"S 1 VFOA\n" in sent
 
 
 # ---------------------------------------------------------------------------

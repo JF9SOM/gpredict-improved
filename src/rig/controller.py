@@ -18,6 +18,7 @@ import contextlib
 import logging
 import socket
 import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -559,6 +560,7 @@ class HamlibNetController(RigController):
             self._vfo_mode = self._detect_vfo_mode()
             logger.debug("RigNet: vfo_mode=%s", self._vfo_mode)
             self._cached_model_name = self._fetch_model_name()
+            self._setup_split()
             return True
         except OSError as exc:
             with self._lock:
@@ -586,8 +588,9 @@ class HamlibNetController(RigController):
     def _cmd(self, command: str) -> str:
         """rigctld にコマンドを送り、応答を返す。
 
-        拡張コマンド（\\ で始まる）は RPRT 行まで、
-        通常コマンドは最初の改行まで読む。
+        すべてのコマンドで RPRT 行が現れるまで読み続ける。
+        これにより読み取りコマンド（f/i 等）の応答行がバッファに残って
+        次コマンドの応答と混在する問題を防ぐ。
         _cmd_lock で send+recv を直列化して複数スレッドの応答ズレを防ぐ。
         OSError 発生時はソケットを閉じて DISCONNECTED に遷移する。
         """
@@ -597,18 +600,13 @@ class HamlibNetController(RigController):
             try:
                 self._sock.sendall((command + "\n").encode())
                 data = b""
-                is_extended = command.startswith("\\")
                 while True:
                     chunk = self._sock.recv(4096)
                     if not chunk:
                         break
                     data += chunk
-                    if is_extended:
-                        if b"RPRT" in data:
-                            break
-                    else:
-                        if b"\n" in data:
-                            break
+                    if b"RPRT" in data:
+                        break
                 return data.decode(errors="replace").strip()
             except OSError as exc:
                 logger.error("RigNet._cmd(%r): %s", command, exc)
@@ -623,7 +621,17 @@ class HamlibNetController(RigController):
     def _fetch_model_name(self) -> str:
         """接続時に一度だけ _ コマンドでモデル名を取得する。"""
         resp = self._cmd("_")
-        return resp.strip() or f"{self._host}:{self._port}"
+        lines = [ln.strip() for ln in resp.splitlines() if ln.strip() and not ln.startswith("RPRT")]
+        return lines[0] if lines else f"{self._host}:{self._port}"
+
+    def _setup_split(self) -> None:
+        """split ON + TX VFO = VFOA を設定する（接続時1回だけ）。
+
+        本家 gpredict の setup_split() と同じ: S 1 VFOA
+        """
+        resp = self._cmd("S 1 VFOA")
+        if "RPRT 0" not in resp:
+            logger.warning("RigNet: split setup returned %r (continuing)", resp)
 
     # -- 内部ユーティリティ --
 
@@ -704,14 +712,11 @@ class HamlibNetController(RigController):
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        """標準 rigctld split プロトコルでダウンリンク・アップリンク周波数を設定する。
+        """本家 gpredict 互換の duplex プロトコルで RX/TX 周波数を設定する。
 
-        ダウンリンク（RX）: F {dl_hz}
-        アップリンク（TX）: \\set_split_freq {ul_hz} + \\set_split_vfo 1 VFOA VFOB
-
-        ul_hz が None の場合は F {dl_hz} のみ（split なし）。
-        Hamlib バックエンドが機種固有の VFO 名（FTX-1 の Main/Sub 等）に変換するため、
-        アプリ側に機種固有コードを持たない。
+        connect() 時に S 1 VFOA で split ON 済み。
+        F {dl_hz} → 5 ms wait → I {ul_hz} の順でセットする
+        （本家 gpredict の exec_duplex_cycle() と同じシーケンス）。
         """
         if not self.is_connected:
             return False
@@ -722,12 +727,10 @@ class HamlibNetController(RigController):
             with self._lock:
                 self._freq_state.freq_hz = vfoa_hz
         if vfob_hz is not None:
-            resp = self._cmd(f"\\set_split_freq {int(vfob_hz)}")
+            time.sleep(0.005)
+            resp = self._cmd(f"I {int(vfob_hz)}")
             if "RPRT 0" not in resp:
-                raise RigControlError(f"set_split_freq failed: {resp!r}")
-            resp = self._cmd("\\set_split_vfo 1 VFOA VFOB")
-            if "RPRT 0" not in resp:
-                raise RigControlError(f"set_split_vfo failed: {resp!r}")
+                raise RigControlError(f"set TX freq failed: {resp!r}")
         return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
