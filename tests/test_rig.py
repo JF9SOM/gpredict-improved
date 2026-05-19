@@ -418,28 +418,33 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
-    def test_set_vfo_frequencies_sends_f_and_i_commands(self) -> None:
-        """本家 gpredict 互換プロトコル: F（RX）と I（TX）コマンドを送信する。"""
+    def test_set_vfo_frequencies_uses_v_main_sub_sequence(self) -> None:
+        """V Main/Sub + F シーケンスで RX/TX 周波数を設定する。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
+        assert b"V Main\n" in sent
         assert b"F 145000000\n" in sent
-        assert b"I 144000000\n" in sent
+        assert b"V Sub\n" in sent
+        assert b"F 144000000\n" in sent
+        assert b"I " not in sent
         assert b"\\set_split_freq" not in sent
         assert b"\\set_split_vfo" not in sent
         assert b"V VFOA\n" not in sent
         assert b"V VFOB\n" not in sent
 
     def test_set_vfo_frequencies_dl_only_no_tx(self) -> None:
-        """ul_hz=None のとき F コマンドのみ送信し I コマンドを送らない。"""
+        """ul_hz=None のとき V Main + F のみ送信し V Sub/I コマンドを送らない。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, None)
         sent = b"".join(calls)
+        assert b"V Main\n" in sent
         assert b"F 145000000\n" in sent
+        assert b"V Sub\n" not in sent
         assert b"I " not in sent
 
     def test_set_vfo_frequencies_raises_on_rprt_error(self) -> None:
@@ -449,8 +454,8 @@ class TestHamlibNetController:
         with pytest.raises(RigControlError):
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
 
-    def test_connect_sends_setup_split(self) -> None:
-        """connect() 時に S 1 VFOA（split ON）を送信する。"""
+    def test_connect_initializes_vfo_main(self) -> None:
+        """connect() 時に V Main を送信してアクティブ VFO を Main に設定する。"""
         ctrl = self._make_ctrl()
         with patch("rig.controller.socket.socket") as mock_cls:
             mock_sock = MagicMock()
@@ -459,7 +464,7 @@ class TestHamlibNetController:
             result = ctrl.connect()
         assert result is True
         sent = b"".join(call.args[0] for call in mock_sock.sendall.call_args_list)
-        assert b"S 1 VFOA\n" in sent
+        assert b"V Main\n" in sent
 
     def test_fetch_model_name_timeout_keeps_connection(self) -> None:
         """_ がタイムアウトしても接続を維持し host:port を返す。"""
@@ -470,11 +475,11 @@ class TestHamlibNetController:
         assert ctrl._sock is not None
         assert ctrl.state == RigState.CONNECTED
 
-    def test_setup_split_timeout_keeps_connection(self) -> None:
-        """S 1 VFOA がタイムアウトしても接続を維持する。"""
+    def test_init_vfo_timeout_keeps_connection(self) -> None:
+        """V Main がタイムアウトしても接続を維持する。"""
         ctrl = self._make_connected_ctrl()
         ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
-        ctrl._setup_split()  # should not raise
+        ctrl._init_vfo()  # should not raise
         assert ctrl._sock is not None
         assert ctrl.state == RigState.CONNECTED
 

@@ -560,7 +560,7 @@ class HamlibNetController(RigController):
             self._cached_model_name = self._fetch_model_name()
             self._vfo_mode = self._detect_vfo_mode()
             logger.debug("RigNet: vfo_mode=%s", self._vfo_mode)
-            self._setup_split()
+            self._init_vfo()
             return True
         except OSError as exc:
             with self._lock:
@@ -649,10 +649,10 @@ class HamlibNetController(RigController):
                 if self._sock is not None:
                     self._sock.settimeout(prev_timeout)
 
-    def _setup_split(self) -> None:
-        """split ON + TX VFO = VFOA を設定する（接続時1回だけ）。
+    def _init_vfo(self) -> None:
+        """アクティブ VFO を Main に設定する（接続時1回だけ）。
 
-        本家 gpredict の setup_split() と同じ: S 1 VFOA
+        FTX-1 はデフォルトで Sub がアクティブなため V Main で Main に切り替える。
         _cmd() を経由せず直接ソケットを操作するため、タイムアウトや非対応時でも
         接続を破壊しない。
         """
@@ -661,7 +661,7 @@ class HamlibNetController(RigController):
         prev_timeout = self._sock.gettimeout()
         try:
             self._sock.settimeout(2.0)
-            self._sock.sendall(b"S 1 VFOA\n")
+            self._sock.sendall(b"V Main\n")
             data = b""
             while True:
                 chunk = self._sock.recv(4096)
@@ -672,9 +672,9 @@ class HamlibNetController(RigController):
                     break
             resp = data.decode(errors="replace").strip()
             if "RPRT 0" not in resp:
-                logger.warning("RigNet: split setup returned %r (continuing)", resp)
+                logger.warning("RigNet: V Main returned %r (continuing)", resp)
         except OSError as exc:
-            logger.warning("RigNet: S 1 VFOA failed (ignored): %s", exc)
+            logger.warning("RigNet: V Main failed (ignored): %s", exc)
         finally:
             with contextlib.suppress(OSError):
                 if self._sock is not None:
@@ -759,14 +759,16 @@ class HamlibNetController(RigController):
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        """本家 gpredict 互換の duplex プロトコルで RX/TX 周波数を設定する。
+        """V+F シーケンスで RX/TX 周波数を設定する（FTX-1 Main/Sub 独立制御）。
 
-        connect() 時に S 1 VFOA で split ON 済み。
-        F {dl_hz} → 5 ms wait → I {ul_hz} の順でセットする
-        （本家 gpredict の exec_duplex_cycle() と同じシーケンス）。
+        V Main → F {dl_hz} → 5ms wait → V Sub → F {ul_hz} → 5ms wait → V Main
+        ul_hz が None の場合は V Main → F {dl_hz} のみ。
         """
         if not self.is_connected:
             return False
+        resp = self._cmd("V Main")
+        if "RPRT 0" not in resp:
+            raise RigControlError(f"set VFO Main failed: {resp!r}")
         if vfoa_hz is not None:
             resp = self._cmd(f"F {int(vfoa_hz)}")
             if "RPRT 0" not in resp:
@@ -775,9 +777,16 @@ class HamlibNetController(RigController):
                 self._freq_state.freq_hz = vfoa_hz
         if vfob_hz is not None:
             time.sleep(0.005)
-            resp = self._cmd(f"I {int(vfob_hz)}")
+            resp = self._cmd("V Sub")
+            if "RPRT 0" not in resp:
+                raise RigControlError(f"set VFO Sub failed: {resp!r}")
+            resp = self._cmd(f"F {int(vfob_hz)}")
             if "RPRT 0" not in resp:
                 raise RigControlError(f"set TX freq failed: {resp!r}")
+            time.sleep(0.005)
+            resp = self._cmd("V Main")
+            if "RPRT 0" not in resp:
+                raise RigControlError(f"restore VFO Main failed: {resp!r}")
         return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
