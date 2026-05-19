@@ -652,32 +652,12 @@ class HamlibNetController(RigController):
         """split ON + TX VFO = Main を設定する（接続時1回だけ）。
 
         tcpdump で確認した本家 gpredict のシーケンス: S 1 Main
-        _cmd() を経由せず直接ソケットを操作するため、タイムアウトや非対応時でも
-        接続を破壊しない。
+        _cmd() 経由で送信するため _cmd_lock で直列化され、
+        raw socket の独立した recv ループによるバッファ残留が起きない。
         """
-        if self._sock is None:
-            return
-        prev_timeout = self._sock.gettimeout()
-        try:
-            self._sock.settimeout(2.0)
-            self._sock.sendall(b"S 1 Main\n")
-            data = b""
-            while True:
-                chunk = self._sock.recv(4096)
-                if not chunk:
-                    break
-                data += chunk
-                if b"RPRT" in data:
-                    break
-            resp = data.decode(errors="replace").strip()
-            if "RPRT 0" not in resp:
-                logger.warning("RigNet: S 1 Main returned %r (continuing)", resp)
-        except OSError as exc:
-            logger.warning("RigNet: S 1 Main failed (ignored): %s", exc)
-        finally:
-            with contextlib.suppress(OSError):
-                if self._sock is not None:
-                    self._sock.settimeout(prev_timeout)
+        resp = self._cmd("S 1 Main")
+        if "RPRT 0" not in resp:
+            logger.warning("RigNet: split setup returned %r", resp)
 
     # -- 内部ユーティリティ --
 
@@ -770,6 +750,7 @@ class HamlibNetController(RigController):
         if not self.is_connected:
             return False
         if vfoa_hz is not None:
+            logger.info("RigNet: sending F %d", int(vfoa_hz))
             resp = self._cmd(f"F {int(vfoa_hz)}")
             if "RPRT 0" not in resp:
                 raise RigControlError(f"set RX freq failed: {resp!r}")
@@ -777,6 +758,7 @@ class HamlibNetController(RigController):
                 self._freq_state.freq_hz = vfoa_hz
             self._cmd("f")  # readback, discard
         if vfob_hz is not None:
+            logger.info("RigNet: sending I %d", int(vfob_hz))
             resp = self._cmd(f"I {int(vfob_hz)}")
             if "RPRT 0" not in resp:
                 raise RigControlError(f"set TX freq failed: {resp!r}")

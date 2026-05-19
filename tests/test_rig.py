@@ -473,13 +473,18 @@ class TestHamlibNetController:
         assert ctrl._sock is not None
         assert ctrl.state == RigState.CONNECTED
 
-    def test_init_vfo_timeout_keeps_connection(self) -> None:
-        """V Main がタイムアウトしても接続を維持する。"""
+    def test_init_vfo_timeout_disconnects(self) -> None:
+        """S 1 Main がタイムアウトすると _cmd() がソケットを閉じて DISCONNECTED になる。
+
+        raw socket 直接アクセスではなく _cmd() 経由にしたことで、
+        タイムアウト後の応答データがバッファに残留してコマンド応答がずれる
+        バッファ汚染を起こさなくなった。
+        """
         ctrl = self._make_connected_ctrl()
         ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
         ctrl._init_vfo()  # should not raise
-        assert ctrl._sock is not None
-        assert ctrl.state == RigState.CONNECTED
+        assert ctrl._sock is None
+        assert ctrl.state == RigState.DISCONNECTED
 
 
 # ---------------------------------------------------------------------------
