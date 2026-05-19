@@ -482,8 +482,18 @@ class MainWindow(QMainWindow):
         """フィルターコンボと検索ボックスに従って衛星リストを再描画する。"""
         filter_text = self._filter_combo.currentText()
         search_query = self._search_box.text().strip().lower()
+
+        # リスト再構築中に currentRowChanged(-1) が発火して選択・表示がクリアされないよう
+        # シグナルを一時停止し、再構築後に選択を復元する
+        prev_item = self._sat_list.currentItem()
+        current_norad: int | None = (
+            prev_item.data(Qt.ItemDataRole.UserRole) if prev_item is not None else None
+        )
+
+        self._sat_list.blockSignals(True)
         self._sat_list.clear()
         count = 0
+        restore_row = -1
         filtered_sats: list[tuple[int, str]] = []
 
         for d in self._all_sat_data:
@@ -532,8 +542,14 @@ class MainWindow(QMainWindow):
                 item.setForeground(QColor(color_hex))
 
             self._sat_list.addItem(item)
+            if current_norad is not None and d["norad"] == current_norad:
+                restore_row = count
             filtered_sats.append((d["norad"], d["name"]))
             count += 1
+
+        if restore_row >= 0:
+            self._sat_list.setCurrentRow(restore_row)
+        self._sat_list.blockSignals(False)
 
         if search_query:
             self._filter_label.setText(f"Search: '{search_query}' — {count} matches")
