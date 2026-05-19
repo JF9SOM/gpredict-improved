@@ -557,9 +557,9 @@ class HamlibNetController(RigController):
             with self._lock:
                 self._state = RigState.CONNECTED
             logger.info("RigNet: connected to %s:%d", self._host, self._port)
+            self._cached_model_name = self._fetch_model_name()
             self._vfo_mode = self._detect_vfo_mode()
             logger.debug("RigNet: vfo_mode=%s", self._vfo_mode)
-            self._cached_model_name = self._fetch_model_name()
             self._setup_split()
             return True
         except OSError as exc:
@@ -619,19 +619,66 @@ class HamlibNetController(RigController):
                 return ""
 
     def _fetch_model_name(self) -> str:
-        """接続時に一度だけ _ コマンドでモデル名を取得する。"""
-        resp = self._cmd("_")
-        lines = [ln.strip() for ln in resp.splitlines() if ln.strip() and not ln.startswith("RPRT")]
-        return lines[0] if lines else f"{self._host}:{self._port}"
+        """接続時に一度だけ _ コマンドでモデル名を取得する。
+
+        _cmd() を経由せず直接ソケットを操作する。_ コマンドに非対応の rigctld や
+        タイムアウトが発生しても接続を破壊せず "host:port" にフォールバックする。
+        """
+        if self._sock is None:
+            return f"{self._host}:{self._port}"
+        prev_timeout = self._sock.gettimeout()
+        try:
+            self._sock.settimeout(2.0)
+            self._sock.sendall(b"_\n")
+            data = b""
+            while True:
+                chunk = self._sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+                if b"RPRT" in data:
+                    break
+            resp = data.decode(errors="replace").strip()
+            lines = [ln.strip() for ln in resp.splitlines() if ln.strip() and not ln.startswith("RPRT")]
+            return lines[0] if lines else f"{self._host}:{self._port}"
+        except OSError as exc:
+            logger.warning("RigNet: _ (get_info) failed (ignored): %s", exc)
+            return f"{self._host}:{self._port}"
+        finally:
+            with contextlib.suppress(OSError):
+                if self._sock is not None:
+                    self._sock.settimeout(prev_timeout)
 
     def _setup_split(self) -> None:
         """split ON + TX VFO = VFOA を設定する（接続時1回だけ）。
 
         本家 gpredict の setup_split() と同じ: S 1 VFOA
+        _cmd() を経由せず直接ソケットを操作するため、タイムアウトや非対応時でも
+        接続を破壊しない。
         """
-        resp = self._cmd("S 1 VFOA")
-        if "RPRT 0" not in resp:
-            logger.warning("RigNet: split setup returned %r (continuing)", resp)
+        if self._sock is None:
+            return
+        prev_timeout = self._sock.gettimeout()
+        try:
+            self._sock.settimeout(2.0)
+            self._sock.sendall(b"S 1 VFOA\n")
+            data = b""
+            while True:
+                chunk = self._sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+                if b"RPRT" in data:
+                    break
+            resp = data.decode(errors="replace").strip()
+            if "RPRT 0" not in resp:
+                logger.warning("RigNet: split setup returned %r (continuing)", resp)
+        except OSError as exc:
+            logger.warning("RigNet: S 1 VFOA failed (ignored): %s", exc)
+        finally:
+            with contextlib.suppress(OSError):
+                if self._sock is not None:
+                    self._sock.settimeout(prev_timeout)
 
     # -- 内部ユーティリティ --
 

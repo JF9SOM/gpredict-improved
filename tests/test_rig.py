@@ -461,6 +461,23 @@ class TestHamlibNetController:
         sent = b"".join(call.args[0] for call in mock_sock.sendall.call_args_list)
         assert b"S 1 VFOA\n" in sent
 
+    def test_fetch_model_name_timeout_keeps_connection(self) -> None:
+        """_ がタイムアウトしても接続を維持し host:port を返す。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
+        name = ctrl._fetch_model_name()
+        assert name == "localhost:4532"
+        assert ctrl._sock is not None
+        assert ctrl.state == RigState.CONNECTED
+
+    def test_setup_split_timeout_keeps_connection(self) -> None:
+        """S 1 VFOA がタイムアウトしても接続を維持する。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
+        ctrl._setup_split()  # should not raise
+        assert ctrl._sock is not None
+        assert ctrl.state == RigState.CONNECTED
+
 
 # ---------------------------------------------------------------------------
 # HamlibRotatorController
