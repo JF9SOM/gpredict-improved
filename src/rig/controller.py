@@ -649,10 +649,9 @@ class HamlibNetController(RigController):
                     self._sock.settimeout(prev_timeout)
 
     def _init_vfo(self) -> None:
-        """アクティブ VFO を Sub（TX 側）に設定する（接続時1回だけ）。
+        """split ON + TX VFO = Main を設定する（接続時1回だけ）。
 
-        衛星通信の標準: Main = RX (Downlink), Sub = TX (Uplink)。
-        FTX-1 では Sub をアクティブ VFO に保つことで TX 側を制御する。
+        tcpdump で確認した本家 gpredict のシーケンス: S 1 Main
         _cmd() を経由せず直接ソケットを操作するため、タイムアウトや非対応時でも
         接続を破壊しない。
         """
@@ -661,7 +660,7 @@ class HamlibNetController(RigController):
         prev_timeout = self._sock.gettimeout()
         try:
             self._sock.settimeout(2.0)
-            self._sock.sendall(b"V Sub\n")
+            self._sock.sendall(b"S 1 Main\n")
             data = b""
             while True:
                 chunk = self._sock.recv(4096)
@@ -672,9 +671,9 @@ class HamlibNetController(RigController):
                     break
             resp = data.decode(errors="replace").strip()
             if "RPRT 0" not in resp:
-                logger.warning("RigNet: V Sub returned %r (continuing)", resp)
+                logger.warning("RigNet: S 1 Main returned %r (continuing)", resp)
         except OSError as exc:
-            logger.warning("RigNet: V Sub failed (ignored): %s", exc)
+            logger.warning("RigNet: S 1 Main failed (ignored): %s", exc)
         finally:
             with contextlib.suppress(OSError):
                 if self._sock is not None:
@@ -759,26 +758,29 @@ class HamlibNetController(RigController):
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        r"""\\set_freq で各 VFO の周波数を直接設定する（VFO 切り替え不要）。
+        """本家 gpredict の F/f/I/i サイクルで RX/TX 周波数を設定する。
 
-        Main = RX (Downlink), Sub = TX (Uplink) として独立して書き込む。
-        ul_hz が None の場合は Main のみ設定する。
-
-        # 将来の拡張: rx_vfo="Main"/tx_vfo="Sub" をパラメータ化することで
-        # TX/RX VFO をユーザーが選択できる設定 UI に対応できる。
+        tcpdump で確認したシーケンス（毎秒ループ）:
+          F {dl_hz}  → RPRT 0
+          f          → 周波数値（フィードバック確認、読み捨て）
+          I {ul_hz}  → RPRT 0
+          i          → 周波数値（同上）
+        ul_hz が None の場合は F/f のみ実行する。
         """
         if not self.is_connected:
             return False
         if vfoa_hz is not None:
-            resp = self._cmd(f"\\set_freq Main {int(vfoa_hz)}")
+            resp = self._cmd(f"F {int(vfoa_hz)}")
             if "RPRT 0" not in resp:
                 raise RigControlError(f"set RX freq failed: {resp!r}")
             with self._lock:
                 self._freq_state.freq_hz = vfoa_hz
+            self._cmd("f")  # readback, discard
         if vfob_hz is not None:
-            resp = self._cmd(f"\\set_freq Sub {int(vfob_hz)}")
+            resp = self._cmd(f"I {int(vfob_hz)}")
             if "RPRT 0" not in resp:
                 raise RigControlError(f"set TX freq failed: {resp!r}")
+            self._cmd("i")  # readback, discard
         return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
