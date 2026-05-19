@@ -517,7 +517,7 @@ class HamlibNetController(RigController):
     そのまま利用できる。独自プロトコル（改行区切りテキスト）を使用。
     """
 
-    _TIMEOUT = 5.0  # seconds
+    _TIMEOUT = 10.0  # seconds — FTX-1 等の低速 CAT バックエンドに対応
 
     def __init__(self, host: str = "localhost", port: int = 4532) -> None:
         """
