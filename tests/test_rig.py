@@ -418,33 +418,30 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
-    def test_set_vfo_frequencies_uses_v_main_sub_sequence(self) -> None:
-        """V Main/Sub + F シーケンスで RX/TX 周波数を設定する。"""
+    def test_set_vfo_frequencies_uses_set_freq_vfo_commands(self) -> None:
+        r"""\\set_freq Main/Sub で VFO 切り替えなしに RX/TX 周波数を設定する。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
-        assert b"V Main\n" in sent
-        assert b"F 145000000\n" in sent
-        assert b"V Sub\n" in sent
-        assert b"F 144000000\n" in sent
+        assert b"\\set_freq Main 145000000\n" in sent
+        assert b"\\set_freq Sub 144000000\n" in sent
+        assert b"V Main\n" not in sent
+        assert b"V Sub\n" not in sent
         assert b"I " not in sent
         assert b"\\set_split_freq" not in sent
         assert b"\\set_split_vfo" not in sent
-        assert b"V VFOA\n" not in sent
-        assert b"V VFOB\n" not in sent
 
     def test_set_vfo_frequencies_dl_only_no_tx(self) -> None:
-        """ul_hz=None のとき V Main + F のみ送信し V Sub/I コマンドを送らない。"""
+        r"""ul_hz=None のとき \\set_freq Main のみ送信し Sub コマンドを送らない。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, None)
         sent = b"".join(calls)
-        assert b"V Main\n" in sent
-        assert b"F 145000000\n" in sent
-        assert b"V Sub\n" not in sent
+        assert b"\\set_freq Main 145000000\n" in sent
+        assert b"\\set_freq Sub" not in sent
         assert b"I " not in sent
 
     def test_set_vfo_frequencies_raises_on_rprt_error(self) -> None:
@@ -454,8 +451,8 @@ class TestHamlibNetController:
         with pytest.raises(RigControlError):
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
 
-    def test_connect_initializes_vfo_main(self) -> None:
-        """connect() 時に V Main を送信してアクティブ VFO を Main に設定する。"""
+    def test_connect_initializes_vfo_sub(self) -> None:
+        """connect() 時に V Sub を送信してアクティブ VFO を Sub（TX 側）に設定する。"""
         ctrl = self._make_ctrl()
         with patch("rig.controller.socket.socket") as mock_cls:
             mock_sock = MagicMock()
@@ -464,7 +461,7 @@ class TestHamlibNetController:
             result = ctrl.connect()
         assert result is True
         sent = b"".join(call.args[0] for call in mock_sock.sendall.call_args_list)
-        assert b"V Main\n" in sent
+        assert b"V Sub\n" in sent
 
     def test_fetch_model_name_timeout_keeps_connection(self) -> None:
         """_ がタイムアウトしても接続を維持し host:port を返す。"""

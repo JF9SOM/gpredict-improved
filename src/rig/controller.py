@@ -18,7 +18,6 @@ import contextlib
 import logging
 import socket
 import threading
-import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -650,9 +649,10 @@ class HamlibNetController(RigController):
                     self._sock.settimeout(prev_timeout)
 
     def _init_vfo(self) -> None:
-        """アクティブ VFO を Main に設定する（接続時1回だけ）。
+        """アクティブ VFO を Sub（TX 側）に設定する（接続時1回だけ）。
 
-        FTX-1 はデフォルトで Sub がアクティブなため V Main で Main に切り替える。
+        衛星通信の標準: Main = RX (Downlink), Sub = TX (Uplink)。
+        FTX-1 では Sub をアクティブ VFO に保つことで TX 側を制御する。
         _cmd() を経由せず直接ソケットを操作するため、タイムアウトや非対応時でも
         接続を破壊しない。
         """
@@ -661,7 +661,7 @@ class HamlibNetController(RigController):
         prev_timeout = self._sock.gettimeout()
         try:
             self._sock.settimeout(2.0)
-            self._sock.sendall(b"V Main\n")
+            self._sock.sendall(b"V Sub\n")
             data = b""
             while True:
                 chunk = self._sock.recv(4096)
@@ -672,9 +672,9 @@ class HamlibNetController(RigController):
                     break
             resp = data.decode(errors="replace").strip()
             if "RPRT 0" not in resp:
-                logger.warning("RigNet: V Main returned %r (continuing)", resp)
+                logger.warning("RigNet: V Sub returned %r (continuing)", resp)
         except OSError as exc:
-            logger.warning("RigNet: V Main failed (ignored): %s", exc)
+            logger.warning("RigNet: V Sub failed (ignored): %s", exc)
         finally:
             with contextlib.suppress(OSError):
                 if self._sock is not None:
@@ -759,34 +759,26 @@ class HamlibNetController(RigController):
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        """V+F シーケンスで RX/TX 周波数を設定する（FTX-1 Main/Sub 独立制御）。
+        r"""\\set_freq で各 VFO の周波数を直接設定する（VFO 切り替え不要）。
 
-        V Main → F {dl_hz} → 5ms wait → V Sub → F {ul_hz} → 5ms wait → V Main
-        ul_hz が None の場合は V Main → F {dl_hz} のみ。
+        Main = RX (Downlink), Sub = TX (Uplink) として独立して書き込む。
+        ul_hz が None の場合は Main のみ設定する。
+
+        # 将来の拡張: rx_vfo="Main"/tx_vfo="Sub" をパラメータ化することで
+        # TX/RX VFO をユーザーが選択できる設定 UI に対応できる。
         """
         if not self.is_connected:
             return False
-        resp = self._cmd("V Main")
-        if "RPRT 0" not in resp:
-            raise RigControlError(f"set VFO Main failed: {resp!r}")
         if vfoa_hz is not None:
-            resp = self._cmd(f"F {int(vfoa_hz)}")
+            resp = self._cmd(f"\\set_freq Main {int(vfoa_hz)}")
             if "RPRT 0" not in resp:
                 raise RigControlError(f"set RX freq failed: {resp!r}")
             with self._lock:
                 self._freq_state.freq_hz = vfoa_hz
         if vfob_hz is not None:
-            time.sleep(0.005)
-            resp = self._cmd("V Sub")
-            if "RPRT 0" not in resp:
-                raise RigControlError(f"set VFO Sub failed: {resp!r}")
-            resp = self._cmd(f"F {int(vfob_hz)}")
+            resp = self._cmd(f"\\set_freq Sub {int(vfob_hz)}")
             if "RPRT 0" not in resp:
                 raise RigControlError(f"set TX freq failed: {resp!r}")
-            time.sleep(0.005)
-            resp = self._cmd("V Main")
-            if "RPRT 0" not in resp:
-                raise RigControlError(f"restore VFO Main failed: {resp!r}")
         return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
