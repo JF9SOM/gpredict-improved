@@ -257,6 +257,7 @@ class MainWindow(QMainWindow):
         self._satellite_list_refresh.connect(self._load_satellites)
         self._rig_error.connect(self._on_rig_error)
         self._satnogs_status.connect(self._on_satnogs_status)
+        self._radio_control.transmitter_changed.connect(self._on_transmitter_changed)
         self._load_satellites()
         self._load_rig_settings()
 
@@ -897,15 +898,38 @@ class MainWindow(QMainWindow):
         self._refresh_radio_control(norad)
 
     def _refresh_radio_control(self, norad: int) -> None:
-        """選択衛星のトランスミッター情報を取得してRadio Controlパネルを更新する。"""
-        row = self._conn.execute(
-            "SELECT downlink_low, uplink_low, mode, ctcss_tone, invert "
-            "FROM transmitters "
-            "WHERE norad_cat_id = ? AND alive = 1 "
-            "ORDER BY downlink_low DESC LIMIT 1",
+        """選択衛星のトランスミッター一覧を取得してRadio Controlパネルを更新する。
+
+        優先ORDER BY:
+          1. Transponder かつ双方向 かつ1GHz未満
+          2. Transceiver かつ1GHz未満
+          3. 1GHz未満のもの
+          4. downlink_low ASC（低い周波数が先）
+        """
+        rows = self._conn.execute(
+            """
+            SELECT uuid, description, type,
+                   downlink_low, uplink_low, mode, ctcss_tone, invert
+            FROM transmitters
+            WHERE norad_cat_id = ? AND alive = 1
+            ORDER BY
+                (CASE WHEN type='Transponder' AND uplink_low IS NOT NULL
+                           AND downlink_low < 1000000000 THEN 1 ELSE 0 END) DESC,
+                (CASE WHEN type='Transceiver'
+                           AND downlink_low < 1000000000 THEN 1 ELSE 0 END) DESC,
+                (CASE WHEN downlink_low < 1000000000 THEN 1 ELSE 0 END) DESC,
+                downlink_low ASC
+            """,
             (norad,),
-        ).fetchone()
-        self._current_transmitter = dict(row) if row else None
+        ).fetchall()
+        transmitters = [dict(r) for r in rows]
+        # set_transmitters が transmitter_changed を emit し _on_transmitter_changed が
+        # _current_transmitter を更新する
+        self._radio_control.set_transmitters(transmitters)
+
+    def _on_transmitter_changed(self, xpdr: Any) -> None:
+        """トランスポンダ選択変更時に _current_transmitter を更新して表示を即時反映する。"""
+        self._current_transmitter = xpdr if isinstance(xpdr, dict) else None
         if self._current_transmitter:
             dl = self._current_transmitter.get("downlink_low")
             ul = self._current_transmitter.get("uplink_low")

@@ -333,6 +333,132 @@ class TestRadioControlWidget:
         qtbot.addWidget(w)
         assert "configured" in w._rig_status_label.text().lower()
 
+    # -- Transponder combo --
+
+    def test_initial_combo_empty_and_disabled(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert w._xpdr_combo.count() == 0
+        assert not w._xpdr_combo.isEnabled()
+
+    def test_set_transmitters_populates_combo(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        xpdrs = [
+            {
+                "description": "FM Voice",
+                "type": "Transponder",
+                "downlink_low": 145_800_000,
+                "uplink_low": 145_200_000,
+                "mode": "FM",
+                "ctcss_tone": None,
+                "invert": 0,
+            },
+            {
+                "description": "APRS",
+                "type": "Transceiver",
+                "downlink_low": 437_825_000,
+                "uplink_low": 437_825_000,
+                "mode": "AFSK",
+                "ctcss_tone": None,
+                "invert": 0,
+            },
+        ]
+        w.set_transmitters(xpdrs)
+        assert w._xpdr_combo.count() == 2
+        assert w._xpdr_combo.isEnabled()
+        assert "FM Voice" in w._xpdr_combo.itemText(0)
+        assert "145.800" in w._xpdr_combo.itemText(0)
+
+    def test_set_transmitters_emits_signal(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        xpdr = {
+            "description": "FM",
+            "type": "Transponder",
+            "downlink_low": 145_800_000,
+            "uplink_low": None,
+            "mode": "FM",
+            "ctcss_tone": 67.0,
+            "invert": 0,
+        }
+        received: list[object] = []
+        w.transmitter_changed.connect(lambda x: received.append(x))
+        w.set_transmitters([xpdr])
+        assert len(received) == 1
+        assert received[0] == xpdr
+
+    def test_set_transmitters_empty_disables_combo(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        w.set_transmitters([])
+        assert w._xpdr_combo.count() == 0
+        assert not w._xpdr_combo.isEnabled()
+
+    def test_set_transmitters_empty_emits_none(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        received: list[object] = []
+        w.transmitter_changed.connect(lambda x: received.append(x))
+        w.set_transmitters([])
+        assert received == [None]
+
+    def test_clear_satellite_clears_combo(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        xpdr = {
+            "description": "FM",
+            "type": "Transponder",
+            "downlink_low": 145_800_000,
+            "uplink_low": None,
+            "mode": "FM",
+            "ctcss_tone": None,
+            "invert": 0,
+        }
+        w.set_transmitters([xpdr])
+        w.clear_satellite()
+        assert w._xpdr_combo.count() == 0
+        assert not w._xpdr_combo.isEnabled()
+
+    def test_combo_change_emits_correct_xpdr(self, qtbot) -> None:
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        xpdrs = [
+            {
+                "description": "FM",
+                "type": "Transponder",
+                "downlink_low": 145_800_000,
+                "uplink_low": None,
+                "mode": "FM",
+                "ctcss_tone": None,
+                "invert": 0,
+            },
+            {
+                "description": "APRS",
+                "type": "Transceiver",
+                "downlink_low": 437_825_000,
+                "uplink_low": 437_825_000,
+                "mode": "AFSK",
+                "ctcss_tone": None,
+                "invert": 0,
+            },
+        ]
+        w.set_transmitters(xpdrs)
+        received: list[object] = []
+        w.transmitter_changed.connect(lambda x: received.append(x))
+        w._xpdr_combo.setCurrentIndex(1)
+        assert len(received) == 1
+        assert received[0] == xpdrs[1]
+
+    def test_xpdr_label_format(self, qtbot) -> None:
+        from ui.radio_control_widget import RadioControlWidget
+
+        xpdr = {"description": "ISS Voice", "type": "Transponder", "downlink_low": 145_800_000}
+        label = RadioControlWidget._xpdr_label(xpdr)
+        assert "ISS Voice" in label
+        assert "145.800" in label
+        assert "Transponder" in label
+
 
 # ---------------------------------------------------------------------------
 # MainWindow

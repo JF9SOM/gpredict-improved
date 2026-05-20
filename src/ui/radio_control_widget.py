@@ -6,7 +6,11 @@ RadioControlWidget — 選択衛星の無線機・ローテーター制御パネ
 
 from __future__ import annotations
 
+from typing import Any
+
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -28,10 +32,13 @@ class RadioControlWidget(QWidget):
     無線機/ローテーター接続状態を表示し、接続操作ボタンを提供する。
     """
 
+    transmitter_changed: Signal = Signal(object)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rig: RigController | None = None
         self._rotator: RotatorController | None = None
+        self._transmitters: list[dict[str, Any]] = []
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -43,14 +50,18 @@ class RadioControlWidget(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
 
-        # 衛星情報
+        # 衛星情報 + トランスポンダ選択
         sat_group = QGroupBox(_("Satellite"))
         sat_form = QFormLayout(sat_group)
         sat_form.setContentsMargins(4, 4, 4, 4)
         self._sat_name_label = QLabel("—")
         self._norad_label = QLabel("—")
+        self._xpdr_combo = QComboBox()
+        self._xpdr_combo.setEnabled(False)
+        self._xpdr_combo.currentIndexChanged.connect(self._on_xpdr_changed)
         sat_form.addRow(_("Name:"), self._sat_name_label)
         sat_form.addRow(_("NORAD:"), self._norad_label)
+        sat_form.addRow(_("Transponder:"), self._xpdr_combo)
         layout.addWidget(sat_group)
 
         # 周波数 / ドップラー
@@ -119,7 +130,35 @@ class RadioControlWidget(QWidget):
         """衛星情報・周波数表示をクリアする。"""
         self._sat_name_label.setText("—")
         self._norad_label.setText("—")
+        self._xpdr_combo.blockSignals(True)
+        self._xpdr_combo.clear()
+        self._xpdr_combo.setEnabled(False)
+        self._transmitters = []
+        self._xpdr_combo.blockSignals(False)
         self._clear_frequency()
+
+    def set_transmitters(
+        self,
+        transmitters: list[dict[str, Any]],
+        default_index: int = 0,
+    ) -> None:
+        """トランスポンダリストをコンボボックスに設定し、デフォルト選択を適用する。
+
+        リスト先頭がデフォルト選択（呼び出し側でORDER BY優先度を適用済み前提）。
+        transmitter_changed シグナルでデフォルト選択を通知する。
+        """
+        self._transmitters = transmitters
+        self._xpdr_combo.blockSignals(True)
+        self._xpdr_combo.clear()
+        for xpdr in transmitters:
+            self._xpdr_combo.addItem(self._xpdr_label(xpdr))
+        self._xpdr_combo.setEnabled(len(transmitters) > 0)
+        if transmitters:
+            idx = max(0, min(default_index, len(transmitters) - 1))
+            self._xpdr_combo.setCurrentIndex(idx)
+        self._xpdr_combo.blockSignals(False)
+        selected = transmitters[default_index] if transmitters else None
+        self.transmitter_changed.emit(selected)
 
     def update_doppler(
         self,
@@ -201,6 +240,19 @@ class RadioControlWidget(QWidget):
             self._ctcss_label,
         ):
             label.setText("—")
+
+    @staticmethod
+    def _xpdr_label(xpdr: dict[str, Any]) -> str:
+        """コンボボックス表示用ラベルを生成する。"""
+        dl = xpdr.get("downlink_low")
+        dl_str = f"{dl / 1e6:.3f} MHz" if dl else "—"
+        xtype = xpdr.get("type", "")
+        desc = xpdr.get("description", "?")
+        return f"{desc}  [{dl_str}  {xtype}]"
+
+    def _on_xpdr_changed(self, index: int) -> None:
+        if 0 <= index < len(self._transmitters):
+            self.transmitter_changed.emit(self._transmitters[index])
 
     def _update_rig_status(self) -> None:
         if self._rig is None:
