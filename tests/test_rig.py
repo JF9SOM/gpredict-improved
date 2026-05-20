@@ -418,9 +418,9 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
-    def test_set_vfo_frequencies_sends_F_f_I_i_sequence(self) -> None:
-        """本家 gpredict のシーケンスを送信する（先頭 f/i ダイアルチェック含む）。
-        実際の送信順: f → F → f → i → I → i
+    def test_set_vfo_frequencies_first_cycle_sends_F_I_only(self) -> None:
+        """初回（_last=None）は F/I のみ送信し f/i は一切送らない。
+        readback 廃止 + 先頭ダイアルチェックなし → シーケンス: F → I
         """
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
@@ -428,22 +428,24 @@ class TestHamlibNetController:
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
         assert b"F 145000000\n" in sent
-        assert b"f\n" in sent
         assert b"I 144000000\n" in sent
-        assert b"i\n" in sent
+        assert b"f\n" not in sent
+        assert b"i\n" not in sent
         assert b"\\set_freq" not in sent
         assert b"\\set_split_freq" not in sent
         assert b"\\set_split_vfo" not in sent
 
     def test_set_vfo_frequencies_dl_only_no_tx(self) -> None:
-        """ul_hz=None のとき RX サイクル（f→F→f）のみ送信し TX サイクルを省略する。"""
+        """ul_hz=None のとき RX サイクル（F のみ）を送信し TX サイクルを省略する。
+        初回（_last=None）は readback も先頭チェックもなし → F のみ送信。
+        """
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, None)
         sent = b"".join(calls)
         assert b"F 145000000\n" in sent
-        assert b"f\n" in sent
+        assert b"f\n" not in sent
         assert b"I " not in sent
         assert b"i\n" not in sent
 
@@ -454,19 +456,19 @@ class TestHamlibNetController:
         with pytest.raises(RigControlError):
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
 
-    def test_set_vfo_frequencies_no_leading_check_on_first_call(self) -> None:
-        """初回（_last=None）はダイアルチェック f/i を先頭に送らない。
-        S 1 Main 直後の CAT 遅延回避のため。初回シーケンス: F → f → I → i
+    def test_set_vfo_frequencies_first_cycle_no_f_i(self) -> None:
+        """初回（_last=None）は f/i を一切送らない（先頭チェックなし・readback なし）。
+        S 1 Main 直後の CAT 遅延回避のため。初回シーケンス: F → I のみ。
         """
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
-        # F が f readback より先（先頭 f チェックなし）
-        assert sent.index(b"F 145000000\n") < sent.index(b"f\n")
-        # I が i readback より先
-        assert sent.index(b"I 144000000\n") < sent.index(b"i\n")
+        assert b"F 145000000\n" in sent
+        assert b"I 144000000\n" in sent
+        assert b"f\n" not in sent
+        assert b"i\n" not in sent
 
     def test_set_vfo_frequencies_skips_F_when_freq_unchanged(self) -> None:
         """前回と同じ周波数（変化 < 1 Hz）のとき F/I を送らず f/i ダイアルチェックのみ送る。"""
@@ -522,6 +524,57 @@ class TestHamlibNetController:
         sent = b"".join(calls)
         assert b"F 435000000\n" in sent
         assert b"I 145000000\n" in sent
+
+    def test_connect_resets_last_frequencies(self) -> None:
+        """connect() 後は _last_dl_hz と _last_ul_hz が必ず None にリセットされる。
+        再接続時に先頭 f チェックを送って切断ループになることを防ぐ。
+        """
+        ctrl = self._make_ctrl()
+        with patch("rig.controller.socket.socket") as mock_cls:
+            mock_sock = MagicMock()
+            mock_sock.recv.return_value = b"RPRT 0\n"
+            mock_cls.return_value = mock_sock
+            ctrl.connect()
+        assert ctrl._last_dl_hz is None
+        assert ctrl._last_ul_hz is None
+
+    def test_set_vfo_frequencies_second_cycle_leading_f_before_F(self) -> None:
+        """2 サイクル目以降は先頭に f ダイアルチェックを送り、その後 F を送る。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._last_dl_hz = 145_000_000.0  # 2サイクル目を再現
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_vfo_frequencies(145_001_000.0, None)
+        sent = b"".join(calls)
+        assert b"f\n" in sent
+        assert b"F 145001000\n" in sent
+        assert sent.index(b"f\n") < sent.index(b"F 145001000\n")
+
+    def test_set_vfo_frequencies_skips_tx_if_disconnected_after_rx(self) -> None:
+        """RX サイクル中に f ダイアルチェックがタイムアウトして切断した場合 TX をスキップする。
+
+        シナリオ: 2サイクル目・同一周波数（F は送らない）
+          1. f ダイアルチェックを送信
+          2. recv が TimeoutError → _cmd() が OSError をキャッチして切断
+          3. abs(dl - last) < 1.0 → F は送らない
+          4. is_connected が False → TX サイクルをスキップして True を返す
+        """
+        ctrl = self._make_connected_ctrl()
+        ctrl._last_dl_hz = 145_000_000.0  # 2サイクル目: 先頭 f を送る
+        ctrl._last_ul_hz = 144_000_000.0
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        # f の recv で TimeoutError → _cmd() が切断処理を実行
+        ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
+
+        result = ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)  # 同一周波数
+        sent = b"".join(calls)
+        assert b"f\n" in sent      # 先頭ダイアルチェックは送信された
+        assert b"F " not in sent   # 同一周波数 → F は送らない
+        assert b"I " not in sent   # TX サイクルはスキップ
+        assert b"i\n" not in sent
+        assert result is True      # 部分成功でも True を返す
+        assert ctrl.state == RigState.DISCONNECTED
 
     def test_connect_sends_split_main(self) -> None:
         """connect() 時に S 1 Main（split ON）を送信する。"""
