@@ -461,6 +461,28 @@ class TestRadioControlWidget:
 
 
 # ---------------------------------------------------------------------------
+# TransmitterDialog
+# ---------------------------------------------------------------------------
+
+
+class TestTransmitterDialog:
+    def _mgr(self, db: sqlite3.Connection) -> object:
+        from data.transmitter_manager import TransmitterManager
+
+        return TransmitterManager(db)
+
+    def test_type_list_includes_transceiver(self) -> None:
+        from ui.transmitter_dialog import _TYPES
+
+        assert "Transceiver" in _TYPES
+
+    def test_type_list_order(self) -> None:
+        from ui.transmitter_dialog import _TYPES
+
+        assert _TYPES == ["Transmitter", "Transponder", "Transceiver", "Beacon"]
+
+
+# ---------------------------------------------------------------------------
 # MainWindow
 # ---------------------------------------------------------------------------
 

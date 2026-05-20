@@ -25,7 +25,7 @@ from data.transmitter_manager import TransmitterManager
 from i18n import _
 
 _MODES: list[str] = ["FM", "SSB", "CW", "CW-R", "DIGITALVOICE", "BPSK", "AFSK", "Other"]
-_TYPES: list[str] = ["Transmitter", "Transponder", "Beacon"]
+_TYPES: list[str] = ["Transmitter", "Transponder", "Transceiver", "Beacon"]
 _CTCSS_TYPES: list[str] = ["", "CTCSS", "DCS"]
 
 
