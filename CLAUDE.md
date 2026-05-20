@@ -464,3 +464,35 @@ sudo usermod -aG dialout $USER
 1. ドップラー補正の実動作確認
 2. ローテーター設定ダイアログ
 3. AppImageビルド（配布パッケージ）
+
+---
+
+## HamlibNetController 実装メモ（2026-05-20 確認済み）
+
+### FTX-1F + rigctld での動作確認済みプロトコル
+
+**接続時（1回のみ）:**
+  S 1 Main → RPRT 0
+
+**毎サイクル（1秒間隔）:**
+  F {dl_hz} → RPRT 0  （前回から1Hz以上変化した場合のみ）
+  I {ul_hz} → RPRT 0  （前回から1Hz以上変化した場合のみ）
+
+### FTX-1F固有の制約（Hamlibバックエンドが吸収）
+- S 1 Main 応答に約150ms かかる
+- F/I コマンド応答は約150ms
+- f/i（get_freq）コマンドはF/I送信直後に10秒以上かかる → 使用禁止
+- アクティブVFO切り替え（V コマンド）はTX点灯を引き起こす → 使用禁止
+
+### 実装上の重要事項
+- set_vfo_frequencies()はバックグラウンドスレッドで実行（UIブロック防止）
+- _cmd()はソケットタイムアウト10秒
+- connect()時に_last_dl_hz/_last_ul_hzをNoneにリセット
+- f/iダイアルフィードバックは実装しない（FTX-1非対応）
+- S 1 Mainは接続時1回のみ（毎サイクル送らない）
+
+### 動作確認環境
+- リグ: Yaesu FTX-1F
+- PC: GPD MicroPC2 (Ubuntu)
+- Hamlib: 4.7.1-rc (2026-02-16) モデルID 1051
+- 接続: USB → /dev/FTX1CAT → udev/systemd → rigctld:4532
