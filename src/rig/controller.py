@@ -532,6 +532,8 @@ class HamlibNetController(RigController):
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # send+recv を直列化してレスポンスのズレを防ぐ
         self._cached_model_name: str = ""  # 接続時に一度だけ取得してキャッシュする
+        self._last_dl_hz: float = 0.0  # ダイアルフィードバック用：前回送信した RX 周波数
+        self._last_ul_hz: float = 0.0  # ダイアルフィードバック用：前回送信した TX 周波数
 
     # -- 接続管理 --
 
@@ -581,6 +583,8 @@ class HamlibNetController(RigController):
             pass
         finally:
             self._sock = None
+            self._last_dl_hz = 0.0
+            self._last_ul_hz = 0.0
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -742,28 +746,48 @@ class HamlibNetController(RigController):
     ) -> bool:
         """毎秒の追尾ループで RX/TX 周波数を設定する。
 
-        connect() 時に _init_vfo() が S 1 Main（split ON、TX VFO=Main）を
-        1回だけ送信済み。以降このメソッドは F と I のみ送る：
-          F {dl_hz}  → Sub（RX/ダウンリンク）に書き込み  → RPRT 0 確認
-          I {ul_hz}  → Main（TX/アップリンク）に書き込み → RPRT 0 確認
-        ul_hz が None の場合は F のみ実行する。
+        本家 gpredict の exec_duplex_cycle() を再現したシーケンス：
+          [RX サイクル — exec_rx_cycle()]
+            f          — ダイアルフィードバックチェック（読み捨て）毎サイクル送信
+            F {dl_hz}  — Sub（RX/ダウンリンク）に書き込み（前回から 1 Hz 以上変化時のみ）
+            f          — readback（F 送信後のみ）
+          [TX サイクル — exec_duplex_tx_cycle()]
+            i          — ダイアルフィードバックチェック（読み捨て）毎サイクル送信
+            I {ul_hz}  — Main（TX/アップリンク）に書き込み（前回から 1 Hz 以上変化時のみ）
+            i          — readback（I 送信後のみ）
+
+        connect() 時に _init_vfo() が S 1 Main（split ON、TX VFO=Main）を送信済み:
+          F → Sub（RX/ダウンリンク）に書き込み
+          I → Main（TX/アップリンク）に書き込み
+        vfob_hz が None の場合は TX サイクルを省略する。
         """
         if not self.is_connected:
             return False
+
+        # RX サイクル
         if vfoa_hz is not None:
-            logger.info("RigNet: sending F %d", int(vfoa_hz))
-            resp = self._cmd(f"F {int(vfoa_hz)}")
-            if "RPRT 0" not in resp:
-                raise RigControlError(f"set RX freq failed: {resp!r}")
-            with self._lock:
-                self._freq_state.freq_hz = vfoa_hz
-            self._cmd("f")  # readback — gpredict F→f→I→i シーケンスを踏襲
+            self._cmd("f")  # ダイアルフィードバックチェック（読み捨て）
+            if abs(vfoa_hz - self._last_dl_hz) >= 1.0:
+                logger.info("RigNet: sending F %d", int(vfoa_hz))
+                resp = self._cmd(f"F {int(vfoa_hz)}")
+                if "RPRT 0" not in resp:
+                    raise RigControlError(f"set RX freq failed: {resp!r}")
+                with self._lock:
+                    self._freq_state.freq_hz = vfoa_hz
+                self._cmd("f")  # readback
+                self._last_dl_hz = vfoa_hz
+
+        # TX サイクル
         if vfob_hz is not None:
-            logger.info("RigNet: sending I %d", int(vfob_hz))
-            resp = self._cmd(f"I {int(vfob_hz)}")
-            if "RPRT 0" not in resp:
-                raise RigControlError(f"set TX freq failed: {resp!r}")
-            self._cmd("i")  # readback — 同上
+            self._cmd("i")  # ダイアルフィードバックチェック（読み捨て）
+            if abs(vfob_hz - self._last_ul_hz) >= 1.0:
+                logger.info("RigNet: sending I %d", int(vfob_hz))
+                resp = self._cmd(f"I {int(vfob_hz)}")
+                if "RPRT 0" not in resp:
+                    raise RigControlError(f"set TX freq failed: {resp!r}")
+                self._cmd("i")  # readback
+                self._last_ul_hz = vfob_hz
+
         return True
 
     def get_frequency(self, vfo: str = "VFOA") -> float:

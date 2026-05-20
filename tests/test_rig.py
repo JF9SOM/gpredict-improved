@@ -419,7 +419,9 @@ class TestHamlibNetController:
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
     def test_set_vfo_frequencies_sends_F_f_I_i_sequence(self) -> None:
-        """本家 gpredict の F→f→I→i シーケンスを送信する。"""
+        """本家 gpredict のシーケンスを送信する（先頭 f/i ダイアルチェック含む）。
+        実際の送信順: f → F → f → i → I → i
+        """
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
@@ -434,7 +436,7 @@ class TestHamlibNetController:
         assert b"\\set_split_vfo" not in sent
 
     def test_set_vfo_frequencies_dl_only_no_tx(self) -> None:
-        """ul_hz=None のとき F/f のみ送信し I/i コマンドを送らない。"""
+        """ul_hz=None のとき RX サイクル（f→F→f）のみ送信し TX サイクルを省略する。"""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
@@ -451,6 +453,59 @@ class TestHamlibNetController:
         ctrl._sock.recv.return_value = b"RPRT -1\n"  # type: ignore[union-attr]
         with pytest.raises(RigControlError):
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+
+    def test_set_vfo_frequencies_always_sends_leading_dial_check(self) -> None:
+        """f/i ダイアルチェックは毎サイクル（初回含む）F/I より先に送信する。"""
+        ctrl = self._make_connected_ctrl()
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+        sent = b"".join(calls)
+        assert sent.index(b"f\n") < sent.index(b"F 145000000\n")
+        assert sent.index(b"i\n") < sent.index(b"I 144000000\n")
+
+    def test_set_vfo_frequencies_skips_F_when_freq_unchanged(self) -> None:
+        """前回と同じ周波数（変化 < 1 Hz）のとき F/I を送らず f/i ダイアルチェックのみ送る。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._last_dl_hz = 145_000_000.0
+        ctrl._last_ul_hz = 144_000_000.0
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+        sent = b"".join(calls)
+        assert b"F " not in sent
+        assert b"I " not in sent
+        assert b"f\n" in sent
+        assert b"i\n" in sent
+
+    def test_set_vfo_frequencies_sends_F_when_freq_changes_by_1hz(self) -> None:
+        """1 Hz 以上変化したとき F を送る（境界値テスト）。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._last_dl_hz = 145_000_000.0
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_vfo_frequencies(145_000_001.0, None)
+        sent = b"".join(calls)
+        assert b"F 145000001\n" in sent
+
+    def test_set_vfo_frequencies_skips_F_when_change_less_than_1hz(self) -> None:
+        """0.9 Hz の変化では F を送らない（境界値テスト）。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._last_dl_hz = 145_000_000.9
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_vfo_frequencies(145_000_000.0, None)  # diff = 0.9 Hz < 1.0
+        sent = b"".join(calls)
+        assert b"F " not in sent
+
+    def test_disconnect_resets_last_frequencies(self) -> None:
+        """disconnect() で _last_dl_hz と _last_ul_hz が 0 にリセットされる。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._last_dl_hz = 145_000_000.0
+        ctrl._last_ul_hz = 144_000_000.0
+        ctrl.disconnect()
+        assert ctrl._last_dl_hz == 0.0
+        assert ctrl._last_ul_hz == 0.0
 
     def test_connect_sends_split_main(self) -> None:
         """connect() 時に S 1 Main（split ON）を送信する。"""
