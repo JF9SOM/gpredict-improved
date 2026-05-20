@@ -393,6 +393,15 @@ feat(data): add SatNOGS type mapping in sync_from_satnogs
 test(rig): add coverage for VFO sequence and timeout handling
 ```
 
+## コミット後のプッシュ規則
+
+**コミット直後に必ずpushすること。** 理由：
+- CIの早期確認
+- 作業内容のバックアップ
+- コンテキスト引き継ぎ時の最新状態保証
+
+コミットのみでpushを忘れた場合は、次のアクション前に必ずpushする。
+
 ---
 
 ## テスト方針
