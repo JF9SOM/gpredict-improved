@@ -199,6 +199,8 @@ class MainWindow(QMainWindow):
     _satellite_list_refresh: Signal = Signal()
     # バックグラウンドのリグ制御スレッドからエラーを UI スレッドに伝えるシグナル。
     _rig_error: Signal = Signal(str)
+    # バックグラウンドの SATNOGS 同期スレッドから結果をステータスバーに伝えるシグナル。
+    _satnogs_status: Signal = Signal(str)
 
     def __init__(
         self,
@@ -254,6 +256,7 @@ class MainWindow(QMainWindow):
         # バックグラウンドスレッドからの衛星リスト更新要求を受け取るシグナルを接続
         self._satellite_list_refresh.connect(self._load_satellites)
         self._rig_error.connect(self._on_rig_error)
+        self._satnogs_status.connect(self._on_satnogs_status)
         self._load_satellites()
         self._load_rig_settings()
 
@@ -619,6 +622,11 @@ class MainWindow(QMainWindow):
         # 起動時にAMSATステータスが古ければバックグラウンドで更新
         if self._amsat_fetcher.is_stale():
             threading.Thread(target=self._refresh_amsat_sync, daemon=True).start()
+
+        # 起動時にトランスポンダが0件なら自動同期
+        count = self._conn.execute("SELECT COUNT(*) FROM transmitters").fetchone()[0]
+        if count == 0:
+            threading.Thread(target=self._refresh_satnogs_sync, daemon=True).start()
 
     def _refresh_tle_sync(self) -> None:
         """バックグラウンドスレッドから有効な全 TLE ソースを更新する（APScheduler ジョブ）。"""
@@ -1058,7 +1066,36 @@ class MainWindow(QMainWindow):
         )
 
     def _on_sync_satnogs(self) -> None:
-        QMessageBox.information(self, _("Sync SATNOGS"), _("SATNOGS sync not yet implemented."))
+        """Data > Sync Frequencies from SATNOGS ハンドラー。
+
+        バックグラウンドスレッドで sync_from_satnogs() を実行し、
+        完了後にステータスバーに件数を表示する。
+        """
+        threading.Thread(target=self._refresh_satnogs_sync, daemon=True).start()
+        sb = self.statusBar()
+        if sb:
+            sb.showMessage(_("Syncing transmitter frequencies from SATNOGS..."), 5000)
+
+    def _refresh_satnogs_sync(self) -> None:
+        """バックグラウンドスレッドから SATNOGS トランスポンダを同期する。"""
+        try:
+            result = asyncio.run(self._transmitter_manager.sync_from_satnogs())
+            msg = _("SATNOGS sync: {ins} inserted, {upd} updated, {skp} skipped").format(
+                ins=result["inserted"],
+                upd=result["updated"],
+                skp=result["skipped"],
+            )
+            logger.info("SATNOGS sync completed: %s", result)
+        except Exception as exc:  # noqa: BLE001
+            msg = _("SATNOGS sync failed: {err}").format(err=exc)
+            logger.warning("SATNOGS sync failed: %s", exc)
+        self._satnogs_status.emit(msg)
+
+    def _on_satnogs_status(self, msg: str) -> None:
+        """バックグラウンドSATNOGS同期スレッドからのステータスをステータスバーに表示する（UIスレッド）。"""
+        sb = self.statusBar()
+        if sb:
+            sb.showMessage(msg, 8000)
 
     def _on_sync_satellite_names(self) -> None:
         """Satellite > Sync Satellite Names from SATNOGS ハンドラー。

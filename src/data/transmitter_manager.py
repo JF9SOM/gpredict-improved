@@ -246,7 +246,7 @@ class TransmitterManager:
                 xpdr_uuid,
                 sat_id,
                 xpdr.get("description", ""),
-                xpdr.get("type", "Transponder"),
+                xpdr.get("type") or "Transponder",
                 xpdr.get("uplink_low"),
                 xpdr.get("uplink_high"),
                 xpdr.get("downlink_low"),

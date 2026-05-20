@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS transmitters (
                     ON DELETE CASCADE,
     description     TEXT NOT NULL,
     type            TEXT DEFAULT 'Transponder'
-                    CHECK(type IN ('Transmitter','Transponder','Beacon')),
+                    CHECK(type IN ('Transmitter','Transponder','Beacon','Transceiver')),
     uplink_low      INTEGER,            -- Hz (Noneなら受信専用)
     uplink_high     INTEGER,            -- Hz (バンド型トランスポンダの上端)
     downlink_low    INTEGER,            -- Hz
@@ -125,6 +125,46 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         with contextlib.suppress(Exception):
             conn.execute(stmt)
     conn.commit()
+
+    # transmitters.type CHECK制約に'Transceiver'を追加（テーブル再作成）
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='transmitters'"
+    ).fetchone()
+    if row and "'Transceiver'" not in row[0]:
+        conn.execute("DROP TABLE IF EXISTS _transmitters_backup")
+        conn.execute("ALTER TABLE transmitters RENAME TO _transmitters_backup")
+        conn.execute("""
+            CREATE TABLE transmitters (
+                uuid            TEXT PRIMARY KEY,
+                norad_cat_id    INTEGER NOT NULL REFERENCES satellites(norad_cat_id)
+                                ON DELETE CASCADE,
+                description     TEXT NOT NULL,
+                type            TEXT DEFAULT 'Transponder'
+                                CHECK(type IN ('Transmitter','Transponder','Beacon','Transceiver')),
+                uplink_low      INTEGER,
+                uplink_high     INTEGER,
+                downlink_low    INTEGER,
+                downlink_high   INTEGER,
+                mode            TEXT,
+                invert          INTEGER DEFAULT 0,
+                baud            INTEGER,
+                ctcss_tone      REAL,
+                ctcss_tone_type TEXT DEFAULT NULL
+                                CHECK(ctcss_tone_type IN ('CTCSS','DCS',NULL)),
+                alive           INTEGER DEFAULT 1,
+                source          TEXT DEFAULT 'satnogs'
+                                CHECK(source IN ('satnogs','manual')),
+                manual_override INTEGER DEFAULT 0,
+                notes           TEXT DEFAULT '',
+                updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("INSERT INTO transmitters SELECT * FROM _transmitters_backup")
+        conn.execute("DROP TABLE _transmitters_backup")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_transmitters_norad ON transmitters(norad_cat_id)"
+        )
+        conn.commit()
 
 
 def init_database(db_path: Path | None = None) -> sqlite3.Connection:
