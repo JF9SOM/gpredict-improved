@@ -569,6 +569,13 @@ class HamlibNetController(RigController):
             # 別コマンドの応答を誤読する（コマンド/応答ずれ）。
             # 接続シーケンスでは送らず、S 1 Main のみ送る。
             self._init_vfo()
+            # _init_vfo() 内の _cmd() が OSError（タイムアウト含む）で
+            # ソケットを閉じた場合は接続失敗として ERROR に遷移する。
+            if self._sock is None:
+                with self._lock:
+                    self._state = RigState.ERROR
+                logger.error("RigNet: S 1 Main timed out or failed — aborting connect")
+                return False
             return True
         except OSError as exc:
             with self._lock:
@@ -753,38 +760,29 @@ class HamlibNetController(RigController):
     ) -> bool:
         """毎秒の追尾ループで RX/TX 周波数を設定する。
 
-        本家 gpredict の exec_duplex_cycle() を再現したシーケンス：
-          [RX サイクル — exec_rx_cycle()]
-            f          — ダイアルフィードバックチェック（読み捨て）
-                         _last_dl_hz is not None のとき（2サイクル目以降）のみ送信。
-                         gpredict の lastrxf > 0.0 条件に相当。
-                         connect直後（None）は S 1 Main 直後の CAT 遅延を避けるため送らない。
-            F {dl_hz}  — Sub（RX/ダウンリンク）に書き込み（前回から 1 Hz 以上変化、または初回）
-          [TX サイクル — exec_duplex_tx_cycle()]
-            ※ RX サイクル後に is_connected を確認し、切断済みなら TX をスキップする。
-            i          — ダイアルフィードバックチェック（読み捨て）
-                         _last_ul_hz is not None のとき（2サイクル目以降）のみ送信。
-            I {ul_hz}  — Main（TX/アップリンク）に書き込み（前回から 1 Hz 以上変化、または初回）
+        f/i（get_freq/get_split_freq）は一切送らない。
+        FTX-1 等の低速 CAT バックエンドでは f コマンドが 10s を超えてタイムアウトし、
+        毎サイクル切断 → S 1 Main を含む再接続ループが発生するため。
 
-        readback（F 送信後の f、I 送信後の i）は送信しない。
-        FTX-1 等の低速 CAT バックエンドでは readback が 10s を超えてタイムアウトし、
-        毎サイクル切断ループが発生するため。_last_dl_hz は F の RPRT 0 受信直後に更新する。
+        プロトコル（write-only）:
+          [RX サイクル]
+            F {dl_hz}  — Sub（RX/ダウンリンク）に書き込み
+                         前回から 1 Hz 以上変化したとき、または初回（_last_dl_hz is None）のみ。
+          [TX サイクル]
+            ※ RX 後に is_connected を確認し、切断済みなら TX をスキップする。
+            I {ul_hz}  — Main（TX/アップリンク）に書き込み
+                         前回から 1 Hz 以上変化したとき、または初回（_last_ul_hz is None）のみ。
 
         connect() 時に _init_vfo() が S 1 Main（split ON、TX VFO=Main）を送信済み:
-          F → Sub（RX/ダウンリンク）に書き込み
-          I → Main（TX/アップリンク）に書き込み
+          F → Sub（RX/ダウンリンク）
+          I → Main（TX/アップリンク）
         vfob_hz が None の場合は TX サイクルを省略する。
-        _last_dl_hz / _last_ul_hz が None（connect直後）のときは必ず F/I を送る。
-        connect() は必ず _last_dl_hz = None にリセットするため、
-        再接続後の先頭 f による切断ループは起きない。
         """
         if not self.is_connected:
             return False
 
         # RX サイクル
         if vfoa_hz is not None:
-            if self._last_dl_hz is not None:
-                self._cmd("f")  # ダイアルフィードバックチェック（読み捨て）
             last_dl = self._last_dl_hz
             if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
                 logger.info("RigNet: sending F %d", int(vfoa_hz))
@@ -793,23 +791,21 @@ class HamlibNetController(RigController):
                     raise RigControlError(f"set RX freq failed: {resp!r}")
                 with self._lock:
                     self._freq_state.freq_hz = vfoa_hz
-                self._last_dl_hz = vfoa_hz  # readback 前に更新（タイムアウトで切断しても保持）
+                self._last_dl_hz = vfoa_hz
 
-        # RX サイクル中にダイアルチェック f がタイムアウトして切断した場合は TX をスキップ
+        # F が OSError で切断した場合は TX をスキップ
         if not self.is_connected:
             return True
 
         # TX サイクル
         if vfob_hz is not None:
-            if self._last_ul_hz is not None:
-                self._cmd("i")  # ダイアルフィードバックチェック（読み捨て）
             last_ul = self._last_ul_hz
             if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
                 logger.info("RigNet: sending I %d", int(vfob_hz))
                 resp = self._cmd(f"I {int(vfob_hz)}")
                 if "RPRT 0" not in resp:
                     raise RigControlError(f"set TX freq failed: {resp!r}")
-                self._last_ul_hz = vfob_hz  # readback 前に更新
+                self._last_ul_hz = vfob_hz
 
         return True
 

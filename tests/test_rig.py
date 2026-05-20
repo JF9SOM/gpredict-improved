@@ -470,19 +470,16 @@ class TestHamlibNetController:
         assert b"f\n" not in sent
         assert b"i\n" not in sent
 
-    def test_set_vfo_frequencies_skips_F_when_freq_unchanged(self) -> None:
-        """前回と同じ周波数（変化 < 1 Hz）のとき F/I を送らず f/i ダイアルチェックのみ送る。"""
+    def test_set_vfo_frequencies_sends_nothing_when_freq_unchanged(self) -> None:
+        """前回と同じ周波数（変化 < 1 Hz）のとき F も I も f も i も一切送らない。"""
         ctrl = self._make_connected_ctrl()
         ctrl._last_dl_hz = 145_000_000.0
         ctrl._last_ul_hz = 144_000_000.0
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
-        ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
-        sent = b"".join(calls)
-        assert b"F " not in sent
-        assert b"I " not in sent
-        assert b"f\n" in sent
-        assert b"i\n" in sent
+        result = ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+        assert calls == []  # 何も送信しない
+        assert result is True
 
     def test_set_vfo_frequencies_sends_F_when_freq_changes_by_1hz(self) -> None:
         """1 Hz 以上変化したとき F を送る（境界値テスト）。"""
@@ -526,9 +523,7 @@ class TestHamlibNetController:
         assert b"I 145000000\n" in sent
 
     def test_connect_resets_last_frequencies(self) -> None:
-        """connect() 後は _last_dl_hz と _last_ul_hz が必ず None にリセットされる。
-        再接続時に先頭 f チェックを送って切断ループになることを防ぐ。
-        """
+        """connect() 後は _last_dl_hz と _last_ul_hz が必ず None にリセットされる。"""
         ctrl = self._make_ctrl()
         with patch("rig.controller.socket.socket") as mock_cls:
             mock_sock = MagicMock()
@@ -538,43 +533,40 @@ class TestHamlibNetController:
         assert ctrl._last_dl_hz is None
         assert ctrl._last_ul_hz is None
 
-    def test_set_vfo_frequencies_second_cycle_leading_f_before_F(self) -> None:
-        """2 サイクル目以降は先頭に f ダイアルチェックを送り、その後 F を送る。"""
+    def test_set_vfo_frequencies_second_cycle_sends_F_only_on_change(self) -> None:
+        """2 サイクル目以降は f/i を送らず、変化があるときのみ F を送る。"""
         ctrl = self._make_connected_ctrl()
         ctrl._last_dl_hz = 145_000_000.0  # 2サイクル目を再現
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_001_000.0, None)
         sent = b"".join(calls)
-        assert b"f\n" in sent
+        assert b"f\n" not in sent  # f/i は一切送らない
         assert b"F 145001000\n" in sent
-        assert sent.index(b"f\n") < sent.index(b"F 145001000\n")
 
-    def test_set_vfo_frequencies_skips_tx_if_disconnected_after_rx(self) -> None:
-        """RX サイクル中に f ダイアルチェックがタイムアウトして切断した場合 TX をスキップする。
+    def test_set_vfo_frequencies_skips_tx_when_disconnected_between_rx_and_tx(self) -> None:
+        """RX サイクル後に切断した場合 TX サイクルをスキップして True を返す。
 
-        シナリオ: 2サイクル目・同一周波数（F は送らない）
-          1. f ダイアルチェックを送信
-          2. recv が TimeoutError → _cmd() が OSError をキャッチして切断
-          3. abs(dl - last) < 1.0 → F は送らない
-          4. is_connected が False → TX サイクルをスキップして True を返す
+        シナリオ: 同一周波数（F 送信なし） → RX/TX 間のガードが切断を検出
         """
+        from unittest.mock import PropertyMock
+
         ctrl = self._make_connected_ctrl()
-        ctrl._last_dl_hz = 145_000_000.0  # 2サイクル目: 先頭 f を送る
-        ctrl._last_ul_hz = 144_000_000.0
+        ctrl._last_dl_hz = 145_000_000.0  # 変化なし → F 送信なし
+        ctrl._last_ul_hz = None
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
-        # f の recv で TimeoutError → _cmd() が切断処理を実行
-        ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
 
-        result = ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)  # 同一周波数
-        sent = b"".join(calls)
-        assert b"f\n" in sent  # 先頭ダイアルチェックは送信された
-        assert b"F " not in sent  # 同一周波数 → F は送らない
-        assert b"I " not in sent  # TX サイクルはスキップ
-        assert b"i\n" not in sent
-        assert result is True  # 部分成功でも True を返す
-        assert ctrl.state == RigState.DISCONNECTED
+        # is_connected: 初回 True（入り口通過）→ ガード False（TX スキップ）
+        with patch.object(
+            HamlibNetController, "is_connected", new_callable=PropertyMock
+        ) as mock_prop:
+            mock_prop.side_effect = [True, False]
+            result = ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+
+        assert result is True
+        assert b"F " not in b"".join(calls)
+        assert b"I " not in b"".join(calls)
 
     def test_connect_sends_split_main(self) -> None:
         """connect() 時に S 1 Main（split ON）を送信する。"""
@@ -609,6 +601,24 @@ class TestHamlibNetController:
         ctrl._init_vfo()  # should not raise
         assert ctrl._sock is None
         assert ctrl.state == RigState.DISCONNECTED
+
+    def test_connect_returns_false_when_S1Main_fails(self) -> None:
+        """S 1 Main がタイムアウトした場合 connect() は False を返し ERROR 状態になる。
+
+        以前は _init_vfo() 失敗を無視して True を返していたため、
+        接続ボタンが「接続済み」のまま固まる問題があった。
+        """
+        ctrl = self._make_ctrl()
+        with patch("rig.controller.socket.socket") as mock_cls:
+            mock_sock = MagicMock()
+            # TCP 接続自体は成功、S 1 Main の recv でタイムアウト
+            mock_sock.connect.return_value = None
+            mock_sock.recv.side_effect = TimeoutError("timed out")
+            mock_cls.return_value = mock_sock
+            result = ctrl.connect()
+        assert result is False
+        assert ctrl.state == RigState.ERROR
+        assert ctrl._sock is None
 
 
 # ---------------------------------------------------------------------------
