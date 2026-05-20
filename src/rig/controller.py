@@ -650,8 +650,7 @@ class HamlibNetController(RigController):
                     break
             resp = data.decode(errors="replace").strip()
             lines = [
-                ln.strip() for ln in resp.splitlines()
-                if ln.strip() and not ln.startswith("RPRT")
+                ln.strip() for ln in resp.splitlines() if ln.strip() and not ln.startswith("RPRT")
             ]
             return lines[0] if lines else f"{self._host}:{self._port}"
         except OSError as exc:

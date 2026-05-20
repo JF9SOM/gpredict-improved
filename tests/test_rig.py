@@ -569,11 +569,11 @@ class TestHamlibNetController:
 
         result = ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)  # 同一周波数
         sent = b"".join(calls)
-        assert b"f\n" in sent      # 先頭ダイアルチェックは送信された
-        assert b"F " not in sent   # 同一周波数 → F は送らない
-        assert b"I " not in sent   # TX サイクルはスキップ
+        assert b"f\n" in sent  # 先頭ダイアルチェックは送信された
+        assert b"F " not in sent  # 同一周波数 → F は送らない
+        assert b"I " not in sent  # TX サイクルはスキップ
         assert b"i\n" not in sent
-        assert result is True      # 部分成功でも True を返す
+        assert result is True  # 部分成功でも True を返す
         assert ctrl.state == RigState.DISCONNECTED
 
     def test_connect_sends_split_main(self) -> None:
