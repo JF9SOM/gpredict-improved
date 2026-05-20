@@ -454,15 +454,19 @@ class TestHamlibNetController:
         with pytest.raises(RigControlError):
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
 
-    def test_set_vfo_frequencies_always_sends_leading_dial_check(self) -> None:
-        """f/i ダイアルチェックは毎サイクル（初回含む）F/I より先に送信する。"""
+    def test_set_vfo_frequencies_no_leading_check_on_first_call(self) -> None:
+        """初回（_last=None）はダイアルチェック f/i を先頭に送らない。
+        S 1 Main 直後の CAT 遅延回避のため。初回シーケンス: F → f → I → i
+        """
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
-        assert sent.index(b"f\n") < sent.index(b"F 145000000\n")
-        assert sent.index(b"i\n") < sent.index(b"I 144000000\n")
+        # F が f readback より先（先頭 f チェックなし）
+        assert sent.index(b"F 145000000\n") < sent.index(b"f\n")
+        # I が i readback より先
+        assert sent.index(b"I 144000000\n") < sent.index(b"i\n")
 
     def test_set_vfo_frequencies_skips_F_when_freq_unchanged(self) -> None:
         """前回と同じ周波数（変化 < 1 Hz）のとき F/I を送らず f/i ダイアルチェックのみ送る。"""

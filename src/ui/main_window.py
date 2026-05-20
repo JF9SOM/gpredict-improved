@@ -197,6 +197,8 @@ class MainWindow(QMainWindow):
     # バックグラウンドスレッドから _load_satellites を安全に呼ぶためのシグナル。
     # QTimer.singleShot はイベントループのないスレッドでは動作しないため Signal を使う。
     _satellite_list_refresh: Signal = Signal()
+    # バックグラウンドのリグ制御スレッドからエラーを UI スレッドに伝えるシグナル。
+    _rig_error: Signal = Signal(str)
 
     def __init__(
         self,
@@ -235,6 +237,9 @@ class MainWindow(QMainWindow):
         self._amsat_fetcher = AMSATStatusFetcher(conn)
         self._transmitter_manager = TransmitterManager(conn)
         self._rig_controller: RigController | None = None
+        # リグ制御スレッドが実行中かどうかを示すロック。
+        # acquire(blocking=False) で取得できないときは前のサイクルがまだ実行中。
+        self._rig_busy_lock = threading.Lock()
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
@@ -248,6 +253,7 @@ class MainWindow(QMainWindow):
         self._pass_list.set_pass_predictor(self._pass_predictor)
         # バックグラウンドスレッドからの衛星リスト更新要求を受け取るシグナルを接続
         self._satellite_list_refresh.connect(self._load_satellites)
+        self._rig_error.connect(self._on_rig_error)
         self._load_satellites()
         self._load_rig_settings()
 
@@ -749,17 +755,40 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(
                 dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss
             )
-            # 接続中の無線機にドップラー補正済み周波数を送信（仰角の正負を問わない）
+            # 接続中の無線機にドップラー補正済み周波数を送信（仰角の正負を問わない）。
+            # set_vfo_frequencies() は内部で recv() を伴う TCP 通信を行うため、
+            # UIスレッドで直接呼ぶとブロッキングで画面が固まる。
+            # _rig_busy_lock を使い、前のサイクルが完了していればバックグラウンド
+            # スレッドで送信する。前のサイクルがまだ実行中なら今回はスキップする。
             if self._rig_controller is not None and self._rig_controller.is_connected:
-                try:
-                    self._rig_controller.set_vfo_frequencies(dl_corr, ul_corr)
-                except RigControlError as exc:
-                    logger.warning("RigControlError: %s", exc)
-                    sb = self.statusBar()
-                    if sb:
-                        sb.showMessage(f"RIG: {exc}", 3000)
+                if self._rig_busy_lock.acquire(blocking=False):
+                    rig = self._rig_controller
+                    dl = dl_corr
+                    ul = ul_corr
+
+                    def _rig_send() -> None:
+                        try:
+                            rig.set_vfo_frequencies(dl, ul)
+                        except RigControlError as exc:
+                            self._rig_error.emit(str(exc))
+                        except Exception as exc:
+                            logger.error("RigNet: unexpected error in send thread: %s", exc)
+                            self._rig_error.emit(str(exc))
+                        finally:
+                            self._rig_busy_lock.release()
+
+                    threading.Thread(target=_rig_send, daemon=True).start()
+                else:
+                    logger.debug("RigNet: previous cycle still running, skipping tick")
         self._radio_control.refresh_status()
         self._update_rig_label()
+
+    def _on_rig_error(self, msg: str) -> None:
+        """バックグラウンドリグスレッドからのエラーをステータスバーに表示する（UIスレッド）。"""
+        logger.warning("RigControlError: %s", msg)
+        sb = self.statusBar()
+        if sb:
+            sb.showMessage(f"RIG: {msg}", 3000)
 
     def _update_statusbar(self) -> None:
         """ステータスバーの QTH テキストと TLE 最終更新日時を更新する。"""

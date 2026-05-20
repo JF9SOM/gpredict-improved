@@ -748,12 +748,16 @@ class HamlibNetController(RigController):
 
         本家 gpredict の exec_duplex_cycle() を再現したシーケンス：
           [RX サイクル — exec_rx_cycle()]
-            f          — ダイアルフィードバックチェック（読み捨て）毎サイクル送信
-            F {dl_hz}  — Sub（RX/ダウンリンク）に書き込み（前回から 1 Hz 以上変化時のみ）
+            f          — ダイアルフィードバックチェック（読み捨て）
+                         _last_dl_hz is not None のとき（2サイクル目以降）のみ送信。
+                         gpredict の lastrxf > 0.0 条件に相当。
+                         connect直後（None）は S 1 Main 直後の CAT 遅延を避けるため送らない。
+            F {dl_hz}  — Sub（RX/ダウンリンク）に書き込み（前回から 1 Hz 以上変化、または初回）
             f          — readback（F 送信後のみ）
           [TX サイクル — exec_duplex_tx_cycle()]
-            i          — ダイアルフィードバックチェック（読み捨て）毎サイクル送信
-            I {ul_hz}  — Main（TX/アップリンク）に書き込み（前回から 1 Hz 以上変化時のみ）
+            i          — ダイアルフィードバックチェック（読み捨て）
+                         _last_ul_hz is not None のとき（2サイクル目以降）のみ送信。
+            I {ul_hz}  — Main（TX/アップリンク）に書き込み（前回から 1 Hz 以上変化、または初回）
             i          — readback（I 送信後のみ）
 
         connect() 時に _init_vfo() が S 1 Main（split ON、TX VFO=Main）を送信済み:
@@ -767,7 +771,8 @@ class HamlibNetController(RigController):
 
         # RX サイクル
         if vfoa_hz is not None:
-            self._cmd("f")  # ダイアルフィードバックチェック（読み捨て）
+            if self._last_dl_hz is not None:
+                self._cmd("f")  # ダイアルフィードバックチェック（読み捨て）
             last_dl = self._last_dl_hz
             if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
                 logger.info("RigNet: sending F %d", int(vfoa_hz))
@@ -781,7 +786,8 @@ class HamlibNetController(RigController):
 
         # TX サイクル
         if vfob_hz is not None:
-            self._cmd("i")  # ダイアルフィードバックチェック（読み捨て）
+            if self._last_ul_hz is not None:
+                self._cmd("i")  # ダイアルフィードバックチェック（読み捨て）
             last_ul = self._last_ul_hz
             if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
                 logger.info("RigNet: sending I %d", int(vfob_hz))
