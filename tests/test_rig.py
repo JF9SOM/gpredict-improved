@@ -499,13 +499,25 @@ class TestHamlibNetController:
         assert b"F " not in sent
 
     def test_disconnect_resets_last_frequencies(self) -> None:
-        """disconnect() で _last_dl_hz と _last_ul_hz が 0 にリセットされる。"""
+        """disconnect() で _last_dl_hz と _last_ul_hz が None にリセットされる。"""
         ctrl = self._make_connected_ctrl()
         ctrl._last_dl_hz = 145_000_000.0
         ctrl._last_ul_hz = 144_000_000.0
         ctrl.disconnect()
-        assert ctrl._last_dl_hz == 0.0
-        assert ctrl._last_ul_hz == 0.0
+        assert ctrl._last_dl_hz is None
+        assert ctrl._last_ul_hz is None
+
+    def test_set_vfo_frequencies_sends_F_when_last_is_none(self) -> None:
+        """_last_dl_hz=None（connect直後）は値に関わらず必ず F/I を送る。"""
+        ctrl = self._make_connected_ctrl()
+        assert ctrl._last_dl_hz is None
+        assert ctrl._last_ul_hz is None
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_vfo_frequencies(435_000_000.0, 145_000_000.0)
+        sent = b"".join(calls)
+        assert b"F 435000000\n" in sent
+        assert b"I 145000000\n" in sent
 
     def test_connect_sends_split_main(self) -> None:
         """connect() 時に S 1 Main（split ON）を送信する。"""

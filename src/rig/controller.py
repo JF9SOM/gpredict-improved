@@ -532,8 +532,8 @@ class HamlibNetController(RigController):
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # send+recv を直列化してレスポンスのズレを防ぐ
         self._cached_model_name: str = ""  # 接続時に一度だけ取得してキャッシュする
-        self._last_dl_hz: float = 0.0  # ダイアルフィードバック用：前回送信した RX 周波数
-        self._last_ul_hz: float = 0.0  # ダイアルフィードバック用：前回送信した TX 周波数
+        self._last_dl_hz: float | None = None  # None = connect直後。F/I 送信を強制する
+        self._last_ul_hz: float | None = None
 
     # -- 接続管理 --
 
@@ -583,8 +583,8 @@ class HamlibNetController(RigController):
             pass
         finally:
             self._sock = None
-            self._last_dl_hz = 0.0
-            self._last_ul_hz = 0.0
+            self._last_dl_hz = None
+            self._last_ul_hz = None
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -760,6 +760,7 @@ class HamlibNetController(RigController):
           F → Sub（RX/ダウンリンク）に書き込み
           I → Main（TX/アップリンク）に書き込み
         vfob_hz が None の場合は TX サイクルを省略する。
+        _last_dl_hz / _last_ul_hz が None（connect直後）のときは必ず F/I を送る。
         """
         if not self.is_connected:
             return False
@@ -767,7 +768,8 @@ class HamlibNetController(RigController):
         # RX サイクル
         if vfoa_hz is not None:
             self._cmd("f")  # ダイアルフィードバックチェック（読み捨て）
-            if abs(vfoa_hz - self._last_dl_hz) >= 1.0:
+            last_dl = self._last_dl_hz
+            if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
                 logger.info("RigNet: sending F %d", int(vfoa_hz))
                 resp = self._cmd(f"F {int(vfoa_hz)}")
                 if "RPRT 0" not in resp:
@@ -780,7 +782,8 @@ class HamlibNetController(RigController):
         # TX サイクル
         if vfob_hz is not None:
             self._cmd("i")  # ダイアルフィードバックチェック（読み捨て）
-            if abs(vfob_hz - self._last_ul_hz) >= 1.0:
+            last_ul = self._last_ul_hz
+            if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
                 logger.info("RigNet: sending I %d", int(vfob_hz))
                 resp = self._cmd(f"I {int(vfob_hz)}")
                 if "RPRT 0" not in resp:
