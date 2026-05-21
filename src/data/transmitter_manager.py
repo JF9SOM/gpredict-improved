@@ -411,6 +411,16 @@ class TransmitterManager:
                     if progress_callback:
                         progress_callback(total_processed)
 
+        # トランスミッターが0件かつstatus='unknown'の孤立衛星を自動非表示。
+        self._conn.execute(
+            """
+            UPDATE satellites SET is_hidden = 2
+            WHERE norad_cat_id NOT IN (SELECT DISTINCT norad_cat_id FROM transmitters)
+            AND status = 'unknown'
+            AND is_hidden = 0
+            """
+        )
+
         self._conn.commit()
         self._log_sync("satnogs_names", stats)
         return stats
