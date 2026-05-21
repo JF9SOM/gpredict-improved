@@ -264,6 +264,14 @@ class TransmitterManager:
                 (storage_id, xpdr.get("description", f"#{storage_id}"), now),
             )
 
+            # 仮NORADが正式NORADと異なる → 仮NORAD衛星を自動非表示(is_hidden=2)
+            # target_norad_cat_id が外部指定された場合は対象外（後方互換）
+            if target_norad_cat_id is None and int(auto_storage) != int(sat_id):
+                self._conn.execute(
+                    "UPDATE satellites SET is_hidden = 2 WHERE norad_cat_id = ? AND is_hidden = 0",
+                    (int(sat_id),),
+                )
+
             row = (
                 xpdr_uuid,
                 storage_id,

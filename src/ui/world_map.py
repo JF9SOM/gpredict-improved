@@ -547,6 +547,8 @@ class WorldMapView(QWidget):
             if norad == sel_norad:
                 continue  # 選択衛星は後で大きく描画
             sx, sy = self.latlon_to_xy(info[1], info[2], w, h)
+            if math.isnan(sx) or math.isnan(sy):
+                continue
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(info[3])
             p.drawEllipse(int(sx) - dr, int(sy) - dr, dr * 2, dr * 2)
@@ -559,6 +561,8 @@ class WorldMapView(QWidget):
         if sel_norad is not None and sel_norad in self._satellites:
             sel_info = self._satellites[sel_norad]
             sx, sy = self.latlon_to_xy(sel_info[1], sel_info[2], w, h)
+            if math.isnan(sx) or math.isnan(sy):
+                return
             sel_r = 8
             p.setPen(QPen(QColor(255, 220, 0, 230), 2))
             p.setBrush(sel_info[3])
