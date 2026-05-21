@@ -91,6 +91,7 @@ class TransmitterManager:
         baud: int | None = None,
         notes: str = "",
         xpdr_type: str = "Transponder",
+        manual_override: bool = True,
     ) -> str:
         """
         手動でトランスポンダを追加する。
@@ -121,7 +122,7 @@ class TransmitterManager:
                 ?, ?, ?, ?,
                 ?, ?, ?,
                 ?, ?,
-                1, 'manual', 1, ?, ?
+                1, 'manual', ?, ?, ?
             )
         """,
             (
@@ -138,6 +139,7 @@ class TransmitterManager:
                 baud,
                 ctcss_tone,
                 ctcss_tone_type,
+                int(manual_override),
                 notes,
                 now,
             ),
@@ -152,7 +154,7 @@ class TransmitterManager:
     ) -> None:
         """
         トランスポンダを更新する。
-        SATNOGS由来でも編集した場合は manual_override=1 にする。
+        manual_override を明示的に渡した場合はその値を使う。渡さない場合は現状を維持。
         """
         allowed = {
             "description",
@@ -168,12 +170,12 @@ class TransmitterManager:
             "baud",
             "alive",
             "notes",
+            "manual_override",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return
 
-        updates["manual_override"] = 1
         updates["updated_at"] = datetime.now(UTC).isoformat()
 
         set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -397,6 +399,13 @@ class TransmitterManager:
                                 " is_hidden = 2, updated_at = ? WHERE norad_cat_id = ?",
                                 (name, status, now, norad),
                             )
+                            # follow先の正式NORADのstatusが'unknown'なら引き継ぐ
+                            if norad_follow is not None and status in ("alive", "dead"):
+                                self._conn.execute(
+                                    "UPDATE satellites SET status = ?, updated_at = ?"
+                                    " WHERE norad_cat_id = ? AND status = 'unknown'",
+                                    (status, now, norad_follow),
+                                )
                         else:
                             self._conn.execute(
                                 "UPDATE satellites SET name = ?, status = ?, updated_at = ?"

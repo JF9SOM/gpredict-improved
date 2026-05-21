@@ -162,6 +162,13 @@ class TransmitterDialog(QDialog):
         notes_form.addRow(_("Notes:"), self._notes_edit)
         layout.addLayout(notes_form)
 
+        # 上書き保護
+        self._overwrite_check = QCheckBox(
+            _("Overwrite protection (prevent SATNOGS sync from overwriting)")
+        )
+        self._overwrite_check.setChecked(True)
+        layout.addWidget(self._overwrite_check)
+
         # ボタン
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -220,6 +227,8 @@ class TransmitterDialog(QDialog):
 
         self._notes_edit.setText(rec.get("notes") or "")
 
+        self._overwrite_check.setChecked(bool(rec.get("manual_override", 1)))
+
     # ------------------------------------------------------------------ #
     # シグナルハンドラー
     # ------------------------------------------------------------------ #
@@ -256,6 +265,7 @@ class TransmitterDialog(QDialog):
             self._ctcss_spin.value() if self._ctcss_spin.value() > 0.0 else None
         )
         notes = self._notes_edit.text().strip()
+        manual_override = int(self._overwrite_check.isChecked())
 
         try:
             if self._edit_mode and self._existing is not None:
@@ -272,6 +282,7 @@ class TransmitterDialog(QDialog):
                     ctcss_tone=ctcss_tone,
                     ctcss_tone_type=ctcss_type_str,
                     notes=notes,
+                    manual_override=manual_override,
                 )
             else:
                 self._tm.add_manual_transmitter(
@@ -287,6 +298,7 @@ class TransmitterDialog(QDialog):
                     ctcss_tone_type=ctcss_type_str,
                     notes=notes,
                     xpdr_type=xpdr_type,
+                    manual_override=bool(manual_override),
                 )
             self.accept()
         except Exception as exc:

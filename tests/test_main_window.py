@@ -1316,3 +1316,224 @@ class TestOrphanSatelliteAutoHide:
 
         row = db.execute("SELECT is_hidden FROM satellites WHERE norad_cat_id = 55555").fetchone()
         assert row["is_hidden"] == 0
+
+
+class TestStatusInheritanceFromNoradFollowId:
+    """norad_follow_id による status 引き継ぎテスト。"""
+
+    def _run(self, coro):  # type: ignore[no-untyped-def]
+        import asyncio
+
+        return asyncio.run(coro)
+
+    def _make_mock_client(self, payload):  # type: ignore[no-untyped-def]
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = payload
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+        return mock_client
+
+    def test_alive_status_propagated_to_follow_target(self, db: sqlite3.Connection) -> None:
+        """remnant(alive) の status が follow 先(unknown) に伝播する。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        # 仮NORAD(98325)とfollow先の正式NORAD(68795)を登録
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name, status)"
+            " VALUES (98325, 'OrigamiSat-2-temp', 'unknown')"
+        )
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name, status)"
+            " VALUES (68795, 'ORIGAMISAT-2', 'unknown')"
+        )
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        payload = [
+            {
+                "norad_cat_id": 98325,
+                "name": "OrigamiSat-2",
+                "status": "alive",
+                "norad_follow_id": 68795,
+            }
+        ]
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client(payload),
+        ):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute("SELECT status FROM satellites WHERE norad_cat_id = 68795").fetchone()
+        assert row["status"] == "alive"
+
+    def test_dead_status_propagated_to_follow_target(self, db: sqlite3.Connection) -> None:
+        """remnant(dead) の status が follow 先(unknown) に伝播する。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name, status)"
+            " VALUES (11111, 'OLD-SAT-temp', 'unknown')"
+        )
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name, status)"
+            " VALUES (22222, 'OLD-SAT', 'unknown')"
+        )
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        payload = [
+            {
+                "norad_cat_id": 11111,
+                "name": "Old Sat",
+                "status": "re-entered",
+                "norad_follow_id": 22222,
+            }
+        ]
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client(payload),
+        ):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute("SELECT status FROM satellites WHERE norad_cat_id = 22222").fetchone()
+        assert row["status"] == "dead"
+
+    def test_follow_target_alive_not_overwritten_by_unknown(self, db: sqlite3.Connection) -> None:
+        """follow 先がすでに alive なら unknown の remnant で上書きされない。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name, status)"
+            " VALUES (33333, 'SAT-temp', 'unknown')"
+        )
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name, status)"
+            " VALUES (44444, 'SAT-official', 'alive')"
+        )
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        payload = [
+            {
+                "norad_cat_id": 33333,
+                "name": "SAT future",
+                "status": "future",  # → 'unknown'
+                "norad_follow_id": 44444,
+            }
+        ]
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client(payload),
+        ):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute("SELECT status FROM satellites WHERE norad_cat_id = 44444").fetchone()
+        assert row["status"] == "alive"
+
+
+class TestOverwriteProtection:
+    """manual_override / Overwrite Protection の動作テスト。"""
+
+    def test_add_manual_transmitter_default_override_true(self, db: sqlite3.Connection) -> None:
+        """add_manual_transmitter はデフォルトで manual_override=1 を保存する。"""
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT OR IGNORE INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.commit()
+        mgr = TransmitterManager(db)
+        uid = mgr.add_manual_transmitter(25544, "ISS FM", 145_800_000, "FM")
+        row = db.execute(
+            "SELECT manual_override FROM transmitters WHERE uuid = ?", (uid,)
+        ).fetchone()
+        assert row["manual_override"] == 1
+
+    def test_add_manual_transmitter_override_false(self, db: sqlite3.Connection) -> None:
+        """manual_override=False を指定すると 0 で保存される。"""
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT OR IGNORE INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.commit()
+        mgr = TransmitterManager(db)
+        uid = mgr.add_manual_transmitter(25544, "ISS FM", 145_800_000, "FM", manual_override=False)
+        row = db.execute(
+            "SELECT manual_override FROM transmitters WHERE uuid = ?", (uid,)
+        ).fetchone()
+        assert row["manual_override"] == 0
+
+    def test_update_transmitter_can_set_override_false(self, db: sqlite3.Connection) -> None:
+        """update_transmitter で manual_override=0 に変更できる。"""
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT OR IGNORE INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.commit()
+        mgr = TransmitterManager(db)
+        uid = mgr.add_manual_transmitter(25544, "ISS FM", 145_800_000, "FM")
+        mgr.update_transmitter(uid, notes="updated", manual_override=0)
+        row = db.execute(
+            "SELECT manual_override FROM transmitters WHERE uuid = ?", (uid,)
+        ).fetchone()
+        assert row["manual_override"] == 0
+
+    def test_update_transmitter_without_override_keeps_existing(
+        self, db: sqlite3.Connection
+    ) -> None:
+        """update_transmitter に manual_override を渡さない場合、既存値が維持される。"""
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT OR IGNORE INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.commit()
+        mgr = TransmitterManager(db)
+        uid = mgr.add_manual_transmitter(25544, "ISS FM", 145_800_000, "FM")
+        mgr.update_transmitter(uid, notes="changed")
+        row = db.execute(
+            "SELECT manual_override FROM transmitters WHERE uuid = ?", (uid,)
+        ).fetchone()
+        assert row["manual_override"] == 1
+
+    def test_transmitter_dialog_overwrite_check_default_true(self, qtbot, db) -> None:
+        """TransmitterDialog の Overwrite protection チェックボックスはデフォルト ON。"""
+        from data.transmitter_manager import TransmitterManager
+        from ui.transmitter_dialog import TransmitterDialog
+
+        mgr = TransmitterManager(db)
+        w = TransmitterDialog(mgr, norad_cat_id=25544)
+        qtbot.addWidget(w)
+        assert hasattr(w, "_overwrite_check")
+        assert w._overwrite_check.isChecked()
+
+    def test_transmitter_dialog_prefills_override_false(self, qtbot, db) -> None:
+        """manual_override=0 のレコードを編集するとチェックボックスが OFF になる。"""
+        from data.transmitter_manager import TransmitterManager
+        from ui.transmitter_dialog import TransmitterDialog
+
+        mgr = TransmitterManager(db)
+        existing = {
+            "uuid": "manual-test",
+            "norad_cat_id": 25544,
+            "description": "ISS FM",
+            "type": "Transponder",
+            "downlink_low": 145_800_000,
+            "downlink_high": None,
+            "uplink_low": None,
+            "uplink_high": None,
+            "mode": "FM",
+            "invert": False,
+            "ctcss_tone": None,
+            "ctcss_tone_type": None,
+            "notes": "",
+            "manual_override": 0,
+        }
+        w = TransmitterDialog(mgr, existing=existing)
+        qtbot.addWidget(w)
+        assert not w._overwrite_check.isChecked()
