@@ -187,14 +187,18 @@ class TransmitterManager:
         self,
         norad_cat_id: int | None = None,
         progress_callback: Any = None,
+        target_norad_cat_id: int | None = None,
     ) -> dict[str, int]:
         """
         SATNOGSからトランスポンダ情報を取得してDBを更新する。
         manual_override=True のレコードは上書きしない。
 
         Args:
-            norad_cat_id: 指定すると1衛星のみ同期。Noneで全件。
-            progress_callback: (current, total) を受け取るコールバック
+            norad_cat_id:        指定すると1衛星のみ同期。Noneで全件。
+            progress_callback:   (current, total) を受け取るコールバック
+            target_norad_cat_id: 保存先 NORAD ID のオーバーライド。
+                                 CelesTrakとSatNOGSで NORAD が異なる場合に使用。
+                                 指定すると取得した全レコードをこの NORAD で保存する。
 
         Returns:
             {"inserted": N, "updated": N, "skipped": N}
@@ -233,18 +237,21 @@ class TransmitterManager:
             if not sat_id:
                 continue
 
+            # target_norad_cat_id が指定されている場合は保存先をオーバーライド
+            storage_id = target_norad_cat_id if target_norad_cat_id is not None else sat_id
+
             # 衛星レコード確保
             self._conn.execute(
                 """
                 INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)
                 VALUES (?, ?, ?)
             """,
-                (sat_id, xpdr.get("description", f"#{sat_id}"), now),
+                (storage_id, xpdr.get("description", f"#{storage_id}"), now),
             )
 
             row = (
                 xpdr_uuid,
-                sat_id,
+                storage_id,
                 xpdr.get("description", ""),
                 xpdr.get("type") or "Transponder",
                 xpdr.get("uplink_low"),

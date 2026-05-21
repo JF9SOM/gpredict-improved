@@ -6,6 +6,8 @@ NORAD ID・周波数・モード・CTCSSトーンを入力してDBに保存す�
 
 from __future__ import annotations
 
+import asyncio
+
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -66,6 +68,11 @@ class TransmitterDialog(QDialog):
         self._norad_spin.setRange(1, 999999)
         self._norad_spin.setValue(25544)
         sat_form.addRow(_("NORAD ID:"), self._norad_spin)
+        self._satnogs_norad_spin = QSpinBox()
+        self._satnogs_norad_spin.setRange(0, 999999)
+        self._satnogs_norad_spin.setValue(0)
+        self._satnogs_norad_spin.setSpecialValueText(_("(same as above)"))
+        sat_form.addRow(_("SatNOGS NORAD ID:"), self._satnogs_norad_spin)
         self._desc_edit = QLineEdit()
         self._desc_edit.setPlaceholderText(_("e.g. ISS FM downlink"))
         sat_form.addRow(_("Description:"), self._desc_edit)
@@ -170,6 +177,14 @@ class TransmitterDialog(QDialog):
 
     def _on_accept(self) -> None:
         """OKボタン時の処理。"""
+        norad = self._norad_spin.value()
+        satnogs_norad = self._satnogs_norad_spin.value()
+
+        # SatNOGS インポートモード（SatNOGS NORAD ID が指定されている場合）
+        if satnogs_norad != 0:
+            self._do_satnogs_import(norad, satnogs_norad)
+            return
+
         desc = self._desc_edit.text().strip()
         if not desc:
             QMessageBox.warning(self, _("Error"), _("Description is required."))
@@ -180,7 +195,6 @@ class TransmitterDialog(QDialog):
             QMessageBox.warning(self, _("Error"), _("Downlink frequency is required."))
             return
 
-        norad = self._norad_spin.value()
         dl_high = self._mhz_to_hz(self._dl_high_spin.value())
         ul_low = self._mhz_to_hz(self._ul_spin.value())
         ul_high = self._mhz_to_hz(self._ul_high_spin.value())
@@ -211,4 +225,25 @@ class TransmitterDialog(QDialog):
             )
             self.accept()
         except Exception as exc:
+            QMessageBox.critical(self, _("Error"), str(exc))
+
+    def _do_satnogs_import(self, primary_norad: int, satnogs_norad: int) -> None:
+        """SatNOGS NORAD IDで周波数データを取得してprimary NORADにマッピングして保存する。"""
+        try:
+            result = asyncio.run(
+                self._tm.sync_from_satnogs(
+                    norad_cat_id=satnogs_norad,
+                    target_norad_cat_id=primary_norad,
+                )
+            )
+            n = result["inserted"] + result["updated"]
+            QMessageBox.information(
+                self,
+                _("SatNOGS Import"),
+                _("Imported {n} transmitter(s) for NORAD {norad} from SatNOGS ID {src}.").format(
+                    n=n, norad=primary_norad, src=satnogs_norad
+                ),
+            )
+            self.accept()
+        except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, _("Error"), str(exc))

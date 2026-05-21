@@ -481,6 +481,120 @@ class TestTransmitterDialog:
 
         assert _TYPES == ["Transmitter", "Transponder", "Transceiver", "Beacon"]
 
+    def test_satnogs_norad_spin_exists_and_default_zero(self, qtbot, db) -> None:
+        from ui.transmitter_dialog import TransmitterDialog
+
+        w = TransmitterDialog(self._mgr(db), norad_cat_id=25544)
+        qtbot.addWidget(w)
+        assert hasattr(w, "_satnogs_norad_spin")
+        assert w._satnogs_norad_spin.value() == 0
+
+    def test_satnogs_norad_spin_range(self, qtbot, db) -> None:
+        from ui.transmitter_dialog import TransmitterDialog
+
+        w = TransmitterDialog(self._mgr(db))
+        qtbot.addWidget(w)
+        assert w._satnogs_norad_spin.minimum() == 0
+        assert w._satnogs_norad_spin.maximum() == 999999
+
+
+class TestSyncFromSatnogsTargetNorad:
+    """sync_from_satnogs の target_norad_cat_id オーバーライドテスト。"""
+
+    def test_target_norad_remaps_storage(self, db: sqlite3.Connection) -> None:
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute(
+            "INSERT OR IGNORE INTO satellites (norad_cat_id, name) VALUES (68795, 'ORIGAMISAT-2')"
+        )
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        mock_data = [
+            {
+                "uuid": "test-uuid-remap",
+                "norad_cat_id": 98325,
+                "description": "Mode U CW",
+                "type": "Transmitter",
+                "uplink_low": None,
+                "uplink_high": None,
+                "downlink_low": 437_505_000,
+                "downlink_high": None,
+                "mode": "CW",
+                "invert": False,
+                "baud": 24,
+                "ctcss_tone": None,
+                "alive": True,
+            }
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = mock_data
+        mock_resp.raise_for_status.return_value = None
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("data.transmitter_manager.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+            result = asyncio.run(
+                mgr.sync_from_satnogs(norad_cat_id=98325, target_norad_cat_id=68795)
+            )
+
+        assert result["inserted"] == 1
+        row = db.execute(
+            "SELECT norad_cat_id FROM transmitters WHERE uuid='test-uuid-remap'"
+        ).fetchone()
+        assert row["norad_cat_id"] == 68795
+
+    def test_no_target_uses_api_norad(self, db: sqlite3.Connection) -> None:
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT OR IGNORE INTO satellites (norad_cat_id, name) VALUES (98325, 'Test')")
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        mock_data = [
+            {
+                "uuid": "test-uuid-noop",
+                "norad_cat_id": 98325,
+                "description": "Test",
+                "type": "Transmitter",
+                "uplink_low": None,
+                "uplink_high": None,
+                "downlink_low": 437_000_000,
+                "downlink_high": None,
+                "mode": "FM",
+                "invert": False,
+                "baud": None,
+                "ctcss_tone": None,
+                "alive": True,
+            }
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = mock_data
+        mock_resp.raise_for_status.return_value = None
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("data.transmitter_manager.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+            asyncio.run(mgr.sync_from_satnogs(norad_cat_id=98325))
+
+        row = db.execute(
+            "SELECT norad_cat_id FROM transmitters WHERE uuid='test-uuid-noop'"
+        ).fetchone()
+        assert row["norad_cat_id"] == 98325
+
 
 # ---------------------------------------------------------------------------
 # MainWindow
