@@ -781,9 +781,7 @@ class TestSyncSatelliteNamesStatus:
         with patch("data.transmitter_manager.httpx.AsyncClient", return_value=mock_client):
             self._run(mgr.sync_satellite_names())
 
-        row = db.execute(
-            "SELECT status FROM satellites WHERE norad_cat_id = 25544"
-        ).fetchone()
+        row = db.execute("SELECT status FROM satellites WHERE norad_cat_id = 25544").fetchone()
         assert row["status"] == "alive"
 
     def test_reentred_maps_to_dead(self, db: sqlite3.Connection) -> None:
@@ -810,9 +808,7 @@ class TestSyncSatelliteNamesStatus:
         with patch("data.transmitter_manager.httpx.AsyncClient", return_value=mock_client):
             self._run(mgr.sync_satellite_names())
 
-        row = db.execute(
-            "SELECT status FROM satellites WHERE norad_cat_id = 99001"
-        ).fetchone()
+        row = db.execute("SELECT status FROM satellites WHERE norad_cat_id = 99001").fetchone()
         assert row["status"] == "dead"
 
     def test_future_maps_to_unknown(self, db: sqlite3.Connection) -> None:
@@ -839,9 +835,7 @@ class TestSyncSatelliteNamesStatus:
         with patch("data.transmitter_manager.httpx.AsyncClient", return_value=mock_client):
             self._run(mgr.sync_satellite_names())
 
-        row = db.execute(
-            "SELECT status FROM satellites WHERE norad_cat_id = 99002"
-        ).fetchone()
+        row = db.execute("SELECT status FROM satellites WHERE norad_cat_id = 99002").fetchone()
         assert row["status"] == "unknown"
 
 
@@ -1066,9 +1060,7 @@ class TestHideSatellite:
     def test_set_hidden_false_unhides(self, qtbot, populated_db) -> None:
         """_set_hidden(False) で is_hidden=0 に戻る。"""
         tle_manager = TLEManager(populated_db)
-        populated_db.execute(
-            "UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,)
-        )
+        populated_db.execute("UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,))
         populated_db.commit()
         w = self._make_window(qtbot, populated_db, tle_manager)
         w._set_hidden(25544, False)
@@ -1080,9 +1072,7 @@ class TestHideSatellite:
     def test_hidden_satellite_not_in_all_filter(self, qtbot, populated_db) -> None:
         """is_hidden=1 の衛星は 'All Satellites' フィルターに表示されない。"""
         tle_manager = TLEManager(populated_db)
-        populated_db.execute(
-            "UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,)
-        )
+        populated_db.execute("UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,))
         populated_db.commit()
         w = self._make_window(qtbot, populated_db, tle_manager)
         from PySide6.QtCore import Qt
@@ -1097,9 +1087,7 @@ class TestHideSatellite:
         from PySide6.QtCore import Qt
 
         tle_manager = TLEManager(populated_db)
-        populated_db.execute(
-            "UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,)
-        )
+        populated_db.execute("UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,))
         populated_db.commit()
         w = self._make_window(qtbot, populated_db, tle_manager)
         w._filter_combo.setCurrentText("Hidden")
