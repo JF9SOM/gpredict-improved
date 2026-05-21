@@ -72,18 +72,10 @@ class _SatData(TypedDict):
     name: str
     is_favorite: bool
     is_hidden: bool
+    status: str
     tle_group: str
-    quality: str | None
     amsat_status: str | None
 
-
-_QUALITY_DOT_COLORS: dict[str | None, str] = {
-    "excellent": "#2ecc71",
-    "good": "#3498db",
-    "fair": "#f1c40f",
-    "poor": "#e74c3c",
-    None: "#7f8c8d",
-}
 
 # AO-91, FO-29, CAS-4A などの AMSAT 識別子を抽出する正規表現
 # 2〜4 文字のプレフィックス + 任意の区切り + 1〜3 桁数字 + 任意の末尾文字
@@ -435,10 +427,6 @@ class MainWindow(QMainWindow):
 
     def _load_satellites(self) -> None:
         """衛星データをDBから読み込んで内部リストを構築し、フィルターを適用する。"""
-        quality_map: dict[int, str | None] = {
-            r["norad_cat_id"]: r.get("quality_score")
-            for r in self._tle_manager.get_all_quality_status()
-        }
         amsat_map: dict[str, str] = self._amsat_fetcher.load_cached() or {}
 
         designator_status: dict[str, str] = {}
@@ -450,7 +438,7 @@ class MainWindow(QMainWindow):
 
         rows = self._conn.execute(
             """
-            SELECT s.norad_cat_id, s.name, s.is_favorite, s.is_hidden,
+            SELECT s.norad_cat_id, s.name, s.is_favorite, s.is_hidden, s.status,
                    COALESCE(t.tle_group, 'amateur') AS tle_group
             FROM satellites s
             LEFT JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id
@@ -464,7 +452,6 @@ class MainWindow(QMainWindow):
         for row in rows:
             norad: int = int(row["norad_cat_id"])
             name: str = str(row["name"])
-            quality: str | None = quality_map.get(norad)
             name_lower = name.lower()
 
             amsat_status: str | None = amsat_map.get(name_lower)
@@ -485,8 +472,8 @@ class MainWindow(QMainWindow):
                     name=name,
                     is_favorite=bool(row["is_favorite"]),
                     is_hidden=bool(row["is_hidden"]),
+                    status=str(row["status"] or "unknown"),
                     tle_group=str(row["tle_group"]),
-                    quality=quality,
                     amsat_status=amsat_status,
                 )
             )
@@ -545,7 +532,6 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, d["norad"])
 
             amsat_status = d["amsat_status"]
-            quality = d["quality"]
 
             if amsat_status == "operational":
                 item.setForeground(QColor("#2ecc71"))
@@ -559,9 +545,10 @@ class MainWindow(QMainWindow):
                 font = item.font()
                 font.setItalic(True)
                 item.setFont(font)
+            elif d["status"] == "alive":
+                item.setForeground(QColor("#e67e22"))
             else:
-                color_hex = _QUALITY_DOT_COLORS.get(quality, _QUALITY_DOT_COLORS[None])
-                item.setForeground(QColor(color_hex))
+                item.setForeground(QColor("#7f8c8d"))
 
             self._sat_list.addItem(item)
             if current_norad is not None and d["norad"] == current_norad:

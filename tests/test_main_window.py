@@ -745,6 +745,107 @@ class TestSyncFromSatnogsTargetNorad:
 
 
 # ---------------------------------------------------------------------------
+# TestSyncSatelliteNamesStatus
+# ---------------------------------------------------------------------------
+
+
+class TestSyncSatelliteNamesStatus:
+    """sync_satellite_names が status フィールドを正しく同期するテスト。"""
+
+    def _run(self, coro):  # type: ignore[no-untyped-def]
+        import asyncio
+
+        return asyncio.run(coro)
+
+    def test_alive_status_saved(self, db: sqlite3.Connection) -> None:
+        """SatNOGS status='alive' は DB に 'alive' として保存される。"""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = [
+            {"norad_cat_id": 25544, "name": "ISS (ZARYA)", "status": "alive"}
+        ]
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("data.transmitter_manager.httpx.AsyncClient", return_value=mock_client):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute(
+            "SELECT status FROM satellites WHERE norad_cat_id = 25544"
+        ).fetchone()
+        assert row["status"] == "alive"
+
+    def test_reentred_maps_to_dead(self, db: sqlite3.Connection) -> None:
+        """SatNOGS status='re-entered' は DB に 'dead' として保存される。"""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT INTO satellites (norad_cat_id, name) VALUES (99001, 'SAT-RE')")
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = [
+            {"norad_cat_id": 99001, "name": "SAT-RE", "status": "re-entered"}
+        ]
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("data.transmitter_manager.httpx.AsyncClient", return_value=mock_client):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute(
+            "SELECT status FROM satellites WHERE norad_cat_id = 99001"
+        ).fetchone()
+        assert row["status"] == "dead"
+
+    def test_future_maps_to_unknown(self, db: sqlite3.Connection) -> None:
+        """SatNOGS status='future' は DB に 'unknown' として保存される。"""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT INTO satellites (norad_cat_id, name) VALUES (99002, 'SAT-FUTURE')")
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = [
+            {"norad_cat_id": 99002, "name": "SAT-FUTURE", "status": "future"}
+        ]
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("data.transmitter_manager.httpx.AsyncClient", return_value=mock_client):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute(
+            "SELECT status FROM satellites WHERE norad_cat_id = 99002"
+        ).fetchone()
+        assert row["status"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
 # MainWindow
 # ---------------------------------------------------------------------------
 

@@ -18,6 +18,15 @@ SATNOGS_API_BASE = "https://db.satnogs.org/api"
 SATNOGS_TRANSMITTERS_URL = f"{SATNOGS_API_BASE}/transmitters/"
 SATNOGS_SATELLITES_URL = f"{SATNOGS_API_BASE}/satellites/"
 
+# SatNOGS status → DB status の正規化マップ
+# 'future'/'re-entered' は CHECK制約('alive','dead','unknown')に合わせて変換する
+_SATNOGS_STATUS_MAP: dict[str, str] = {
+    "alive": "alive",
+    "dead": "dead",
+    "re-entered": "dead",
+    "future": "unknown",
+}
+
 
 class TransmitterManager:
     """
@@ -348,6 +357,9 @@ class TransmitterManager:
                         continue
 
                     norad = int(norad_raw)
+                    raw_status = str(sat.get("status", "unknown")).lower()
+                    status = _SATNOGS_STATUS_MAP.get(raw_status, "unknown")
+
                     existing = self._conn.execute(
                         "SELECT norad_cat_id FROM satellites WHERE norad_cat_id = ?",
                         (norad,),
@@ -355,8 +367,9 @@ class TransmitterManager:
 
                     if existing:
                         self._conn.execute(
-                            "UPDATE satellites SET name = ?, updated_at = ? WHERE norad_cat_id = ?",
-                            (name, now, norad),
+                            "UPDATE satellites SET name = ?, status = ?, updated_at = ?"
+                            " WHERE norad_cat_id = ?",
+                            (name, status, now, norad),
                         )
                         stats["updated"] += 1
                     else:
