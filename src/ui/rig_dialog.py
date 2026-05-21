@@ -317,6 +317,16 @@ class RigSettingsDialog(QDialog):
         layout.addWidget(self._net_group)
         self._net_group.setVisible(False)
 
+        # --- Radio Type ---
+        type_group = QGroupBox(_("Radio Type"))
+        type_form = QFormLayout(type_group)
+        self._radio_type_combo = QComboBox()
+        self._radio_type_combo.addItem(_("Full-duplex (F + I)"), "full_duplex")
+        self._radio_type_combo.addItem(_("RX only (F only)"), "rx_only")
+        self._radio_type_combo.addItem(_("TX only (I only)"), "tx_only")
+        type_form.addRow(_("Radio Type:"), self._radio_type_combo)
+        layout.addWidget(type_group)
+
         # --- ステータス ---
         self._status_label = QLabel("")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -443,6 +453,12 @@ class RigSettingsDialog(QDialog):
         self._host_edit.setText(str(s.get("host", "localhost")))
         self._net_port_spin.setValue(int(s.get("net_port", 4532)))
 
+        radio_type = str(s.get("radio_type", "full_duplex"))
+        for i in range(self._radio_type_combo.count()):
+            if self._radio_type_combo.itemData(i) == radio_type:
+                self._radio_type_combo.setCurrentIndex(i)
+                break
+
     def _save_settings(self) -> None:
         model_id: int = self._model_combo.currentData() or 1
         s = {
@@ -452,6 +468,7 @@ class RigSettingsDialog(QDialog):
             "model_id": model_id,
             "host": self._host_edit.text(),
             "net_port": self._net_port_spin.value(),
+            "radio_type": self._radio_type_combo.currentData() or "full_duplex",
         }
         if hasattr(self._conn, "execute"):
             self._conn.execute(

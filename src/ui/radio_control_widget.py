@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +34,9 @@ class RadioControlWidget(QWidget):
     """
 
     transmitter_changed: Signal = Signal(object)
+    cycle_changed: Signal = Signal(int)  # ms
+    tune_requested: Signal = Signal()
+    lock_changed: Signal = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -62,6 +66,21 @@ class RadioControlWidget(QWidget):
         sat_form.addRow(_("Name:"), self._sat_name_label)
         sat_form.addRow(_("NORAD:"), self._norad_label)
         sat_form.addRow(_("Transponder:"), self._xpdr_combo)
+
+        # T / L ボタン行
+        tl_row = QHBoxLayout()
+        self._tune_btn = QPushButton(_("T"))
+        self._tune_btn.setToolTip(_("Tune: reset downlink/uplink to center of transponder band"))
+        self._tune_btn.clicked.connect(self.tune_requested.emit)
+        self._lock_btn = QPushButton(_("L"))
+        self._lock_btn.setToolTip(_("Lock: link uplink to downlink (inverting transponder aware)"))
+        self._lock_btn.setCheckable(True)
+        self._lock_btn.toggled.connect(self.lock_changed.emit)
+        tl_row.addWidget(self._tune_btn)
+        tl_row.addWidget(self._lock_btn)
+        tl_row.addStretch()
+        sat_form.addRow("", tl_row)
+
         layout.addWidget(sat_group)
 
         # 周波数 / ドップラー
@@ -100,6 +119,18 @@ class RadioControlWidget(QWidget):
         self._rot_status_label = QLabel(_("Not configured"))
         status_form.addRow(_("Rig:"), self._rig_status_label)
         status_form.addRow(_("Rotator:"), self._rot_status_label)
+
+        cycle_row = QHBoxLayout()
+        self._cycle_spin = QSpinBox()
+        self._cycle_spin.setRange(10, 10000)
+        self._cycle_spin.setSingleStep(10)
+        self._cycle_spin.setValue(1000)
+        self._cycle_spin.valueChanged.connect(lambda v: self.cycle_changed.emit(v))
+        cycle_row.addWidget(self._cycle_spin)
+        cycle_row.addWidget(QLabel(_("msec")))
+        cycle_row.addStretch()
+        status_form.addRow(_("Cycle:"), cycle_row)
+
         layout.addWidget(status_group)
 
         # ボタン行
@@ -218,6 +249,12 @@ class RadioControlWidget(QWidget):
         """ローテーターコントローラーを設定する。"""
         self._rotator = rotator
         self._update_rot_status()
+
+    def set_cycle(self, ms: int) -> None:
+        """Cycle スピンボックスの値を外部から設定する（シグナルを発火しない）。"""
+        self._cycle_spin.blockSignals(True)
+        self._cycle_spin.setValue(max(10, min(10000, ms)))
+        self._cycle_spin.blockSignals(False)
 
     def refresh_status(self) -> None:
         """接続状態表示を更新する（タイマー呼び出し用）。"""

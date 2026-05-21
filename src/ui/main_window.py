@@ -235,6 +235,12 @@ class MainWindow(QMainWindow):
         # リグ制御スレッドが実行中かどうかを示すロック。
         # acquire(blocking=False) で取得できないときは前のサイクルがまだ実行中。
         self._rig_busy_lock = threading.Lock()
+        # Tune ボタンで中心周波数にリセットされた場合の強制送信用キャッシュ。
+        # None → ドップラー計算値をそのまま使う。 値がある → その値で次回送信後 None に戻す。
+        self._tune_dl_override: float | None = None
+        self._tune_ul_override: float | None = None
+        # L ボタン: True のときアップリンクをダウンリンクに連動させる。
+        self._trsp_lock: bool = False
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
@@ -251,6 +257,9 @@ class MainWindow(QMainWindow):
         self._rig_error.connect(self._on_rig_error)
         self._satnogs_status.connect(self._on_satnogs_status)
         self._radio_control.transmitter_changed.connect(self._on_transmitter_changed)
+        self._radio_control.cycle_changed.connect(self._on_cycle_changed)
+        self._radio_control.tune_requested.connect(self._on_tune_requested)
+        self._radio_control.lock_changed.connect(self._on_lock_changed)
         self._load_satellites()
         self._load_rig_settings()
 
@@ -262,6 +271,7 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
         self._timer.start(1000)
+        self._load_cycle_setting()
 
     # ------------------------------------------------------------------ #
     # UI 構築
@@ -765,11 +775,37 @@ class MainWindow(QMainWindow):
                 if dl_nom is not None
                 else (None, None)
             )
-            ul_corr, ul_shift = (
-                DopplerCalculator.correct_uplink(float(ul_nom), rr, invert=invert)
-                if ul_nom is not None
-                else (None, None)
-            )
+            if self._trsp_lock and dl_corr is not None:
+                # Lock ON: アップリンクはダウンリンクのオフセットから計算する。
+                ul_low = self._current_transmitter.get("uplink_low")
+                ul_high = self._current_transmitter.get("uplink_high")
+                dl_low_nom = self._current_transmitter.get("downlink_low")
+                if ul_low is not None and dl_low_nom is not None:
+                    delta = dl_corr - float(dl_low_nom)
+                    if invert and ul_high is not None:
+                        ul_calc = float(ul_high) - delta
+                    else:
+                        ul_calc = float(ul_low) + delta
+                    ul_corr, ul_shift = ul_calc, None
+                else:
+                    ul_corr, ul_shift = (None, None)
+            else:
+                ul_corr, ul_shift = (
+                    DopplerCalculator.correct_uplink(float(ul_nom), rr, invert=invert)
+                    if ul_nom is not None
+                    else (None, None)
+                )
+            # Tune ボタンで override がセットされていれば中心周波数を使い、
+            # 使用後に None に戻す（次サイクルからドップラー補正値に戻る）。
+            if self._tune_dl_override is not None:
+                dl_corr = self._tune_dl_override
+                dl_shift = None
+                self._tune_dl_override = None
+            if self._tune_ul_override is not None:
+                ul_corr = self._tune_ul_override
+                ul_shift = None
+                self._tune_ul_override = None
+
             self._radio_control.update_doppler(
                 dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss
             )
@@ -1256,10 +1292,13 @@ class MainWindow(QMainWindow):
                 return
             settings: dict[str, Any] = json.loads(row["value"])
             mode = settings.get("mode", "net")
+            radio_type = str(settings.get("radio_type", "full_duplex"))
             if mode == "net":
                 host = str(settings.get("host", "localhost"))
                 port = int(settings.get("net_port", 4532))
-                self._rig_controller = HamlibNetController(host=host, port=port)
+                self._rig_controller = HamlibNetController(
+                    host=host, port=port, radio_type=radio_type
+                )
             else:
                 model_id = int(settings.get("model_id", 1))
                 serial_port = str(settings.get("port", "/dev/ttyUSB0"))
@@ -1271,6 +1310,56 @@ class MainWindow(QMainWindow):
             self._update_rig_label()
         except Exception as exc:
             logger.warning("Failed to load rig settings: %s", exc)
+
+    def _on_lock_changed(self, locked: bool) -> None:
+        """L ボタントグル時に _trsp_lock フラグを更新する。"""
+        self._trsp_lock = locked
+
+    def _on_tune_requested(self) -> None:
+        """T ボタン押下時: 現在のトランスポンダ帯域中心周波数にリセットする。"""
+        if self._current_transmitter is None:
+            return
+        dl_low = self._current_transmitter.get("downlink_low")
+        dl_high = self._current_transmitter.get("downlink_high")
+        ul_low = self._current_transmitter.get("uplink_low")
+        ul_high = self._current_transmitter.get("uplink_high")
+
+        if dl_low is not None and dl_high is not None:
+            self._tune_dl_override = (float(dl_low) + float(dl_high)) / 2
+        elif dl_low is not None:
+            self._tune_dl_override = float(dl_low)
+
+        if ul_low is not None and ul_high is not None:
+            self._tune_ul_override = (float(ul_low) + float(ul_high)) / 2
+        elif ul_low is not None:
+            self._tune_ul_override = float(ul_low)
+
+    def _load_cycle_setting(self) -> None:
+        """DB から rig_cycle_ms を読み込みタイマーと UI に反映する。"""
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'rig_cycle_ms'"
+            ).fetchone()
+            if row is not None:
+                ms = int(row["value"])
+                ms = max(10, min(10000, ms))
+                self._timer.setInterval(ms)
+                self._radio_control.set_cycle(ms)
+        except Exception as exc:
+            logger.warning("Failed to load cycle setting: %s", exc)
+
+    def _on_cycle_changed(self, ms: int) -> None:
+        """Cycle スピンボックス変更時にタイマー間隔を更新して DB に保存する。"""
+        ms = max(10, min(10000, ms))
+        self._timer.setInterval(ms)
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('rig_cycle_ms', ?)",
+                (str(ms),),
+            )
+            self._conn.commit()
+        except Exception as exc:
+            logger.warning("Failed to save cycle setting: %s", exc)
 
     def _update_rig_label(self) -> None:
         """ステータスバーの RIG ラベルを更新する。"""

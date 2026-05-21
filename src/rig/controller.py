@@ -519,15 +519,20 @@ class HamlibNetController(RigController):
 
     _TIMEOUT = 10.0  # seconds — FTX-1 等の低速 CAT バックエンドに対応
 
-    def __init__(self, host: str = "localhost", port: int = 4532) -> None:
+    def __init__(
+        self, host: str = "localhost", port: int = 4532, radio_type: str = "full_duplex"
+    ) -> None:
         """
         Args:
-            host: rigctld が動作しているホスト
-            port: rigctld のポート番号（デフォルト 4532）
+            host:        rigctld が動作しているホスト
+            port:        rigctld のポート番号（デフォルト 4532）
+            radio_type:  "full_duplex"=F+I 両方送信（デフォルト）/
+                         "rx_only"=F のみ / "tx_only"=I のみ
         """
         super().__init__()
         self._host = host
         self._port = port
+        self._radio_type = radio_type
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # send+recv を直列化してレスポンスのズレを防ぐ
@@ -781,8 +786,11 @@ class HamlibNetController(RigController):
         if not self.is_connected:
             return False
 
+        send_rx = self._radio_type != "tx_only"
+        send_tx = self._radio_type != "rx_only"
+
         # RX サイクル
-        if vfoa_hz is not None:
+        if send_rx and vfoa_hz is not None:
             last_dl = self._last_dl_hz
             if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
                 logger.info("RigNet: sending F %d", int(vfoa_hz))
@@ -798,7 +806,7 @@ class HamlibNetController(RigController):
             return True
 
         # TX サイクル
-        if vfob_hz is not None:
+        if send_tx and vfob_hz is not None:
             last_ul = self._last_ul_hz
             if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
                 logger.info("RigNet: sending I %d", int(vfob_hz))

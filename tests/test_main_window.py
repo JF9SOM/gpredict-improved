@@ -1537,3 +1537,249 @@ class TestOverwriteProtection:
         w = TransmitterDialog(mgr, existing=existing)
         qtbot.addWidget(w)
         assert not w._overwrite_check.isChecked()
+
+
+class TestCycleSetting:
+    """Cycle スピンボックスと QTimer 連携テスト。"""
+
+    def test_cycle_spin_exists_and_default(self, qtbot, db) -> None:
+        """RadioControlWidget に _cycle_spin が存在しデフォルト 1000ms。"""
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert hasattr(w, "_cycle_spin")
+        assert w._cycle_spin.value() == 1000
+
+    def test_cycle_spin_range(self, qtbot, db) -> None:
+        """Cycle スピンボックスの範囲が 10〜10000。"""
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert w._cycle_spin.minimum() == 10
+        assert w._cycle_spin.maximum() == 10000
+        assert w._cycle_spin.singleStep() == 10
+
+    def test_set_cycle_updates_spin(self, qtbot, db) -> None:
+        """set_cycle() がスピンボックスを更新する（シグナル発火なし）。"""
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        received = []
+        w.cycle_changed.connect(received.append)
+        w.set_cycle(500)
+        assert w._cycle_spin.value() == 500
+        assert received == []  # blockSignals により発火しない
+
+    def test_cycle_changed_signal_emitted(self, qtbot, db) -> None:
+        """スピンボックス変更時に cycle_changed シグナルが emit される。"""
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        received = []
+        w.cycle_changed.connect(received.append)
+        w._cycle_spin.setValue(2000)
+        assert 2000 in received
+
+    def test_cycle_saved_to_db(self, qtbot, db) -> None:
+        """cycle 変更が DB に rig_cycle_ms キーで保存される。"""
+        from data.tle_manager import TLEManager
+        from ui.main_window import MainWindow
+
+        tle_manager = TLEManager(db)
+        w = MainWindow(conn=db, tle_manager=tle_manager)
+        qtbot.addWidget(w)
+        w._on_cycle_changed(2000)
+        row = db.execute("SELECT value FROM app_settings WHERE key = 'rig_cycle_ms'").fetchone()
+        assert row is not None
+        assert int(row["value"]) == 2000
+
+    def test_cycle_loaded_from_db(self, qtbot, db) -> None:
+        """DB に rig_cycle_ms がある場合、起動時に QTimer と UI に反映される。"""
+        from data.tle_manager import TLEManager
+        from ui.main_window import MainWindow
+
+        db.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('rig_cycle_ms', '500')"
+        )
+        db.commit()
+        tle_manager = TLEManager(db)
+        w = MainWindow(conn=db, tle_manager=tle_manager)
+        qtbot.addWidget(w)
+        assert w._timer.interval() == 500
+        assert w._radio_control._cycle_spin.value() == 500
+
+
+class TestTuneLockButtons:
+    """T（Tune）/ L（Lock）ボタンテスト。"""
+
+    def test_tune_btn_exists(self, qtbot) -> None:
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert hasattr(w, "_tune_btn")
+
+    def test_lock_btn_exists_and_checkable(self, qtbot) -> None:
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        assert hasattr(w, "_lock_btn")
+        assert w._lock_btn.isCheckable()
+
+    def test_tune_btn_emits_signal(self, qtbot) -> None:
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        received = []
+        w.tune_requested.connect(lambda: received.append(True))
+        w._tune_btn.click()
+        assert received == [True]
+
+    def test_lock_btn_emits_signal(self, qtbot) -> None:
+        from ui.radio_control_widget import RadioControlWidget
+
+        w = RadioControlWidget()
+        qtbot.addWidget(w)
+        received = []
+        w.lock_changed.connect(received.append)
+        w._lock_btn.setChecked(True)
+        assert True in received
+
+    def test_tune_resets_override(self, qtbot, db) -> None:
+        """Tune 押下で _tune_dl_override / _tune_ul_override がセットされる。"""
+        from data.tle_manager import TLEManager
+        from ui.main_window import MainWindow
+
+        tle_manager = TLEManager(db)
+        w = MainWindow(conn=db, tle_manager=tle_manager)
+        qtbot.addWidget(w)
+        w._current_transmitter = {
+            "downlink_low": 145_800_000,
+            "downlink_high": 145_950_000,
+            "uplink_low": 435_000_000,
+            "uplink_high": 435_150_000,
+            "invert": False,
+        }
+        w._on_tune_requested()
+        assert w._tune_dl_override == (145_800_000 + 145_950_000) / 2
+        assert w._tune_ul_override == (435_000_000 + 435_150_000) / 2
+
+    def test_lock_flag_updated(self, qtbot, db) -> None:
+        """Lock ボタントグルで _trsp_lock フラグが更新される。"""
+        from data.tle_manager import TLEManager
+        from ui.main_window import MainWindow
+
+        tle_manager = TLEManager(db)
+        w = MainWindow(conn=db, tle_manager=tle_manager)
+        qtbot.addWidget(w)
+        assert w._trsp_lock is False
+        w._on_lock_changed(True)
+        assert w._trsp_lock is True
+        w._on_lock_changed(False)
+        assert w._trsp_lock is False
+
+
+class TestRadioType:
+    """Radio Type 設定テスト。"""
+
+    def test_radio_type_combo_exists(self, qtbot, db) -> None:
+        """RigSettingsDialog に _radio_type_combo が存在する。"""
+        from ui.rig_dialog import RigSettingsDialog
+
+        w = RigSettingsDialog(db)
+        qtbot.addWidget(w)
+        assert hasattr(w, "_radio_type_combo")
+
+    def test_radio_type_default_full_duplex(self, qtbot, db) -> None:
+        """デフォルトで full_duplex が選択されている。"""
+        from ui.rig_dialog import RigSettingsDialog
+
+        w = RigSettingsDialog(db)
+        qtbot.addWidget(w)
+        assert w._radio_type_combo.currentData() == "full_duplex"
+
+    def test_radio_type_items(self, qtbot, db) -> None:
+        """full_duplex / rx_only / tx_only の3選択肢がある。"""
+        from ui.rig_dialog import RigSettingsDialog
+
+        w = RigSettingsDialog(db)
+        qtbot.addWidget(w)
+        data_values = [w._radio_type_combo.itemData(i) for i in range(w._radio_type_combo.count())]
+        assert "full_duplex" in data_values
+        assert "rx_only" in data_values
+        assert "tx_only" in data_values
+
+    def test_net_controller_rx_only_skips_tx(self) -> None:
+        """rx_only モードでは I コマンドを送信しない。"""
+        from unittest.mock import MagicMock, patch
+
+        from rig.controller import HamlibNetController
+
+        ctrl = HamlibNetController(radio_type="rx_only")
+        ctrl._sock = MagicMock()
+        ctrl._state = __import__("rig.controller", fromlist=["RigState"]).RigState.CONNECTED
+
+        sent = []
+
+        def fake_cmd(c: str) -> str:
+            sent.append(c)
+            return "RPRT 0"
+
+        ctrl._cmd = fake_cmd  # type: ignore[method-assign]
+        ctrl._last_dl_hz = None
+        ctrl._last_ul_hz = None
+        ctrl.set_vfo_frequencies(145_800_000, 435_000_000)
+        assert any(c.startswith("F ") for c in sent)
+        assert not any(c.startswith("I ") for c in sent)
+
+    def test_net_controller_tx_only_skips_rx(self) -> None:
+        """tx_only モードでは F コマンドを送信しない。"""
+        from unittest.mock import MagicMock
+
+        from rig.controller import HamlibNetController, RigState
+
+        ctrl = HamlibNetController(radio_type="tx_only")
+        ctrl._sock = MagicMock()
+        ctrl._state = RigState.CONNECTED
+
+        sent = []
+
+        def fake_cmd(c: str) -> str:
+            sent.append(c)
+            return "RPRT 0"
+
+        ctrl._cmd = fake_cmd  # type: ignore[method-assign]
+        ctrl._last_dl_hz = None
+        ctrl._last_ul_hz = None
+        ctrl.set_vfo_frequencies(145_800_000, 435_000_000)
+        assert not any(c.startswith("F ") for c in sent)
+        assert any(c.startswith("I ") for c in sent)
+
+    def test_net_controller_full_duplex_sends_both(self) -> None:
+        """full_duplex モードでは F と I 両方を送信する。"""
+        from unittest.mock import MagicMock
+
+        from rig.controller import HamlibNetController, RigState
+
+        ctrl = HamlibNetController(radio_type="full_duplex")
+        ctrl._sock = MagicMock()
+        ctrl._state = RigState.CONNECTED
+
+        sent = []
+
+        def fake_cmd(c: str) -> str:
+            sent.append(c)
+            return "RPRT 0"
+
+        ctrl._cmd = fake_cmd  # type: ignore[method-assign]
+        ctrl._last_dl_hz = None
+        ctrl._last_ul_hz = None
+        ctrl.set_vfo_frequencies(145_800_000, 435_000_000)
+        assert any(c.startswith("F ") for c in sent)
+        assert any(c.startswith("I ") for c in sent)
