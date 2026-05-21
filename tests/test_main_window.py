@@ -1103,3 +1103,121 @@ class TestHideSatellite:
         with patch("ui.main_window.QMessageBox.warning") as mock_warn:
             w._on_hide_satellite()
         mock_warn.assert_called_once()
+
+    def test_system_hidden_not_in_all_filter(self, qtbot, populated_db) -> None:
+        """is_hidden=2 の衛星は 'All Satellites' フィルターに表示されない。"""
+        from PySide6.QtCore import Qt
+
+        tle_manager = TLEManager(populated_db)
+        populated_db.execute("UPDATE satellites SET is_hidden = 2 WHERE norad_cat_id = ?", (25544,))
+        populated_db.commit()
+        w = self._make_window(qtbot, populated_db, tle_manager)
+        w._filter_combo.setCurrentText("All Satellites")
+        role = Qt.ItemDataRole.UserRole
+        norads = [w._sat_list.item(i).data(role) for i in range(w._sat_list.count())]
+        assert 25544 not in norads
+
+    def test_system_hidden_not_in_hidden_filter(self, qtbot, populated_db) -> None:
+        """is_hidden=2 の衛星は 'Hidden' フィルターにも表示されない。"""
+        from PySide6.QtCore import Qt
+
+        tle_manager = TLEManager(populated_db)
+        populated_db.execute("UPDATE satellites SET is_hidden = 2 WHERE norad_cat_id = ?", (25544,))
+        populated_db.commit()
+        w = self._make_window(qtbot, populated_db, tle_manager)
+        w._filter_combo.setCurrentText("Hidden")
+        role = Qt.ItemDataRole.UserRole
+        norads = [w._sat_list.item(i).data(role) for i in range(w._sat_list.count())]
+        assert 25544 not in norads
+
+
+class TestAutoHideFollowedSatellites:
+    """norad_follow_id による衛星自動非表示のテスト。"""
+
+    def _run(self, coro):  # type: ignore[no-untyped-def]
+        import asyncio
+
+        return asyncio.run(coro)
+
+    def _make_mock_client(self, payload):  # type: ignore[no-untyped-def]
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = payload
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+        return mock_client
+
+    def test_norad_follow_id_sets_is_hidden_2(self, db: sqlite3.Connection) -> None:
+        """norad_follow_id が異なる衛星は is_hidden=2 に自動設定される。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT INTO satellites (norad_cat_id, name) VALUES (98325, 'TMP-SAT')")
+        db.commit()
+        mgr = TransmitterManager(db)
+        payload = [
+            {
+                "norad_cat_id": 98325,
+                "name": "TMP-SAT",
+                "status": "alive",
+                "norad_follow_id": 68795,
+            }
+        ]
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client(payload),
+        ):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute("SELECT is_hidden FROM satellites WHERE norad_cat_id = 98325").fetchone()
+        assert row["is_hidden"] == 2
+
+    def test_no_norad_follow_id_stays_visible(self, db: sqlite3.Connection) -> None:
+        """norad_follow_id が無い衛星は is_hidden が変わらない。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.commit()
+        mgr = TransmitterManager(db)
+        payload = [{"norad_cat_id": 25544, "name": "ISS (ZARYA)", "status": "alive"}]
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client(payload),
+        ):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute("SELECT is_hidden FROM satellites WHERE norad_cat_id = 25544").fetchone()
+        assert row["is_hidden"] == 0
+
+    def test_norad_follow_id_same_as_norad_not_hidden(self, db: sqlite3.Connection) -> None:
+        """norad_follow_id が norad_cat_id と同じ場合は自動非表示にならない。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.commit()
+        mgr = TransmitterManager(db)
+        payload = [
+            {
+                "norad_cat_id": 25544,
+                "name": "ISS (ZARYA)",
+                "status": "alive",
+                "norad_follow_id": 25544,
+            }
+        ]
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client(payload),
+        ):
+            self._run(mgr.sync_satellite_names())
+
+        row = db.execute("SELECT is_hidden FROM satellites WHERE norad_cat_id = 25544").fetchone()
+        assert row["is_hidden"] == 0

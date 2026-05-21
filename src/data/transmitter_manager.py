@@ -360,17 +360,29 @@ class TransmitterManager:
                     raw_status = str(sat.get("status", "unknown")).lower()
                     status = _SATNOGS_STATUS_MAP.get(raw_status, "unknown")
 
+                    # norad_follow_id が自身と異なる → 仮NORADの残骸衛星
+                    follow_raw = sat.get("norad_follow_id")
+                    norad_follow = int(follow_raw) if follow_raw else None
+                    is_remnant = bool(norad_follow and norad_follow != norad)
+
                     existing = self._conn.execute(
                         "SELECT norad_cat_id FROM satellites WHERE norad_cat_id = ?",
                         (norad,),
                     ).fetchone()
 
                     if existing:
-                        self._conn.execute(
-                            "UPDATE satellites SET name = ?, status = ?, updated_at = ?"
-                            " WHERE norad_cat_id = ?",
-                            (name, status, now, norad),
-                        )
+                        if is_remnant:
+                            self._conn.execute(
+                                "UPDATE satellites SET name = ?, status = ?,"
+                                " is_hidden = 2, updated_at = ? WHERE norad_cat_id = ?",
+                                (name, status, now, norad),
+                            )
+                        else:
+                            self._conn.execute(
+                                "UPDATE satellites SET name = ?, status = ?, updated_at = ?"
+                                " WHERE norad_cat_id = ?",
+                                (name, status, now, norad),
+                            )
                         stats["updated"] += 1
                     else:
                         stats["skipped"] += 1

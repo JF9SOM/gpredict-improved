@@ -71,7 +71,7 @@ class _SatData(TypedDict):
     norad: int
     name: str
     is_favorite: bool
-    is_hidden: bool
+    is_hidden: int  # 0=visible, 1=user-hidden, 2=system-hidden
     status: str
     tle_group: str
     amsat_status: str | None
@@ -467,7 +467,7 @@ class MainWindow(QMainWindow):
                     norad=norad,
                     name=name,
                     is_favorite=bool(row["is_favorite"]),
-                    is_hidden=bool(row["is_hidden"]),
+                    is_hidden=int(row["is_hidden"] or 0),
                     status=str(row["status"] or "unknown"),
                     tle_group=str(row["tle_group"]),
                     amsat_status=amsat_status,
@@ -496,11 +496,13 @@ class MainWindow(QMainWindow):
         filtered_sats: list[tuple[int, str]] = []
 
         for d in self._all_sat_data:
-            # 非表示フィルター: "Hidden" のときのみ非表示衛星を表示、それ以外は除外
+            # 非表示フィルター:
+            #   is_hidden=1 (ユーザー手動) → "Hidden" フィルターのみ表示
+            #   is_hidden=2 (システム自動) → すべてのフィルターで非表示
             if filter_text == "Hidden":
-                if not d["is_hidden"]:
+                if d["is_hidden"] != 1:
                     continue
-            elif d["is_hidden"]:
+            elif d["is_hidden"] != 0:
                 continue
             # カテゴリーフィルター
             if filter_text == "★ Favorites" and not d["is_favorite"]:
