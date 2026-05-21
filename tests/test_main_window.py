@@ -688,6 +688,61 @@ class TestSyncFromSatnogsTargetNorad:
         ).fetchone()
         assert row["norad_cat_id"] == 98325
 
+    def test_update_path_no_binding_error(self, db: sqlite3.Connection) -> None:
+        """sync_from_satnogs UPDATE ブランチで SQL バインドエラーが発生しないことを確認する。"""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT OR IGNORE INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.execute(
+            """
+            INSERT INTO transmitters
+            (uuid, norad_cat_id, description, type,
+             downlink_low, mode, alive, source, manual_override, updated_at)
+            VALUES ('existing-uuid', 25544, 'ISS FM', 'Transponder',
+                    145800000, 'FM', 1, 'satnogs', 0, '2024-01-01')
+            """
+        )
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        mock_data = [
+            {
+                "uuid": "existing-uuid",
+                "norad_cat_id": 25544,
+                "description": "ISS FM updated",
+                "type": "Transceiver",
+                "uplink_low": 144_490_000,
+                "uplink_high": None,
+                "downlink_low": 145_800_000,
+                "downlink_high": None,
+                "mode": "FM",
+                "invert": False,
+                "baud": None,
+                "ctcss_tone": 67.0,
+                "alive": True,
+            }
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = mock_data
+        mock_resp.raise_for_status.return_value = None
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("data.transmitter_manager.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+            result = asyncio.run(mgr.sync_from_satnogs(norad_cat_id=25544))
+
+        assert result["updated"] == 1
+        row = db.execute(
+            "SELECT description FROM transmitters WHERE uuid='existing-uuid'"
+        ).fetchone()
+        assert row["description"] == "ISS FM updated"
+
 
 # ---------------------------------------------------------------------------
 # MainWindow
@@ -865,3 +920,25 @@ class TestMainWindow:
     def test_on_tick_no_crash_empty_db(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
         w._on_tick()  # should not raise with empty DB
+
+    def test_edit_transmitter_warns_when_no_list_selection(self, qtbot, db, tle_manager) -> None:
+        """Edit Transmitter: sat_list に選択がなければ警告を表示する。"""
+        from unittest.mock import patch
+
+        w = self._make_window(qtbot, db, tle_manager)
+        w._selected_norad = 25544  # stale value — should be ignored
+        w._sat_list.clearSelection()
+        with patch("ui.main_window.QMessageBox.warning") as mock_warn:
+            w._on_edit_transmitter()
+        mock_warn.assert_called_once()
+
+    def test_delete_transmitter_warns_when_no_list_selection(self, qtbot, db, tle_manager) -> None:
+        """Delete Transmitter: sat_list に選択がなければ警告を表示する。"""
+        from unittest.mock import patch
+
+        w = self._make_window(qtbot, db, tle_manager)
+        w._selected_norad = 25544  # stale value — should be ignored
+        w._sat_list.clearSelection()
+        with patch("ui.main_window.QMessageBox.warning") as mock_warn:
+            w._on_delete_transmitter()
+        mock_warn.assert_called_once()

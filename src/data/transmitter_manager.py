@@ -276,7 +276,7 @@ class TransmitterManager:
                         uplink_low=?, uplink_high=?,
                         downlink_low=?, downlink_high=?,
                         mode=?, invert=?, baud=?,
-                        ctcss_tone=?, alive=?, updated_at=?
+                        ctcss_tone=?, ctcss_tone_type=?, alive=?, updated_at=?
                     WHERE uuid=?
                 """,
                     row[2:] + (xpdr_uuid,),

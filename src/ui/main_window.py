@@ -1072,10 +1072,11 @@ class MainWindow(QMainWindow):
         """Satellite > Edit Transmitter... ハンドラー。"""
         from ui.transmitter_dialog import TransmitterDialog
 
-        norad = self._selected_norad
-        if norad is None:
+        current = self._sat_list.currentItem()
+        if current is None:
             QMessageBox.warning(self, _("Edit Transmitter"), _("No satellite selected."))
             return
+        norad = int(current.data(Qt.ItemDataRole.UserRole))
 
         rows = self._conn.execute(
             "SELECT * FROM transmitters WHERE norad_cat_id = ? AND alive = 1 ORDER BY description",
@@ -1107,10 +1108,11 @@ class MainWindow(QMainWindow):
 
     def _on_delete_transmitter(self) -> None:
         """Satellite > Delete Transmitter... ハンドラー。"""
-        norad = self._selected_norad
-        if norad is None:
+        current = self._sat_list.currentItem()
+        if current is None:
             QMessageBox.warning(self, _("Delete Transmitter"), _("No satellite selected."))
             return
+        norad = int(current.data(Qt.ItemDataRole.UserRole))
 
         rows = self._conn.execute(
             "SELECT * FROM transmitters WHERE norad_cat_id = ? ORDER BY description",
