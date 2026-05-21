@@ -1,12 +1,14 @@
 """
-トランスポンダ手動追加ダイアログ
+トランスポンダ手動追加・編集ダイアログ
 
 NORAD ID・周波数・モード・CTCSSトーンを入力してDBに保存する（manual_override=True）。
+existing を渡すと編集モードになる。
 """
 
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -32,26 +34,33 @@ _CTCSS_TYPES: list[str] = ["", "CTCSS", "DCS"]
 
 
 class TransmitterDialog(QDialog):
-    """トランスポンダ手動追加ダイアログ。"""
+    """トランスポンダ手動追加・編集ダイアログ。"""
 
     def __init__(
         self,
         transmitter_manager: TransmitterManager,
         norad_cat_id: int | None = None,
+        existing: dict[str, Any] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         """
         Args:
             transmitter_manager: トランスポンダ管理クラス
             norad_cat_id:        初期NORAD ID（Noneなら25544=ISSがデフォルト）
+            existing:            編集対象レコード（Noneなら追加モード）
             parent:              親ウィジェット
         """
         super().__init__(parent)
         self._tm = transmitter_manager
-        self.setWindowTitle(_("Add Transmitter"))
+        self._existing = existing
+        self._edit_mode = existing is not None
+        title = _("Edit Transmitter") if self._edit_mode else _("Add Transmitter")
+        self.setWindowTitle(title)
         self.setMinimumWidth(440)
         self._build_ui()
-        if norad_cat_id is not None:
+        if self._edit_mode:
+            self._prefill(existing)  # type: ignore[arg-type]
+        elif norad_cat_id is not None:
             self._norad_spin.setValue(norad_cat_id)
 
     # ------------------------------------------------------------------ #
@@ -171,6 +180,46 @@ class TransmitterDialog(QDialog):
             return None
         return int(round(mhz * 1_000_000))
 
+    @staticmethod
+    def _hz_to_mhz(hz: int | None) -> float:
+        """Hz を MHz に変換する。None の場合は 0.0（specialValue）を返す。"""
+        if hz is None:
+            return 0.0
+        return hz / 1_000_000
+
+    def _prefill(self, rec: dict[str, Any]) -> None:
+        """既存レコードの値をウィジェットに設定する（編集モード用）。"""
+        self._norad_spin.setValue(rec.get("norad_cat_id", 25544))
+        self._norad_spin.setEnabled(False)
+        self._satnogs_norad_spin.setEnabled(False)
+        self._desc_edit.setText(rec.get("description", ""))
+        self._dl_spin.setValue(self._hz_to_mhz(rec.get("downlink_low")))
+        self._dl_high_spin.setValue(self._hz_to_mhz(rec.get("downlink_high")))
+        self._ul_spin.setValue(self._hz_to_mhz(rec.get("uplink_low")))
+        self._ul_high_spin.setValue(self._hz_to_mhz(rec.get("uplink_high")))
+
+        xtype = rec.get("type", "Transponder")
+        idx = self._type_combo.findText(xtype)
+        if idx >= 0:
+            self._type_combo.setCurrentIndex(idx)
+
+        mode = rec.get("mode", "FM")
+        midx = self._mode_combo.findText(mode or "FM")
+        if midx >= 0:
+            self._mode_combo.setCurrentIndex(midx)
+
+        self._invert_check.setChecked(bool(rec.get("invert", False)))
+
+        ctcss_type = rec.get("ctcss_tone_type") or ""
+        cidx = self._ctcss_type_combo.findText(ctcss_type)
+        if cidx >= 0:
+            self._ctcss_type_combo.setCurrentIndex(cidx)
+
+        ctcss = rec.get("ctcss_tone")
+        self._ctcss_spin.setValue(ctcss if ctcss and ctcss > 0 else 0.0)
+
+        self._notes_edit.setText(rec.get("notes") or "")
+
     # ------------------------------------------------------------------ #
     # シグナルハンドラー
     # ------------------------------------------------------------------ #
@@ -181,7 +230,7 @@ class TransmitterDialog(QDialog):
         satnogs_norad = self._satnogs_norad_spin.value()
 
         # SatNOGS インポートモード（SatNOGS NORAD ID が指定されている場合）
-        if satnogs_norad != 0:
+        if not self._edit_mode and satnogs_norad != 0:
             self._do_satnogs_import(norad, satnogs_norad)
             return
 
@@ -209,20 +258,36 @@ class TransmitterDialog(QDialog):
         notes = self._notes_edit.text().strip()
 
         try:
-            self._tm.add_manual_transmitter(
-                norad_cat_id=norad,
-                description=desc,
-                downlink_low=dl_low,
-                mode=mode,
-                uplink_low=ul_low,
-                uplink_high=ul_high,
-                downlink_high=dl_high,
-                invert=invert,
-                ctcss_tone=ctcss_tone,
-                ctcss_tone_type=ctcss_type_str,
-                notes=notes,
-                xpdr_type=xpdr_type,
-            )
+            if self._edit_mode and self._existing is not None:
+                self._tm.update_transmitter(
+                    self._existing["uuid"],
+                    description=desc,
+                    type=xpdr_type,
+                    downlink_low=dl_low,
+                    downlink_high=dl_high,
+                    uplink_low=ul_low,
+                    uplink_high=ul_high,
+                    mode=mode,
+                    invert=int(invert),
+                    ctcss_tone=ctcss_tone,
+                    ctcss_tone_type=ctcss_type_str,
+                    notes=notes,
+                )
+            else:
+                self._tm.add_manual_transmitter(
+                    norad_cat_id=norad,
+                    description=desc,
+                    downlink_low=dl_low,
+                    mode=mode,
+                    uplink_low=ul_low,
+                    uplink_high=ul_high,
+                    downlink_high=dl_high,
+                    invert=invert,
+                    ctcss_tone=ctcss_tone,
+                    ctcss_tone_type=ctcss_type_str,
+                    notes=notes,
+                    xpdr_type=xpdr_type,
+                )
             self.accept()
         except Exception as exc:
             QMessageBox.critical(self, _("Error"), str(exc))

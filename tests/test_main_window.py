@@ -497,6 +497,99 @@ class TestTransmitterDialog:
         assert w._satnogs_norad_spin.minimum() == 0
         assert w._satnogs_norad_spin.maximum() == 999999
 
+    def test_edit_mode_prefills_fields(self, qtbot, db) -> None:
+        from ui.transmitter_dialog import TransmitterDialog
+
+        existing = {
+            "uuid": "manual-test",
+            "norad_cat_id": 25544,
+            "description": "ISS FM",
+            "type": "Transceiver",
+            "downlink_low": 145_800_000,
+            "downlink_high": None,
+            "uplink_low": 144_490_000,
+            "uplink_high": None,
+            "mode": "FM",
+            "invert": False,
+            "ctcss_tone": 67.0,
+            "ctcss_tone_type": "CTCSS",
+            "notes": "test note",
+        }
+        w = TransmitterDialog(self._mgr(db), existing=existing)
+        qtbot.addWidget(w)
+        assert w._desc_edit.text() == "ISS FM"
+        assert abs(w._dl_spin.value() - 145.800) < 0.001
+        assert abs(w._ul_spin.value() - 144.490) < 0.001
+        assert w._type_combo.currentText() == "Transceiver"
+        assert w._mode_combo.currentText() == "FM"
+        assert abs(w._ctcss_spin.value() - 67.0) < 0.1
+        assert w._notes_edit.text() == "test note"
+
+    def test_edit_mode_title(self, qtbot, db) -> None:
+        from ui.transmitter_dialog import TransmitterDialog
+
+        existing = {
+            "uuid": "manual-test",
+            "norad_cat_id": 25544,
+            "description": "ISS FM",
+            "type": "Transceiver",
+            "downlink_low": 145_800_000,
+            "downlink_high": None,
+            "uplink_low": None,
+            "uplink_high": None,
+            "mode": "FM",
+            "invert": False,
+            "ctcss_tone": None,
+            "ctcss_tone_type": None,
+            "notes": "",
+        }
+        w = TransmitterDialog(self._mgr(db), existing=existing)
+        qtbot.addWidget(w)
+        assert "Edit" in w.windowTitle()
+
+    def test_edit_mode_norad_spin_disabled(self, qtbot, db) -> None:
+        from ui.transmitter_dialog import TransmitterDialog
+
+        existing = {
+            "uuid": "manual-test",
+            "norad_cat_id": 25544,
+            "description": "ISS FM",
+            "type": "Transponder",
+            "downlink_low": 145_800_000,
+            "downlink_high": None,
+            "uplink_low": None,
+            "uplink_high": None,
+            "mode": "FM",
+            "invert": False,
+            "ctcss_tone": None,
+            "ctcss_tone_type": None,
+            "notes": "",
+        }
+        w = TransmitterDialog(self._mgr(db), existing=existing)
+        qtbot.addWidget(w)
+        assert not w._norad_spin.isEnabled()
+
+
+class TestUpdateTransmitterTypeField:
+    """update_transmitter が type フィールドを更新できることを確認する。"""
+
+    def test_update_type_allowed(self, db: sqlite3.Connection) -> None:
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute("INSERT OR IGNORE INTO satellites (norad_cat_id, name) VALUES (25544, 'ISS')")
+        db.commit()
+        mgr = TransmitterManager(db)
+        uid = mgr.add_manual_transmitter(
+            norad_cat_id=25544,
+            description="Test FM",
+            downlink_low=145_800_000,
+            mode="FM",
+            xpdr_type="Transponder",
+        )
+        mgr.update_transmitter(uid, type="Transceiver")
+        row = db.execute("SELECT type FROM transmitters WHERE uuid = ?", (uid,)).fetchone()
+        assert row["type"] == "Transceiver"
+
 
 class TestSyncFromSatnogsTargetNorad:
     """sync_from_satnogs の target_norad_cat_id オーバーライドテスト。"""

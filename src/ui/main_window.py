@@ -369,6 +369,8 @@ class MainWindow(QMainWindow):
         sat_menu = mb.addMenu(_("Satellite"))
         if sat_menu:
             sat_menu.addAction(_("Add Transmitter..."), self._on_add_transmitter)
+            sat_menu.addAction(_("Edit Transmitter..."), self._on_edit_transmitter)
+            sat_menu.addAction(_("Delete Transmitter..."), self._on_delete_transmitter)
             sat_menu.addSeparator()
             sat_menu.addAction(_("Add Satellite..."), self._on_add_satellite)
             sat_menu.addAction(_("Add Manual TLE..."), self._on_add_manual_tle)
@@ -1065,6 +1067,87 @@ class MainWindow(QMainWindow):
                 _("Add Transmitter"),
                 _("Transmitter added successfully."),
             )
+
+    def _on_edit_transmitter(self) -> None:
+        """Satellite > Edit Transmitter... ハンドラー。"""
+        from ui.transmitter_dialog import TransmitterDialog
+
+        norad = self._selected_norad
+        if norad is None:
+            QMessageBox.warning(self, _("Edit Transmitter"), _("No satellite selected."))
+            return
+
+        rows = self._conn.execute(
+            "SELECT * FROM transmitters WHERE norad_cat_id = ? AND alive = 1 ORDER BY description",
+            (norad,),
+        ).fetchall()
+        if not rows:
+            QMessageBox.information(
+                self, _("Edit Transmitter"), _("No transmitters found for this satellite.")
+            )
+            return
+
+        items = [
+            f"{dict(r)['description']}  [{(dict(r).get('downlink_low') or 0) / 1e6:.3f} MHz]"
+            for r in rows
+        ]
+        from PySide6.QtWidgets import QInputDialog
+
+        item, ok = QInputDialog.getItem(
+            self, _("Edit Transmitter"), _("Select transmitter to edit:"), items, 0, False
+        )
+        if not ok:
+            return
+
+        idx = items.index(item)
+        existing = dict(rows[idx])
+        dialog = TransmitterDialog(self._transmitter_manager, existing=existing, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and self._selected_norad is not None:
+            self._refresh_radio_control(self._selected_norad)
+
+    def _on_delete_transmitter(self) -> None:
+        """Satellite > Delete Transmitter... ハンドラー。"""
+        norad = self._selected_norad
+        if norad is None:
+            QMessageBox.warning(self, _("Delete Transmitter"), _("No satellite selected."))
+            return
+
+        rows = self._conn.execute(
+            "SELECT * FROM transmitters WHERE norad_cat_id = ? ORDER BY description",
+            (norad,),
+        ).fetchall()
+        if not rows:
+            QMessageBox.information(
+                self, _("Delete Transmitter"), _("No transmitters found for this satellite.")
+            )
+            return
+
+        items = [
+            f"{dict(r)['description']}  [{(dict(r).get('downlink_low') or 0) / 1e6:.3f} MHz]"
+            for r in rows
+        ]
+        from PySide6.QtWidgets import QInputDialog
+
+        item, ok = QInputDialog.getItem(
+            self, _("Delete Transmitter"), _("Select transmitter to delete:"), items, 0, False
+        )
+        if not ok:
+            return
+
+        idx = items.index(item)
+        rec = dict(rows[idx])
+        answer = QMessageBox.question(
+            self,
+            _("Delete Transmitter"),
+            _("Delete transmitter '{desc}'?").format(desc=rec["description"]),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        self._transmitter_manager.delete_transmitter(rec["uuid"])
+        if self._selected_norad is not None:
+            self._refresh_radio_control(self._selected_norad)
 
     def _on_add_satellite(self) -> None:
         QMessageBox.information(

@@ -147,6 +147,7 @@ class TransmitterManager:
         """
         allowed = {
             "description",
+            "type",
             "uplink_low",
             "uplink_high",
             "downlink_low",
