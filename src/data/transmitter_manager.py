@@ -319,6 +319,18 @@ class TransmitterManager:
                 )
                 stats["inserted"] += 1
 
+        # トランスミッターが0件かつSatNOGS未登録(status='unknown')の孤立衛星を自動非表示。
+        # これは sync_from_satnogs() 完了後の最終状態に基づいて判定するため、
+        # 全トランスミッターの処理が終わった後に1回だけ実行する。
+        self._conn.execute(
+            """
+            UPDATE satellites SET is_hidden = 2
+            WHERE norad_cat_id NOT IN (SELECT DISTINCT norad_cat_id FROM transmitters)
+            AND status = 'unknown'
+            AND is_hidden = 0
+            """
+        )
+
         self._conn.commit()
         self._log_sync("satnogs", stats)
         return stats

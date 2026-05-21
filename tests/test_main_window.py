@@ -1221,3 +1221,98 @@ class TestAutoHideFollowedSatellites:
 
         row = db.execute("SELECT is_hidden FROM satellites WHERE norad_cat_id = 25544").fetchone()
         assert row["is_hidden"] == 0
+
+
+class TestOrphanSatelliteAutoHide:
+    """孤立衛星（transmitter=0件・status=unknown）の自動非表示テスト。"""
+
+    def _run(self, coro):  # type: ignore[no-untyped-def]
+        import asyncio
+
+        return asyncio.run(coro)
+
+    def _make_mock_client(self, payload):  # type: ignore[no-untyped-def]
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = payload
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+        return mock_client
+
+    def test_orphan_unknown_gets_hidden(self, db: sqlite3.Connection) -> None:
+        """transmitter=0件・status=unknownの孤立衛星は is_hidden=2 になる。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        # 孤立衛星: transmitter なし・status='unknown'（デフォルト）
+        db.execute("INSERT INTO satellites (norad_cat_id, name) VALUES (99999, 'Mode U - Orphan')")
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client([]),
+        ):
+            self._run(mgr.sync_from_satnogs())
+
+        row = db.execute("SELECT is_hidden FROM satellites WHERE norad_cat_id = 99999").fetchone()
+        assert row["is_hidden"] == 2
+
+    def test_satellite_with_transmitter_not_hidden(self, db: sqlite3.Connection) -> None:
+        """transmitter が存在する衛星は孤立判定されない。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name, status) VALUES (25544, 'ISS', 'alive')"
+        )
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        # transmitter を1件追加
+        payload = [
+            {
+                "uuid": "uuid-iss-fm",
+                "norad_cat_id": 25544,
+                "description": "ISS FM",
+                "downlink_low": 145800000,
+                "mode": "FM",
+                "alive": True,
+            }
+        ]
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client(payload),
+        ):
+            self._run(mgr.sync_from_satnogs())
+
+        row = db.execute("SELECT is_hidden FROM satellites WHERE norad_cat_id = 25544").fetchone()
+        assert row["is_hidden"] == 0
+
+    def test_alive_satellite_without_transmitter_not_hidden(self, db: sqlite3.Connection) -> None:
+        """status='alive' の衛星は transmitter がなくても自動非表示にならない。"""
+        from unittest.mock import patch
+
+        from data.transmitter_manager import TransmitterManager
+
+        db.execute(
+            "INSERT INTO satellites (norad_cat_id, name, status)"
+            " VALUES (55555, 'ALIVE-SAT', 'alive')"
+        )
+        db.commit()
+        mgr = TransmitterManager(db)
+
+        with patch(
+            "data.transmitter_manager.httpx.AsyncClient",
+            return_value=self._make_mock_client([]),
+        ):
+            self._run(mgr.sync_from_satnogs())
+
+        row = db.execute("SELECT is_hidden FROM satellites WHERE norad_cat_id = 55555").fetchone()
+        assert row["is_hidden"] == 0
