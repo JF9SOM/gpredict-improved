@@ -942,3 +942,75 @@ class TestMainWindow:
         with patch("ui.main_window.QMessageBox.warning") as mock_warn:
             w._on_delete_transmitter()
         mock_warn.assert_called_once()
+
+
+class TestHideSatellite:
+    """Hide Satellite 機能のテスト。"""
+
+    def _make_window(self, qtbot, db: sqlite3.Connection, tle_manager: TLEManager) -> MainWindow:
+        w = MainWindow(conn=db, tle_manager=tle_manager)
+        qtbot.addWidget(w)
+        return w
+
+    def test_set_hidden_updates_db(self, qtbot, populated_db) -> None:
+        """_set_hidden(True) で is_hidden=1 がDBに保存される。"""
+        tle_manager = TLEManager(populated_db)
+        w = self._make_window(qtbot, populated_db, tle_manager)
+        w._set_hidden(25544, True)
+        row = populated_db.execute(
+            "SELECT is_hidden FROM satellites WHERE norad_cat_id = ?", (25544,)
+        ).fetchone()
+        assert row["is_hidden"] == 1
+
+    def test_set_hidden_false_unhides(self, qtbot, populated_db) -> None:
+        """_set_hidden(False) で is_hidden=0 に戻る。"""
+        tle_manager = TLEManager(populated_db)
+        populated_db.execute(
+            "UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,)
+        )
+        populated_db.commit()
+        w = self._make_window(qtbot, populated_db, tle_manager)
+        w._set_hidden(25544, False)
+        row = populated_db.execute(
+            "SELECT is_hidden FROM satellites WHERE norad_cat_id = ?", (25544,)
+        ).fetchone()
+        assert row["is_hidden"] == 0
+
+    def test_hidden_satellite_not_in_all_filter(self, qtbot, populated_db) -> None:
+        """is_hidden=1 の衛星は 'All Satellites' フィルターに表示されない。"""
+        tle_manager = TLEManager(populated_db)
+        populated_db.execute(
+            "UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,)
+        )
+        populated_db.commit()
+        w = self._make_window(qtbot, populated_db, tle_manager)
+        w._filter_combo.setCurrentText("All Satellites")
+        norads = [
+            w._sat_list.item(i).data(__import__("PySide6.QtCore", fromlist=["Qt"]).Qt.ItemDataRole.UserRole)
+            for i in range(w._sat_list.count())
+        ]
+        assert 25544 not in norads
+
+    def test_hidden_filter_shows_only_hidden(self, qtbot, populated_db) -> None:
+        """'Hidden' フィルターでは is_hidden=1 の衛星だけが表示される。"""
+        from PySide6.QtCore import Qt
+
+        tle_manager = TLEManager(populated_db)
+        populated_db.execute(
+            "UPDATE satellites SET is_hidden = 1 WHERE norad_cat_id = ?", (25544,)
+        )
+        populated_db.commit()
+        w = self._make_window(qtbot, populated_db, tle_manager)
+        w._filter_combo.setCurrentText("Hidden")
+        assert w._sat_list.count() == 1
+        assert w._sat_list.item(0).data(Qt.ItemDataRole.UserRole) == 25544
+
+    def test_hide_satellite_warns_when_no_selection(self, qtbot, db, tle_manager) -> None:
+        """Hide Satellite: sat_list に選択がなければ警告を表示する。"""
+        from unittest.mock import patch
+
+        w = self._make_window(qtbot, db, tle_manager)
+        w._sat_list.clearSelection()
+        with patch("ui.main_window.QMessageBox.warning") as mock_warn:
+            w._on_hide_satellite()
+        mock_warn.assert_called_once()

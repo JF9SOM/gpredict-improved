@@ -71,6 +71,7 @@ class _SatData(TypedDict):
     norad: int
     name: str
     is_favorite: bool
+    is_hidden: bool
     tle_group: str
     quality: str | None
     amsat_status: str | None
@@ -300,6 +301,7 @@ class MainWindow(QMainWindow):
                 "Science",
                 "Space Stations",
                 "Operational (AMSAT)",
+                "Hidden",
             ]
         )
         self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
@@ -371,6 +373,7 @@ class MainWindow(QMainWindow):
             sat_menu.addAction(_("Add Transmitter..."), self._on_add_transmitter)
             sat_menu.addAction(_("Edit Transmitter..."), self._on_edit_transmitter)
             sat_menu.addAction(_("Delete Transmitter..."), self._on_delete_transmitter)
+            sat_menu.addAction(_("Hide Satellite"), self._on_hide_satellite)
             sat_menu.addSeparator()
             sat_menu.addAction(_("Add Satellite..."), self._on_add_satellite)
             sat_menu.addAction(_("Add Manual TLE..."), self._on_add_manual_tle)
@@ -447,7 +450,7 @@ class MainWindow(QMainWindow):
 
         rows = self._conn.execute(
             """
-            SELECT s.norad_cat_id, s.name, s.is_favorite,
+            SELECT s.norad_cat_id, s.name, s.is_favorite, s.is_hidden,
                    COALESCE(t.tle_group, 'amateur') AS tle_group
             FROM satellites s
             LEFT JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id
@@ -481,6 +484,7 @@ class MainWindow(QMainWindow):
                     norad=norad,
                     name=name,
                     is_favorite=bool(row["is_favorite"]),
+                    is_hidden=bool(row["is_hidden"]),
                     tle_group=str(row["tle_group"]),
                     quality=quality,
                     amsat_status=amsat_status,
@@ -509,6 +513,12 @@ class MainWindow(QMainWindow):
         filtered_sats: list[tuple[int, str]] = []
 
         for d in self._all_sat_data:
+            # 非表示フィルター: "Hidden" のときのみ非表示衛星を表示、それ以外は除外
+            if filter_text == "Hidden":
+                if not d["is_hidden"]:
+                    continue
+            elif d["is_hidden"]:
+                continue
             # カテゴリーフィルター
             if filter_text == "★ Favorites" and not d["is_favorite"]:
                 continue
@@ -830,7 +840,7 @@ class MainWindow(QMainWindow):
         norad = int(item.data(Qt.ItemDataRole.UserRole))
 
         row_data = self._conn.execute(
-            "SELECT name, is_favorite FROM satellites WHERE norad_cat_id = ?",
+            "SELECT name, is_favorite, is_hidden FROM satellites WHERE norad_cat_id = ?",
             (norad,),
         ).fetchone()
         if row_data is None:
@@ -838,15 +848,20 @@ class MainWindow(QMainWindow):
 
         name = str(row_data["name"])
         is_fav = bool(row_data["is_favorite"])
+        is_hidden = bool(row_data["is_hidden"])
 
         menu = QMenu(self)
         fav_label = "★ Remove from Favorites" if is_fav else "★ Add to Favorites"
         fav_action = menu.addAction(fav_label)
+        hide_label = _("Unhide Satellite") if is_hidden else _("Hide Satellite")
+        hide_action = menu.addAction(hide_label)
         info_action = menu.addAction("Satellite Info...")
 
         action = menu.exec(self._sat_list.mapToGlobal(pos))
         if action == fav_action:
             self._toggle_favorite(norad, not is_fav)
+        elif action == hide_action:
+            self._set_hidden(norad, not is_hidden)
         elif action == info_action:
             self._show_sat_info(norad, name)
 
@@ -858,6 +873,32 @@ class MainWindow(QMainWindow):
         )
         self._conn.commit()
         self._load_satellites()
+
+    def _set_hidden(self, norad: int, hidden: bool) -> None:
+        """衛星の非表示状態をDBに保存して衛星リストを再読み込みする。"""
+        self._conn.execute(
+            "UPDATE satellites SET is_hidden = ? WHERE norad_cat_id = ?",
+            (1 if hidden else 0, norad),
+        )
+        self._conn.commit()
+        self._load_satellites()
+
+    def _on_hide_satellite(self) -> None:
+        """Satellite > Hide Satellite ハンドラー。"""
+        current = self._sat_list.currentItem()
+        if current is None:
+            QMessageBox.warning(self, _("Hide Satellite"), _("No satellite selected."))
+            return
+        norad = int(current.data(Qt.ItemDataRole.UserRole))
+        name = current.text().lstrip("★ ").strip()
+        answer = QMessageBox.question(
+            self,
+            _("Hide Satellite"),
+            _("Hide {name} (NORAD {n}) from the satellite list?").format(name=name, n=norad),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self._set_hidden(norad, True)
 
     def _show_sat_info(self, norad: int, name: str) -> None:
         """衛星情報ダイアログを表示する（NORAD番号・TLE epoch・品質）。"""

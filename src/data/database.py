@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS satellites (
     status          TEXT DEFAULT 'unknown'
                     CHECK(status IN ('alive','dead','unknown')),
     is_favorite     INTEGER DEFAULT 0,
+    is_hidden       INTEGER DEFAULT 0,
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -119,6 +120,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     """既存DBに不足カラムを追加するマイグレーションを適用する。"""
     migrations = [
         "ALTER TABLE satellites ADD COLUMN is_favorite INTEGER DEFAULT 0",
+        "ALTER TABLE satellites ADD COLUMN is_hidden INTEGER DEFAULT 0",
         "ALTER TABLE tle_data ADD COLUMN tle_group TEXT DEFAULT 'amateur'",
     ]
     for stmt in migrations:
