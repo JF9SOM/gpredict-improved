@@ -367,13 +367,9 @@ class MainWindow(QMainWindow):
             sat_menu.addAction(_("Delete Transmitter..."), self._on_delete_transmitter)
             sat_menu.addAction(_("Hide Satellite"), self._on_hide_satellite)
             sat_menu.addSeparator()
-            sat_menu.addAction(_("Add Satellite..."), self._on_add_satellite)
             sat_menu.addAction(_("Add Manual TLE..."), self._on_add_manual_tle)
             sat_menu.addAction(_("Update TLE"), self._on_update_tle)
             sat_menu.addAction(_("Sync SATNOGS"), self._on_sync_satnogs)
-            sat_menu.addAction(
-                _("Sync Satellite Names from SATNOGS"), self._on_sync_satellite_names
-            )
 
         # Radio
         radio_menu = mb.addMenu(_("Radio"))
@@ -628,6 +624,9 @@ class MainWindow(QMainWindow):
         if count == 0:
             threading.Thread(target=self._refresh_satnogs_sync, daemon=True).start()
 
+        # 起動時に常に衛星名・status を SATNOGS からバックグラウンド同期
+        threading.Thread(target=self._refresh_satellite_names_sync, daemon=True).start()
+
     def _refresh_tle_sync(self) -> None:
         """バックグラウンドスレッドから有効な全 TLE ソースを更新する（APScheduler ジョブ）。"""
         from ui.settings_dialog import SettingsDialog
@@ -648,6 +647,15 @@ class MainWindow(QMainWindow):
             self._satellite_list_refresh.emit()
         except Exception as exc:
             logger.warning("AMSAT status refresh failed: %s", exc)
+
+    def _refresh_satellite_names_sync(self) -> None:
+        """バックグラウンドスレッドから SATNOGS の衛星名・status を同期する。"""
+        try:
+            result = asyncio.run(self._transmitter_manager.sync_satellite_names())
+            logger.info("SATNOGS satellite names sync completed: %s", result)
+            self._satellite_list_refresh.emit()
+        except Exception as exc:
+            logger.warning("SATNOGS satellite names sync failed: %s", exc)
 
     # ------------------------------------------------------------------ #
     # タイマーコールバック（1 秒ごと）
@@ -1179,11 +1187,6 @@ class MainWindow(QMainWindow):
         if self._selected_norad is not None:
             self._refresh_radio_control(self._selected_norad)
 
-    def _on_add_satellite(self) -> None:
-        QMessageBox.information(
-            self, _("Add Satellite"), _("Add satellite dialog not yet implemented.")
-        )
-
     def _on_add_manual_tle(self) -> None:
         """Satellite > Add Manual TLE... ハンドラー。"""
         from ui.manual_tle_dialog import ManualTLEDialog
@@ -1233,26 +1236,6 @@ class MainWindow(QMainWindow):
         sb = self.statusBar()
         if sb:
             sb.showMessage(msg, 8000)
-
-    def _on_sync_satellite_names(self) -> None:
-        """Satellite > Sync Satellite Names from SATNOGS ハンドラー。
-
-        バックグラウンドスレッドで SATNOGS から衛星名を取得し、
-        satellites テーブルの name 列を更新する。
-        """
-
-        def _do_sync() -> None:
-            try:
-                result = asyncio.run(self._transmitter_manager.sync_satellite_names())
-                logger.info("SATNOGS name sync completed: %s", result)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("SATNOGS name sync failed: %s", exc)
-            self._satellite_list_refresh.emit()
-
-        threading.Thread(target=_do_sync, daemon=True).start()
-        sb = self.statusBar()
-        if sb:
-            sb.showMessage(_("Syncing satellite names from SATNOGS..."), 5000)
 
     def _on_rig_settings(self) -> None:
         from ui.rig_dialog import RigSettingsDialog
