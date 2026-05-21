@@ -238,8 +238,13 @@ class TransmitterManager:
             if not sat_id:
                 continue
 
-            # target_norad_cat_id が指定されている場合は保存先をオーバーライド
-            storage_id = target_norad_cat_id if target_norad_cat_id is not None else sat_id
+            # norad_follow_id（正式NORAD）が存在する場合は保存先として優先する。
+            # これにより仮NORAD(例: 98325)のデータが正式NORAD(例: 68795)に自動紐付けされる。
+            auto_storage = (
+                xpdr.get("norad_follow_id") or xpdr.get("satellite__norad_cat_id") or sat_id
+            )
+            # target_norad_cat_id が明示指定された場合はそちらを優先（後方互換）
+            storage_id = target_norad_cat_id if target_norad_cat_id is not None else auto_storage
 
             # 衛星レコード確保
             self._conn.execute(
