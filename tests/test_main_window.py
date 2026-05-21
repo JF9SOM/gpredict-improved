@@ -1085,11 +1085,11 @@ class TestHideSatellite:
         )
         populated_db.commit()
         w = self._make_window(qtbot, populated_db, tle_manager)
+        from PySide6.QtCore import Qt
+
         w._filter_combo.setCurrentText("All Satellites")
-        norads = [
-            w._sat_list.item(i).data(__import__("PySide6.QtCore", fromlist=["Qt"]).Qt.ItemDataRole.UserRole)
-            for i in range(w._sat_list.count())
-        ]
+        role = Qt.ItemDataRole.UserRole
+        norads = [w._sat_list.item(i).data(role) for i in range(w._sat_list.count())]
         assert 25544 not in norads
 
     def test_hidden_filter_shows_only_hidden(self, qtbot, populated_db) -> None:
