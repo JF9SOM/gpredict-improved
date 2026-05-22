@@ -13,7 +13,9 @@ import contextlib
 import json
 import logging
 import re
+import shutil
 import sqlite3
+import subprocess
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
@@ -270,7 +272,7 @@ class MainWindow(QMainWindow):
         self._satellite_list_refresh.connect(self._load_satellites)
         self._rig_error.connect(self._on_rig_error)
         self._satnogs_status.connect(self._on_satnogs_status)
-        self._satnogs_open_url.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
+        self._satnogs_open_url.connect(self._open_satnogs_url)
         self._satnogs_not_found.connect(
             lambda: QMessageBox.information(self, "SatNOGS", "SatNOGS page not found")
         )
@@ -953,6 +955,14 @@ class MainWindow(QMainWindow):
         elif action == satnogs_action:
             self._open_in_satnogs(norad, name)
 
+    def _open_satnogs_url(self, url: str) -> None:
+        """Open a URL in Chrome/Chromium app mode, or fall back to the default browser."""
+        for browser in ["google-chrome", "chromium-browser", "chromium"]:
+            if shutil.which(browser):
+                subprocess.Popen([browser, f"--app={url}"])
+                return
+        QDesktopServices.openUrl(QUrl(url))
+
     def _open_in_satnogs(self, norad: int, name: str) -> None:
         """Open the SatNOGS satellite page. Uses DB cache; fetches UUID in background if needed."""
         row = self._conn.execute(
@@ -961,7 +971,7 @@ class MainWindow(QMainWindow):
         ).fetchone()
         cached = row["satnogs_uuid"] if row else None
         if cached:
-            QDesktopServices.openUrl(QUrl(f"https://db.satnogs.org/satellite/{cached}"))
+            self._open_satnogs_url(f"https://db.satnogs.org/satellite/{cached}")
             return
         threading.Thread(
             target=self._fetch_satnogs_uuid_bg,
