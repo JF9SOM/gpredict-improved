@@ -37,12 +37,15 @@ class RadioControlWidget(QWidget):
     cycle_changed: Signal = Signal(int)  # ms
     tune_requested: Signal = Signal()
     lock_changed: Signal = Signal(bool)
+    rig_connected: Signal = Signal()
+    ctcss_send_requested: Signal = Signal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rig: RigController | None = None
         self._rotator: RotatorController | None = None
         self._transmitters: list[dict[str, Any]] = []
+        self._current_ctcss_hz: float | None = None
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -93,12 +96,31 @@ class RadioControlWidget(QWidget):
         self._uplink_doppler_label = QLabel("—")
         self._mode_label = QLabel("—")
         self._ctcss_label = QLabel("—")
+
+        # CTCSS row: label + Send + Activate buttons.
+        # Note: FTX-1F does not support L CTCSS_TONE via Hamlib (RPRT -11),
+        # so these buttons may be no-ops on that radio.
+        ctcss_row = QWidget()
+        ctcss_row_layout = QHBoxLayout(ctcss_row)
+        ctcss_row_layout.setContentsMargins(0, 0, 0, 0)
+        ctcss_row_layout.setSpacing(4)
+        self._ctcss_send_btn = QPushButton(_("Send"))
+        self._ctcss_send_btn.setToolTip(_("Send current CTCSS tone to rig"))
+        self._ctcss_send_btn.clicked.connect(self._on_ctcss_send)
+        self._ctcss_activate_btn = QPushButton(_("Activate (74.4 Hz)"))
+        self._ctcss_activate_btn.setToolTip(_("SO-50: activate 10-minute timer with 74.4 Hz tone"))
+        self._ctcss_activate_btn.clicked.connect(self._on_ctcss_activate)
+        ctcss_row_layout.addWidget(self._ctcss_label)
+        ctcss_row_layout.addWidget(self._ctcss_send_btn)
+        ctcss_row_layout.addWidget(self._ctcss_activate_btn)
+        ctcss_row_layout.addStretch()
+
         freq_form.addRow(_("Downlink:"), self._downlink_label)
         freq_form.addRow(_("  Doppler:"), self._downlink_doppler_label)
         freq_form.addRow(_("Uplink:"), self._uplink_label)
         freq_form.addRow(_("  Doppler:"), self._uplink_doppler_label)
         freq_form.addRow(_("Mode:"), self._mode_label)
-        freq_form.addRow(_("CTCSS:"), self._ctcss_label)
+        freq_form.addRow(_("CTCSS:"), ctcss_row)
         layout.addWidget(freq_group)
 
         # Rotator position
@@ -225,9 +247,10 @@ class RadioControlWidget(QWidget):
             self._uplink_label.setText("—")
             self._uplink_doppler_label.setText("—")
 
+        self._current_ctcss_hz = ctcss_hz if (ctcss_hz and ctcss_hz > 0) else None
         self._mode_label.setText(mode if mode else "—")
-        if ctcss_hz and ctcss_hz > 0:
-            self._ctcss_label.setText(f"{ctcss_hz:.1f} Hz")
+        if self._current_ctcss_hz:
+            self._ctcss_label.setText(f"{self._current_ctcss_hz:.1f} Hz")
         else:
             self._ctcss_label.setText("—")
 
@@ -268,6 +291,7 @@ class RadioControlWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     def _clear_frequency(self) -> None:
+        self._current_ctcss_hz = None
         for label in (
             self._downlink_label,
             self._downlink_doppler_label,
@@ -341,7 +365,17 @@ class RadioControlWidget(QWidget):
             self._rig.disconnect()
         else:
             self._rig.connect()
+            if self._rig.is_connected:
+                self.rig_connected.emit()
         self._update_rig_status()
+
+    def _on_ctcss_send(self) -> None:
+        if self._current_ctcss_hz is not None:
+            self.ctcss_send_requested.emit(self._current_ctcss_hz)
+
+    def _on_ctcss_activate(self) -> None:
+        """SO-50: transmit 74.4 Hz activation tone to start the 10-minute timer."""
+        self.ctcss_send_requested.emit(74.4)
 
     def _on_connect_rotator(self) -> None:
         if self._rotator is None:

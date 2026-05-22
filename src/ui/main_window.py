@@ -86,6 +86,12 @@ class _SatData(TypedDict):
 # 2-4 character prefix + optional separator + 1-3 digit number + optional trailing character
 _DESIG_RE = re.compile(r"\b([A-Za-z]{2,4})[-\s]?(\d{1,3}[A-Za-z]?)\b")
 
+# SATNOGS mode strings for which set_mode() is sent to the rig.
+# Excludes digital/beacon modes unlikely to need CAT mode switching (e.g. DIGITALVOICE, QPSK).
+_SEND_MODE_KEYS: frozenset[str] = frozenset(
+    {"FM", "USB", "SSB", "LSB", "CW", "CW-R", "BPSK", "AFSK"}
+)
+
 # Oscar designator prefixes (e.g. AO-7, FO-29, IO-86, QO-100, RS-44)
 _OSCAR_RE = re.compile(
     r"\b(?:AO|BO|CO|DO|EO|FO|GO|HO|IO|JO|KO|LO|MO|NO|PO|QO|RS|SO|TO|UO|VO|XO|ZO)"
@@ -280,6 +286,8 @@ class MainWindow(QMainWindow):
         self._radio_control.cycle_changed.connect(self._on_cycle_changed)
         self._radio_control.tune_requested.connect(self._on_tune_requested)
         self._radio_control.lock_changed.connect(self._on_lock_changed)
+        self._radio_control.rig_connected.connect(self._on_rig_connected)
+        self._radio_control.ctcss_send_requested.connect(self._on_ctcss_send)
         self._load_satellites()
         self._load_rig_settings()
 
@@ -1131,6 +1139,7 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(dl, dl, None, ul, ul, None, mode, ctcss)
         else:
             self._radio_control.update_doppler(None, None, None, None, None, None)
+        self._send_mode_to_rig()
 
     def _refresh_passes(self) -> None:
         """Fetch pass predictions for the selected satellite and update the pass list and chart."""
@@ -1431,6 +1440,49 @@ class MainWindow(QMainWindow):
     def _on_lock_changed(self, locked: bool) -> None:
         """Update the _trsp_lock flag when the L button is toggled."""
         self._trsp_lock = locked
+
+    def _send_mode_to_rig(self) -> None:
+        """Send the current transponder mode to the rig (one-shot background thread).
+
+        Called on transponder change and on rig connect.
+        Only modes in _SEND_MODE_KEYS are sent; others are silently ignored.
+        """
+        if self._rig_controller is None or not self._rig_controller.is_connected:
+            return
+        if self._current_transmitter is None:
+            return
+        mode = str(self._current_transmitter.get("mode") or "")
+        if mode not in _SEND_MODE_KEYS:
+            return
+        rig = self._rig_controller
+
+        def _send() -> None:
+            try:
+                rig.set_mode(mode)
+            except Exception as exc:
+                logger.warning("set_mode(%r) failed: %s", mode, exc)
+
+        threading.Thread(target=_send, daemon=True).start()
+
+    def _on_rig_connected(self) -> None:
+        """Called when the rig successfully connects; sends the current transponder mode."""
+        self._send_mode_to_rig()
+
+    def _on_ctcss_send(self, tone_hz: float) -> None:
+        """Send a CTCSS tone to the rig (background thread); errors shown in status bar."""
+        if self._rig_controller is None or not self._rig_controller.is_connected:
+            return
+        rig = self._rig_controller
+
+        def _send() -> None:
+            try:
+                ok = rig.set_ctcss_tone(tone_hz)
+                if not ok:
+                    self._rig_error.emit(f"set_ctcss_tone({tone_hz} Hz): rig returned failure")
+            except Exception as exc:
+                self._rig_error.emit(f"set_ctcss_tone: {exc}")
+
+        threading.Thread(target=_send, daemon=True).start()
 
     def _on_tune_requested(self) -> None:
         """T button pressed: reset to the centre frequency of the current transponder band."""

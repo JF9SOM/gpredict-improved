@@ -8,6 +8,7 @@ Records with manual_override=True are not overwritten by SATNOGS sync.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime
@@ -18,6 +19,9 @@ import httpx
 SATNOGS_API_BASE = "https://db.satnogs.org/api"
 SATNOGS_TRANSMITTERS_URL = f"{SATNOGS_API_BASE}/transmitters/"
 SATNOGS_SATELLITES_URL = f"{SATNOGS_API_BASE}/satellites/"
+
+# Matches "CTCSS 67.0 Hz" or "CTCSS 100 Hz" in transmitter description text
+_CTCSS_RE = re.compile(r"CTCSS\s+([\d.]+)\s*Hz", re.IGNORECASE)
 
 # SatNOGS status → DB status normalization map
 # 'future'/'re-entered' are converted to match the CHECK constraint ('alive','dead','unknown')
@@ -279,6 +283,12 @@ class TransmitterManager:
                     (int(sat_id),),
                 )
 
+            # Use CTCSS from API when available; otherwise extract from description text.
+            api_ctcss = xpdr.get("ctcss_tone")
+            if api_ctcss is None:
+                m = _CTCSS_RE.search(xpdr.get("description", ""))
+                api_ctcss = float(m.group(1)) if m else None
+
             row = (
                 xpdr_uuid,
                 storage_id,
@@ -291,7 +301,7 @@ class TransmitterManager:
                 xpdr.get("mode"),
                 int(bool(xpdr.get("invert", False))),
                 xpdr.get("baud"),
-                xpdr.get("ctcss_tone"),  # if available from SATNOGS
+                api_ctcss,
                 None,  # tone_type: not available in SATNOGS
                 int(bool(xpdr.get("alive", True))),
                 now,
@@ -325,6 +335,19 @@ class TransmitterManager:
                     row,
                 )
                 stats["inserted"] += 1
+
+        # Backfill ctcss_tone for any transmitter whose description contains CTCSS data
+        # but whose ctcss_tone column is still NULL (covers pre-existing records).
+        for brow in self._conn.execute(
+            "SELECT uuid, description FROM transmitters"
+            " WHERE ctcss_tone IS NULL AND description LIKE '%CTCSS%'"
+        ).fetchall():
+            m = _CTCSS_RE.search(str(brow["description"]))
+            if m:
+                self._conn.execute(
+                    "UPDATE transmitters SET ctcss_tone = ? WHERE uuid = ?",
+                    (float(m.group(1)), brow["uuid"]),
+                )
 
         # Auto-hide orphan satellites with 0 transmitters and not registered
         # in SatNOGS (status='unknown').
