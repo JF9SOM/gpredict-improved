@@ -70,6 +70,7 @@ class _SatData(TypedDict):
 
     norad: int
     name: str
+    alt_names: str  # JSON array of alias strings from SatNOGS
     is_favorite: bool
     is_hidden: int  # 0=visible, 1=user-hidden, 2=system-hidden
     status: str
@@ -80,6 +81,12 @@ class _SatData(TypedDict):
 # Regular expression to extract AMSAT designators like AO-91, FO-29, CAS-4A
 # 2-4 character prefix + optional separator + 1-3 digit number + optional trailing character
 _DESIG_RE = re.compile(r"\b([A-Za-z]{2,4})[-\s]?(\d{1,3}[A-Za-z]?)\b")
+
+# Oscar designator prefixes (e.g. AO-7, FO-29, IO-86, RS-44)
+_OSCAR_RE = re.compile(
+    r"\b(?:AO|FO|SO|IO|RS|GO|JO|NO|UO|VO|LO|MO|PO|HO|BO|EO|KO|TO)-\d+[A-Z]?\b",
+    re.IGNORECASE,
+)
 
 
 def _extract_designators(name: str) -> set[str]:
@@ -445,7 +452,7 @@ class MainWindow(QMainWindow):
 
         rows = self._conn.execute(
             """
-            SELECT s.norad_cat_id, s.name, s.is_favorite, s.is_hidden, s.status,
+            SELECT s.norad_cat_id, s.name, s.alt_names, s.is_favorite, s.is_hidden, s.status,
                    COALESCE(t.tle_group, 'amateur') AS tle_group
             FROM satellites s
             LEFT JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id
@@ -477,6 +484,7 @@ class MainWindow(QMainWindow):
                 _SatData(
                     norad=norad,
                     name=name,
+                    alt_names=str(row["alt_names"] or "[]"),
                     is_favorite=bool(row["is_favorite"]),
                     is_hidden=int(row["is_hidden"] or 0),
                     status=str(row["status"] or "unknown"),
@@ -532,12 +540,29 @@ class MainWindow(QMainWindow):
                 continue
             if filter_text == "Operational (AMSAT)" and d["amsat_status"] != "operational":
                 continue
-            # Search filter (case-insensitive substring match)
+            # Search filter (case-insensitive substring match on name and alt_names)
             if search_query and search_query not in d["name"].lower():
-                continue
+                try:
+                    alts_lower = " ".join(json.loads(d["alt_names"])).lower()
+                except (json.JSONDecodeError, ValueError):
+                    alts_lower = ""
+                if search_query not in alts_lower:
+                    continue
 
             prefix = "★ " if d["is_favorite"] else ""
-            item = QListWidgetItem(prefix + d["name"])
+            # Append Oscar designator (e.g. "(IO-86)") when not already in the name
+            oscar_suffix = ""
+            try:
+                alt_list: list[str] = json.loads(d["alt_names"])
+            except (json.JSONDecodeError, ValueError):
+                alt_list = []
+            name_upper = d["name"].upper()
+            for alt in alt_list:
+                m = _OSCAR_RE.search(alt)
+                if m and m.group(0).upper() not in name_upper:
+                    oscar_suffix = f" ({m.group(0).upper()})"
+                    break
+            item = QListWidgetItem(prefix + d["name"] + oscar_suffix)
             item.setData(Qt.ItemDataRole.UserRole, d["norad"])
 
             amsat_status = d["amsat_status"]

@@ -7,6 +7,7 @@ Records with manual_override=True are not overwritten by SATNOGS sync.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import UTC, datetime
@@ -387,6 +388,13 @@ class TransmitterManager:
                     raw_status = str(sat.get("status", "unknown")).lower()
                     status = _SATNOGS_STATUS_MAP.get(raw_status, "unknown")
 
+                    # Parse alias names (e.g. "ORARI, IO-86, YB0X") into a JSON list
+                    names_raw = str(sat.get("names", "") or "").strip()
+                    alt_names_json = json.dumps(
+                        [n.strip() for n in names_raw.split(",") if n.strip()],
+                        ensure_ascii=False,
+                    )
+
                     # norad_follow_id differs from its own NORAD →
                     # this is a provisional-NORAD remnant satellite.
                     follow_raw = sat.get("norad_follow_id")
@@ -402,8 +410,9 @@ class TransmitterManager:
                         if is_remnant:
                             self._conn.execute(
                                 "UPDATE satellites SET name = ?, status = ?,"
-                                " is_hidden = 2, updated_at = ? WHERE norad_cat_id = ?",
-                                (name, status, now, norad),
+                                " alt_names = ?, is_hidden = 2, updated_at = ?"
+                                " WHERE norad_cat_id = ?",
+                                (name, status, alt_names_json, now, norad),
                             )
                             # Propagate status to the official NORAD if it is still 'unknown'
                             if norad_follow is not None and status in ("alive", "dead"):
@@ -414,9 +423,9 @@ class TransmitterManager:
                                 )
                         else:
                             self._conn.execute(
-                                "UPDATE satellites SET name = ?, status = ?, updated_at = ?"
-                                " WHERE norad_cat_id = ?",
-                                (name, status, now, norad),
+                                "UPDATE satellites SET name = ?, status = ?,"
+                                " alt_names = ?, updated_at = ? WHERE norad_cat_id = ?",
+                                (name, status, alt_names_json, now, norad),
                             )
                         stats["updated"] += 1
                     else:
