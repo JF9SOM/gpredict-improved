@@ -122,6 +122,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         "ALTER TABLE satellites ADD COLUMN is_favorite INTEGER DEFAULT 0",
         "ALTER TABLE satellites ADD COLUMN is_hidden INTEGER DEFAULT 0",
         "ALTER TABLE tle_data ADD COLUMN tle_group TEXT DEFAULT 'amateur'",
+        "ALTER TABLE satellites ADD COLUMN satnogs_uuid TEXT DEFAULT NULL",
     ]
     for stmt in migrations:
         with contextlib.suppress(Exception):

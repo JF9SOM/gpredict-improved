@@ -18,10 +18,12 @@ import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
-from PySide6.QtCore import QPoint, Qt, QTimer, Signal
+import httpx
+from PySide6.QtCore import QPoint, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
+    QDesktopServices,
     QFont,
     QPixmap,
 )
@@ -202,6 +204,9 @@ class MainWindow(QMainWindow):
     _rig_error: Signal = Signal(str)
     # Signal used to pass SATNOGS sync results from a background thread to the status bar.
     _satnogs_status: Signal = Signal(str)
+    # Signals used by the SatNOGS UUID background fetch to update the UI thread.
+    _satnogs_open_url: Signal = Signal(str)
+    _satnogs_not_found: Signal = Signal()
 
     def __init__(
         self,
@@ -265,6 +270,10 @@ class MainWindow(QMainWindow):
         self._satellite_list_refresh.connect(self._load_satellites)
         self._rig_error.connect(self._on_rig_error)
         self._satnogs_status.connect(self._on_satnogs_status)
+        self._satnogs_open_url.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
+        self._satnogs_not_found.connect(
+            lambda: QMessageBox.information(self, "SatNOGS", "SatNOGS page not found")
+        )
         self._radio_control.transmitter_changed.connect(self._on_transmitter_changed)
         self._radio_control.cycle_changed.connect(self._on_cycle_changed)
         self._radio_control.tune_requested.connect(self._on_tune_requested)
@@ -932,6 +941,7 @@ class MainWindow(QMainWindow):
         hide_label = _("Unhide Satellite") if is_hidden else _("Hide Satellite")
         hide_action = menu.addAction(hide_label)
         info_action = menu.addAction("Satellite Info...")
+        satnogs_action = menu.addAction("Open in SatNOGS")
 
         action = menu.exec(self._sat_list.mapToGlobal(pos))
         if action == fav_action:
@@ -940,6 +950,60 @@ class MainWindow(QMainWindow):
             self._set_hidden(norad, not is_hidden)
         elif action == info_action:
             self._show_sat_info(norad, name)
+        elif action == satnogs_action:
+            self._open_in_satnogs(norad, name)
+
+    def _open_in_satnogs(self, norad: int, name: str) -> None:
+        """Open the SatNOGS satellite page. Uses DB cache; fetches UUID in background if needed."""
+        row = self._conn.execute(
+            "SELECT satnogs_uuid FROM satellites WHERE norad_cat_id = ?",
+            (norad,),
+        ).fetchone()
+        cached = row["satnogs_uuid"] if row else None
+        if cached:
+            QDesktopServices.openUrl(QUrl(f"https://db.satnogs.org/satellite/{cached}"))
+            return
+        threading.Thread(
+            target=self._fetch_satnogs_uuid_bg,
+            args=(norad, name),
+            daemon=True,
+        ).start()
+
+    def _fetch_satnogs_uuid_bg(self, norad: int, name: str) -> None:
+        """Background thread: fetch SatNOGS UUID by NORAD, fall back to name search."""
+        _SATNOGS_SAT_API = "https://db.satnogs.org/api/satellites/"
+        sat_id: str | None = None
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                # Primary: look up by NORAD ID
+                r = client.get(_SATNOGS_SAT_API, params={"format": "json", "norad_cat_id": norad})
+                r.raise_for_status()
+                data = r.json()
+                results = data.get("results", data) if isinstance(data, dict) else data
+                if results:
+                    sat_id = str(results[0]["sat_id"])
+
+                # Fallback: search by satellite name
+                if not sat_id:
+                    r2 = client.get(_SATNOGS_SAT_API, params={"format": "json", "search": name})
+                    r2.raise_for_status()
+                    data2 = r2.json()
+                    results2 = data2.get("results", data2) if isinstance(data2, dict) else data2
+                    if results2:
+                        sat_id = str(results2[0]["sat_id"])
+        except Exception:
+            logger.exception("SatNOGS UUID fetch failed for NORAD %s / name %r", norad, name)
+
+        if sat_id:
+            with contextlib.suppress(Exception):
+                self._conn.execute(
+                    "UPDATE satellites SET satnogs_uuid = ? WHERE norad_cat_id = ?",
+                    (sat_id, norad),
+                )
+                self._conn.commit()
+            self._satnogs_open_url.emit(f"https://db.satnogs.org/satellite/{sat_id}")
+        else:
+            self._satnogs_not_found.emit()
 
     def _toggle_favorite(self, norad: int, favorite: bool) -> None:
         """Save the favorite state to the DB and reload the satellite list."""
