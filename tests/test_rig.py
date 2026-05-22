@@ -620,6 +620,59 @@ class TestHamlibNetController:
         assert ctrl.state == RigState.ERROR
         assert ctrl._sock is None
 
+    # -- queue_mode / _flush_pending_mode --
+
+    def test_queue_mode_stores_dl_ul_pending(self) -> None:
+        """queue_mode(dl, ul) は _pending_dl_mode / _pending_ul_mode にそれぞれ保存する。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl.queue_mode("USB", "LSB")
+        assert ctrl._pending_dl_mode == "USB"
+        assert ctrl._pending_ul_mode == "LSB"
+
+    def test_queue_mode_unknown_mode_not_stored(self) -> None:
+        """未知のモードは pending に保存されない。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl.queue_mode("UNKNOWN", "UNKNOWN")
+        assert ctrl._pending_dl_mode is None
+        assert ctrl._pending_ul_mode is None
+
+    def test_set_vfo_frequencies_flushes_pending_mode_before_freq(self) -> None:
+        """pending mode がある場合、V Main/M + V Sub/M を F/I より前に送る。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl.queue_mode("USB", "LSB")  # dl=USB (→ "USB"), ul=LSB (→ "LSB")
+        calls: list[bytes] = []
+        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
+        ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
+        sent = b"".join(calls)
+        assert b"V Main\n" in sent
+        assert b"M LSB 0\n" in sent  # ul_mode → rigctld LSB
+        assert b"V Sub\n" in sent
+        assert b"M USB 0\n" in sent  # dl_mode → rigctld USB
+        assert b"F 145000000\n" in sent
+        assert b"I 144000000\n" in sent
+        # Ordering: V Main before V Sub before first F/I
+        idx_v_main = sent.index(b"V Main\n")
+        idx_v_sub = sent.index(b"V Sub\n")
+        idx_f = sent.index(b"F 145000000\n")
+        assert idx_v_main < idx_v_sub < idx_f
+
+    def test_pending_modes_cleared_after_flush(self) -> None:
+        """フラッシュ後は _pending_dl_mode / _pending_ul_mode が None になる。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl.queue_mode("FM", "FM")
+        ctrl.set_vfo_frequencies(145_000_000.0, None)
+        assert ctrl._pending_dl_mode is None
+        assert ctrl._pending_ul_mode is None
+
+    def test_disconnect_clears_pending_modes(self) -> None:
+        """disconnect() で _pending_dl_mode / _pending_ul_mode がクリアされる。"""
+        ctrl = self._make_connected_ctrl()
+        ctrl._pending_dl_mode = "FM"
+        ctrl._pending_ul_mode = "FM"
+        ctrl.disconnect()
+        assert ctrl._pending_dl_mode is None
+        assert ctrl._pending_ul_mode is None
+
 
 # ---------------------------------------------------------------------------
 # HamlibRotatorController

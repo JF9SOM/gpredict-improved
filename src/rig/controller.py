@@ -244,14 +244,16 @@ class RigController(ABC):
             ok = self.set_frequency(vfob_hz, "VFOB") and ok
         return ok
 
-    def queue_mode(self, mode: str) -> None:
-        """Request a mode change on transponder switch or rig connect.
+    def queue_mode(self, dl_mode: str, ul_mode: str) -> None:
+        """Request DL/UL mode changes on transponder switch or rig connect.
 
-        Default: calls set_mode() immediately. Subclasses that share a socket
-        with set_vfo_frequencies() (e.g. HamlibNetController) should defer the
-        send to the next frequency update cycle to avoid VFO state disruption.
+        dl_mode: downlink mode (RX/Sub VFO)
+        ul_mode: uplink mode (TX/Main VFO); same as dl_mode for non-inverting transponders.
+        Default: calls set_mode() immediately for both VFOs.
+        Subclasses that share a socket with set_vfo_frequencies() should defer.
         """
-        self.set_mode(mode)
+        self.set_mode(dl_mode, vfo="Sub")
+        self.set_mode(ul_mode, vfo="Main")
 
     # -- Utilities --
 
@@ -555,9 +557,10 @@ class HamlibNetController(RigController):
         self._cached_model_name: str = ""  # fetched once on connect and cached
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
-        # Mode to send before the next set_vfo_frequencies() call.
-        # Deferred so that M and F/I share the same thread; avoids split-state disruption.
-        self._pending_mode: str | None = None
+        # DL/UL modes to send before the next set_vfo_frequencies() call.
+        # Deferred so that V/M and F/I share the same thread; avoids split-state disruption.
+        self._pending_dl_mode: str | None = None
+        self._pending_ul_mode: str | None = None
 
     # -- Connection management --
 
@@ -621,7 +624,8 @@ class HamlibNetController(RigController):
             self._sock = None
             self._last_dl_hz = None
             self._last_ul_hz = None
-            self._pending_mode = None
+            self._pending_dl_mode = None
+            self._pending_ul_mode = None
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -810,19 +814,14 @@ class HamlibNetController(RigController):
         if not self.is_connected:
             return False
 
-        # Flush pending mode before frequency updates.
-        # Sending M in the same thread/lock-sequence as F/I prevents split-state disruption
-        # that occurs when M is sent from a concurrent background thread.
-        if self._pending_mode is not None:
-            pending = self._pending_mode
-            self._pending_mode = None
-            hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(pending)
-            if hamlib_mode:
-                resp = self._cmd(f"M {hamlib_mode} 0")
-                if "RPRT 0" not in resp:
-                    raise RigControlError(f"set_mode({pending!r}) failed: {resp!r}")
-                with self._lock:
-                    self._freq_state.mode = pending
+        # Flush pending DL/UL modes before frequency updates.
+        # V/M in the same thread/lock-sequence as F/I prevents split-state disruption.
+        if self._pending_dl_mode is not None or self._pending_ul_mode is not None:
+            dl_mode = self._pending_dl_mode
+            ul_mode = self._pending_ul_mode
+            self._pending_dl_mode = None
+            self._pending_ul_mode = None
+            self._flush_pending_mode(dl_mode, ul_mode)
 
         send_rx = self._radio_type != "tx_only"
         send_tx = self._radio_type != "rx_only"
@@ -855,15 +854,43 @@ class HamlibNetController(RigController):
 
         return True
 
-    def queue_mode(self, mode: str) -> None:
-        """Store mode to be sent at the start of the next set_vfo_frequencies() call.
+    def queue_mode(self, dl_mode: str, ul_mode: str) -> None:
+        """Store DL/UL modes to send at the start of the next set_vfo_frequencies() call.
 
-        Defers M command until the Doppler cycle thread runs so that M and F/I are
-        serialised without a separate background thread or extra _cmd_lock contention.
+        Defers V/M commands until the Doppler cycle thread runs so they are serialised
+        with F/I without a separate background thread or extra _cmd_lock contention.
         Only modes present in _SATNOGS_TO_RIGCTLD_MODE are accepted.
         """
-        if mode in _SATNOGS_TO_RIGCTLD_MODE:
-            self._pending_mode = mode
+        if dl_mode in _SATNOGS_TO_RIGCTLD_MODE:
+            self._pending_dl_mode = dl_mode
+        if ul_mode in _SATNOGS_TO_RIGCTLD_MODE:
+            self._pending_ul_mode = ul_mode
+
+    def _flush_pending_mode(self, dl_mode: str | None, ul_mode: str | None) -> None:
+        """Send mode commands for both VFOs before the frequency update cycle.
+
+        Sequence: V Main → M ul_mode, then V Sub → M dl_mode.
+        Ending with Sub as the active VFO ensures subsequent F commands target the RX VFO.
+        Raises RigControlError on command failure.
+        """
+        if ul_mode is not None:
+            hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(ul_mode)
+            if hamlib_mode:
+                resp = self._cmd("V Main")
+                if "RPRT 0" not in resp:
+                    raise RigControlError(f"set_vfo(Main) failed: {resp!r}")
+                resp = self._cmd(f"M {hamlib_mode} 0")
+                if "RPRT 0" not in resp:
+                    raise RigControlError(f"set_mode({ul_mode!r}) on Main failed: {resp!r}")
+        if dl_mode is not None:
+            hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
+            if hamlib_mode:
+                resp = self._cmd("V Sub")
+                if "RPRT 0" not in resp:
+                    raise RigControlError(f"set_vfo(Sub) failed: {resp!r}")
+                resp = self._cmd(f"M {hamlib_mode} 0")
+                if "RPRT 0" not in resp:
+                    raise RigControlError(f"set_mode({dl_mode!r}) on Sub failed: {resp!r}")
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
         resp = self._cmd("f")
