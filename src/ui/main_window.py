@@ -82,9 +82,10 @@ class _SatData(TypedDict):
 # 2-4 character prefix + optional separator + 1-3 digit number + optional trailing character
 _DESIG_RE = re.compile(r"\b([A-Za-z]{2,4})[-\s]?(\d{1,3}[A-Za-z]?)\b")
 
-# Oscar designator prefixes (e.g. AO-7, FO-29, IO-86, RS-44)
+# Oscar designator prefixes (e.g. AO-7, FO-29, IO-86, QO-100, RS-44)
 _OSCAR_RE = re.compile(
-    r"\b(?:AO|FO|SO|IO|RS|GO|JO|NO|UO|VO|LO|MO|PO|HO|BO|EO|KO|TO)-\d+[A-Z]?\b",
+    r"\b(?:AO|BO|CO|DO|EO|FO|GO|HO|IO|JO|KO|LO|MO|NO|PO|QO|RS|SO|TO|UO|VO|XO|ZO)"
+    r"-\d+[A-Z]?\b",
     re.IGNORECASE,
 )
 
