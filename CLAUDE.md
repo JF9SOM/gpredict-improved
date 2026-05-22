@@ -412,6 +412,18 @@ test(rig): add coverage for VFO sequence and timeout handling
 - TLE計算・ドップラー計算は既知の値でリグレッションテスト
 - CI（GitHub Actions）でLinux/Windows/macOS全プラットフォームでテスト実行
 
+### ローカル実行の注意（GPD MicroPC2）
+
+**`pytest tests/` による全テスト一括実行はシステムをフリーズさせる可能性がある。**
+`test_main_window.py` の実行も同様にフリーズする。
+
+ローカルでは **`test_rig.py` のみ** を実行すること：
+```bash
+python -m pytest tests/test_rig.py -q 2>&1 | tail -5
+```
+
+`test_main_window.py` のテストは CI（GitHub Actions）で確認する。
+
 ---
 
 ## ビルド・配布

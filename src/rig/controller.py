@@ -627,38 +627,41 @@ class HamlibNetController(RigController):
 
     # -- Low-level communication --
 
-    def _cmd(self, command: str) -> str:
-        """Send a command to rigctld and return the response.
+    def _cmd_raw(self, command: str) -> str:
+        """Send a command and return the response. Caller MUST hold _cmd_lock.
 
         Reads until the RPRT line appears, which prevents response data from
         read commands (f/i, etc.) from lingering in the buffer and being
         misread as the next command's response.
-        _cmd_lock serialises send+recv to prevent misalignment across threads.
         On OSError, the socket is closed and the state transitions to DISCONNECTED.
         """
+        if self._sock is None:
+            return ""
+        try:
+            self._sock.sendall((command + "\n").encode())
+            data = b""
+            while True:
+                chunk = self._sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+                if b"RPRT" in data:
+                    break
+            return data.decode(errors="replace").strip()
+        except OSError as exc:
+            logger.error("RigNet._cmd(%r): %s", command, exc)
+            with contextlib.suppress(OSError):
+                if self._sock:
+                    self._sock.close()
+            self._sock = None
+            with self._lock:
+                self._state = RigState.DISCONNECTED
+            return ""
+
+    def _cmd(self, command: str) -> str:
+        """Send a command to rigctld and return the response (thread-safe)."""
         with self._cmd_lock:
-            if self._sock is None:
-                return ""
-            try:
-                self._sock.sendall((command + "\n").encode())
-                data = b""
-                while True:
-                    chunk = self._sock.recv(4096)
-                    if not chunk:
-                        break
-                    data += chunk
-                    if b"RPRT" in data:
-                        break
-                return data.decode(errors="replace").strip()
-            except OSError as exc:
-                logger.error("RigNet._cmd(%r): %s", command, exc)
-                with contextlib.suppress(OSError):
-                    if self._sock:
-                        self._sock.close()
-                self._sock = None
-                with self._lock:
-                    self._state = RigState.DISCONNECTED
-                return ""
+            return self._cmd_raw(command)
 
     def _fetch_model_name(self) -> str:
         """Fetch the model name once at connect time using the _ command.
@@ -695,15 +698,26 @@ class HamlibNetController(RigController):
                     self._sock.settimeout(prev_timeout)
 
     def _init_vfo(self) -> None:
-        """Enable split and set TX VFO to Main (called once at connect time).
+        """Enable split and apply any pending DL mode (called once at connect time).
 
-        Sequence observed from the original gpredict via tcpdump: S 1 Main.
+        Sequence: S 1 Main → (optional) M {mode} 0 if a DL mode is pending.
         Sent through _cmd() so _cmd_lock serialises it and prevents buffer
         residue from an independent recv loop on the raw socket.
         """
         resp = self._cmd("S 1 Main")
         if "RPRT 0" not in resp:
             logger.warning("RigNet: split setup returned %r", resp)
+        if self._pending_dl_mode is not None:
+            dl_mode = self._pending_dl_mode
+            self._pending_dl_mode = None
+            hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
+            if hamlib_mode:
+                resp = self._cmd(f"M {hamlib_mode} 0")
+                if "RPRT 0" not in resp:
+                    logger.warning("RigNet: mode setup returned %r", resp)
+                else:
+                    with self._lock:
+                        self._freq_state.mode = dl_mode
 
     # -- Internal utilities --
 
@@ -810,70 +824,63 @@ class HamlibNetController(RigController):
         if not self.is_connected:
             return False
 
-        # Flush pending DL mode before frequency updates.
-        # M in the same thread/lock-sequence as F/I prevents split-state disruption.
-        if self._pending_dl_mode is not None:
-            dl_mode = self._pending_dl_mode
-            self._pending_dl_mode = None
-            self._flush_pending_mode(dl_mode)
-
         send_rx = self._radio_type != "tx_only"
         send_tx = self._radio_type != "rx_only"
 
-        # RX cycle
-        if send_rx and vfoa_hz is not None:
-            last_dl = self._last_dl_hz
-            if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
-                logger.info("RigNet: sending F %d", int(vfoa_hz))
-                resp = self._cmd(f"F {int(vfoa_hz)}")
-                if "RPRT 0" not in resp:
-                    raise RigControlError(f"set RX freq failed: {resp!r}")
-                with self._lock:
-                    self._freq_state.freq_hz = vfoa_hz
-                self._last_dl_hz = vfoa_hz
+        with self._cmd_lock:
+            # RX cycle
+            if send_rx and vfoa_hz is not None:
+                last_dl = self._last_dl_hz
+                if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
+                    logger.info("RigNet: sending F %d", int(vfoa_hz))
+                    resp = self._cmd_raw(f"F {int(vfoa_hz)}")
+                    if "RPRT 0" not in resp:
+                        raise RigControlError(f"set RX freq failed: {resp!r}")
+                    with self._lock:
+                        self._freq_state.freq_hz = vfoa_hz
+                    self._last_dl_hz = vfoa_hz
 
-        # Skip TX if F caused an OSError and disconnected
-        if not self.is_connected:
-            return True
+            # Skip TX and mode if F caused an OSError and disconnected
+            if not self.is_connected:
+                return True
 
-        # TX cycle
-        if send_tx and vfob_hz is not None:
-            last_ul = self._last_ul_hz
-            if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
-                logger.info("RigNet: sending I %d", int(vfob_hz))
-                resp = self._cmd(f"I {int(vfob_hz)}")
-                if "RPRT 0" not in resp:
-                    raise RigControlError(f"set TX freq failed: {resp!r}")
-                self._last_ul_hz = vfob_hz
+            # TX cycle
+            if send_tx and vfob_hz is not None:
+                last_ul = self._last_ul_hz
+                if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
+                    logger.info("RigNet: sending I %d", int(vfob_hz))
+                    resp = self._cmd_raw(f"I {int(vfob_hz)}")
+                    if "RPRT 0" not in resp:
+                        raise RigControlError(f"set TX freq failed: {resp!r}")
+                    self._last_ul_hz = vfob_hz
+
+            # Send pending DL mode AFTER F/I within the same lock (no V commands).
+            # Sending M before F/I disrupts split state on the FTX-1F.
+            if self._pending_dl_mode is not None:
+                dl_mode = self._pending_dl_mode
+                self._pending_dl_mode = None
+                hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
+                if hamlib_mode:
+                    resp = self._cmd_raw(f"M {hamlib_mode} 0")
+                    if "RPRT 0" not in resp:
+                        raise RigControlError(f"set_mode({dl_mode!r}) failed: {resp!r}")
+                    with self._lock:
+                        self._freq_state.mode = dl_mode
 
         return True
 
     def queue_mode(self, dl_mode: str) -> None:
-        """Store DL mode to send at the start of the next set_vfo_frequencies() call.
+        """Store DL mode for dispatch at the next safe opportunity.
 
-        Defers M command until the Doppler cycle thread runs so it is serialised
-        with F/I without a separate background thread or extra _cmd_lock contention.
+        When disconnected: stored until connect() → _init_vfo() sends it
+        immediately after S 1 Main.
+        When connected: sent after the next F/I cycle in set_vfo_frequencies()
+        under a single _cmd_lock acquisition, ensuring M never precedes F/I.
+        No V command is used to avoid disrupting the split VFO state on the FTX-1F.
         Only modes present in _SATNOGS_TO_RIGCTLD_MODE are accepted.
-        V commands are intentionally avoided: they disrupt the active VFO state and
-        cause subsequent F commands to target the wrong VFO on the FTX-1F and similar rigs.
         """
         if dl_mode in _SATNOGS_TO_RIGCTLD_MODE:
             self._pending_dl_mode = dl_mode
-
-    def _flush_pending_mode(self, dl_mode: str) -> None:
-        """Send M {dl_mode} to the current active VFO (Sub/RX) without any V command.
-
-        No V command is sent: switching the active VFO disrupts split state on the FTX-1F,
-        causing subsequent F commands to target the wrong VFO.
-        Raises RigControlError on command failure.
-        """
-        hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
-        if hamlib_mode:
-            resp = self._cmd(f"M {hamlib_mode} 0")
-            if "RPRT 0" not in resp:
-                raise RigControlError(f"set_mode({dl_mode!r}) failed: {resp!r}")
-            with self._lock:
-                self._freq_state.mode = dl_mode
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
         resp = self._cmd("f")
