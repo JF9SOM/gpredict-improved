@@ -693,6 +693,76 @@ class TestHamlibNetController:
         ctrl.set_vfo_frequencies(145_000_000.0, None)
         assert ctrl._pending_dl_mode is None
 
+    # -- send_mode_only --
+
+    def test_send_mode_only_sends_v_main_m_v_sub_m(self) -> None:
+        """send_mode_only は独立ソケットで V Main → M → V Sub → M の順で送信する。"""
+        ctrl = self._make_ctrl()
+        sent: list[bytes] = []
+        mock_sock = MagicMock(spec=socket.socket)
+        mock_sock.recv.return_value = b"RPRT 0\n"
+        mock_sock.sendall.side_effect = lambda data: sent.append(data)
+        with patch("rig.controller.socket.socket", return_value=mock_sock):
+            ctrl.send_mode_only("FM")
+        data = b"".join(sent)
+        assert b"V Main\n" in data
+        assert b"M FM 0\n" in data
+        assert b"V Sub\n" in data
+        idx_vmain = data.index(b"V Main\n")
+        idx_vsub = data.index(b"V Sub\n")
+        assert idx_vmain < idx_vsub
+        assert data.index(b"V Main\n") < data.index(b"V Sub\n")
+
+    def test_send_mode_only_does_not_send_s1main(self) -> None:
+        """send_mode_only は S 1 Main を送信しない（split状態を壊さない）。"""
+        ctrl = self._make_ctrl()
+        sent: list[bytes] = []
+        mock_sock = MagicMock(spec=socket.socket)
+        mock_sock.recv.return_value = b"RPRT 0\n"
+        mock_sock.sendall.side_effect = lambda data: sent.append(data)
+        with patch("rig.controller.socket.socket", return_value=mock_sock):
+            ctrl.send_mode_only("USB")
+        data = b"".join(sent)
+        assert b"S 1 Main\n" not in data
+
+    def test_send_mode_only_unknown_mode_does_nothing(self) -> None:
+        """未知モードは何も送信しない。"""
+        ctrl = self._make_ctrl()
+        with patch("rig.controller.socket.socket") as mock_cls:
+            ctrl.send_mode_only("UNKNOWN")
+        mock_cls.assert_not_called()
+
+    def test_send_mode_only_ssb_maps_to_usb(self) -> None:
+        """SSB は rigctld の USB として送信される。"""
+        ctrl = self._make_ctrl()
+        sent: list[bytes] = []
+        mock_sock = MagicMock(spec=socket.socket)
+        mock_sock.recv.return_value = b"RPRT 0\n"
+        mock_sock.sendall.side_effect = lambda data: sent.append(data)
+        with patch("rig.controller.socket.socket", return_value=mock_sock):
+            ctrl.send_mode_only("SSB")
+        data = b"".join(sent)
+        assert b"M USB 0\n" in data
+
+    def test_send_mode_only_silently_ignores_oserror(self) -> None:
+        """OSError（接続失敗など）を無視して例外を送出しない。"""
+        ctrl = self._make_ctrl()
+        with patch("rig.controller.socket.socket") as mock_cls:
+            mock_cls.return_value.connect.side_effect = OSError("refused")
+            ctrl.send_mode_only("FM")  # must not raise
+
+    def test_send_mode_only_uses_independent_socket(self) -> None:
+        """send_mode_only は main の _sock を使わず独立したソケットを開く。"""
+        ctrl = self._make_connected_ctrl()
+        original_sock = ctrl._sock
+        # Create the new-socket mock before entering the patch block so that
+        # socket.socket is still the real class and spec= doesn't fail.
+        mock_new_sock = MagicMock(spec=socket.socket)
+        mock_new_sock.recv.return_value = b"RPRT 0\n"
+        with patch("rig.controller.socket.socket", return_value=mock_new_sock):
+            ctrl.send_mode_only("FM")
+        assert ctrl._sock is original_sock  # main socket unchanged
+
 
 # ---------------------------------------------------------------------------
 # HamlibRotatorController

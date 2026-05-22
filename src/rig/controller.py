@@ -245,6 +245,9 @@ class RigController(ABC):
         """
         self.set_mode(dl_mode)
 
+    def send_mode_only(self, mode: str) -> None:
+        """Set mode on both VFOs without affecting split state. No-op by default."""
+
     # -- Utilities --
 
     @abstractmethod
@@ -909,6 +912,34 @@ class HamlibNetController(RigController):
         """
         if dl_mode in _SATNOGS_TO_RIGCTLD_MODE:
             self._pending_dl_mode = dl_mode
+
+    def send_mode_only(self, mode: str) -> None:
+        """Set mode on both VFOs via an independent TCP connection.
+
+        Opens a new socket to rigctld (separate from the main tracking
+        connection), sends V Main → M {mode} 0 → V Sub → M {mode} 0,
+        then closes. Does not send S 1 Main so the split state of any
+        concurrent session is undisturbed.
+        Silently ignores all errors (best-effort).
+        """
+        rigctld_mode = _SATNOGS_TO_RIGCTLD_MODE.get(mode)
+        if not rigctld_mode:
+            return
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self._TIMEOUT)
+            sock.connect((self._host, self._port))
+            sock.sendall(b"V Main\n")
+            sock.recv(64)
+            sock.sendall(f"M {rigctld_mode} 0\n".encode())
+            sock.recv(64)
+            sock.sendall(b"V Sub\n")
+            sock.recv(64)
+            sock.sendall(f"M {rigctld_mode} 0\n".encode())
+            sock.recv(64)
+            sock.close()
+        except Exception:
+            pass
 
     def get_rig_info(self) -> RigInfo | None:
         if not self.is_connected:

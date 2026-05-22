@@ -1141,6 +1141,33 @@ class MainWindow(QMainWindow):
         else:
             self._radio_control.update_doppler(None, None, None, None, None, None)
         self._send_mode_to_rig()
+        self._send_mode_only_to_rig()
+
+    def _disconnect_rig(self) -> None:
+        """Disconnect the rig and refresh the UI status."""
+        if self._rig_controller is not None:
+            self._rig_controller.disconnect()
+        self._radio_control.refresh_status()
+
+    def _send_mode_only_to_rig(self) -> None:
+        """Set mode on both VFOs via an independent connection on transponder change.
+
+        When connected, disconnects first to prevent V commands in send_mode_only()
+        from racing with the Doppler cycle's F/I commands, then fires send_mode_only()
+        after a 300 ms delay via QTimer.
+        When not connected, calls send_mode_only() directly (it opens its own socket).
+        """
+        if self._rig_controller is None or self._current_transmitter is None:
+            return
+        mode = str(self._current_transmitter.get("mode") or "")
+        if not mode:
+            return
+        rig = self._rig_controller
+        if rig.is_connected:
+            self._disconnect_rig()
+            QTimer.singleShot(300, lambda: rig.send_mode_only(mode))
+        else:
+            rig.send_mode_only(mode)
 
     def _refresh_passes(self) -> None:
         """Fetch pass predictions for the selected satellite and update the pass list and chart."""
