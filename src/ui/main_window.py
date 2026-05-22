@@ -466,19 +466,33 @@ class MainWindow(QMainWindow):
         for row in rows:
             norad: int = int(row["norad_cat_id"])
             name: str = str(row["name"])
-            name_lower = name.lower()
 
-            amsat_status: str | None = amsat_map.get(name_lower)
-            if amsat_status is None:
-                for desig in _extract_designators(name):
+            # Parse alt_names once; used for both AMSAT matching and display
+            try:
+                alt_list: list[str] = json.loads(str(row["alt_names"] or "[]"))
+            except (json.JSONDecodeError, ValueError):
+                alt_list = []
+
+            # Match AMSAT status against primary name then each alt_name in order.
+            # This covers renamed satellites (e.g. DOSAAF-85 a.k.a. RS-44).
+            amsat_status: str | None = None
+            for candidate in [name, *alt_list]:
+                cand_lower = candidate.lower()
+                amsat_status = amsat_map.get(cand_lower)
+                if amsat_status is not None:
+                    break
+                for desig in _extract_designators(candidate):
                     if desig in designator_status:
                         amsat_status = designator_status[desig]
                         break
-            if amsat_status is None:
+                if amsat_status is not None:
+                    break
                 for amsat_key in amsat_keys_by_len:
-                    if _amsat_key_in_sat_name(amsat_key, name_lower):
+                    if _amsat_key_in_sat_name(amsat_key, cand_lower):
                         amsat_status = amsat_map[amsat_key]
                         break
+                if amsat_status is not None:
+                    break
 
             self._all_sat_data.append(
                 _SatData(
