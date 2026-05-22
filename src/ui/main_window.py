@@ -92,6 +92,16 @@ _SEND_MODE_KEYS: frozenset[str] = frozenset(
     {"FM", "USB", "SSB", "LSB", "CW", "CW-R", "BPSK", "AFSK"}
 )
 
+# Mode inversion table for inverting transponders (invert=True).
+# Downlink and uplink use opposite sidebands so that when the operator
+# tunes up on one VFO the other VFO moves in the opposite direction.
+_MODE_INVERT: dict[str, str] = {
+    "USB": "LSB",
+    "LSB": "USB",
+    "CW": "CW-R",
+    "CW-R": "CW",
+}
+
 
 # Oscar designator prefixes (e.g. AO-7, FO-29, IO-86, QO-100, RS-44)
 _OSCAR_RE = re.compile(
@@ -1152,22 +1162,26 @@ class MainWindow(QMainWindow):
     def _send_mode_only_to_rig(self) -> None:
         """Set mode on both VFOs via an independent connection on transponder change.
 
-        When connected, disconnects first to prevent V commands in send_mode_only()
-        from racing with the Doppler cycle's F/I commands, then fires send_mode_only()
-        after a 300 ms delay via QTimer.
-        When not connected, calls send_mode_only() directly (it opens its own socket).
+        Computes dl_mode / ul_mode from the current transponder, applying
+        _MODE_INVERT when invert=True (e.g. RS-44 USB↔LSB).
+
+        When connected, disconnects first so the Doppler cycle's F/I commands
+        cannot race with the V commands inside send_mode_only(), then calls
+        send_mode_only() immediately.  The user must reconnect manually.
+        When not connected, calls send_mode_only() directly.
         """
         if self._rig_controller is None or self._current_transmitter is None:
             return
         mode = str(self._current_transmitter.get("mode") or "")
         if not mode:
             return
+        invert = bool(self._current_transmitter.get("invert", False))
+        dl_mode = mode
+        ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         rig = self._rig_controller
         if rig.is_connected:
             self._disconnect_rig()
-            QTimer.singleShot(300, lambda: rig.send_mode_only(mode))
-        else:
-            rig.send_mode_only(mode)
+        rig.send_mode_only(dl_mode, ul_mode)
 
     def _refresh_passes(self) -> None:
         """Fetch pass predictions for the selected satellite and update the pass list and chart."""

@@ -245,7 +245,7 @@ class RigController(ABC):
         """
         self.set_mode(dl_mode)
 
-    def send_mode_only(self, mode: str) -> None:
+    def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
         """Set mode on both VFOs without affecting split state. No-op by default."""
 
     # -- Utilities --
@@ -913,30 +913,33 @@ class HamlibNetController(RigController):
         if dl_mode in _SATNOGS_TO_RIGCTLD_MODE:
             self._pending_dl_mode = dl_mode
 
-    def send_mode_only(self, mode: str) -> None:
+    def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
         """Set mode on both VFOs via an independent TCP connection.
 
         Opens a new socket to rigctld (separate from the main tracking
-        connection), sends V Main → M {mode} 0 → V Sub → M {mode} 0,
-        then closes. Does not send S 1 Main so the split state of any
-        concurrent session is undisturbed.
-        Silently ignores all errors (best-effort).
+        connection), sends V Main → M {ul_mode} 0 → V Sub → M {dl_mode} 0,
+        then closes. Main VFO = TX (uplink); Sub VFO = RX (downlink).
+        Does not send S 1 Main so the split state of any concurrent session
+        is undisturbed. Silently ignores all errors (best-effort).
         """
-        rigctld_mode = _SATNOGS_TO_RIGCTLD_MODE.get(mode)
-        if not rigctld_mode:
+        rigctld_ul = _SATNOGS_TO_RIGCTLD_MODE.get(ul_mode)
+        rigctld_dl = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
+        if not rigctld_ul and not rigctld_dl:
             return
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
             sock.connect((self._host, self._port))
-            sock.sendall(b"V Main\n")
-            sock.recv(64)
-            sock.sendall(f"M {rigctld_mode} 0\n".encode())
-            sock.recv(64)
-            sock.sendall(b"V Sub\n")
-            sock.recv(64)
-            sock.sendall(f"M {rigctld_mode} 0\n".encode())
-            sock.recv(64)
+            if rigctld_ul:
+                sock.sendall(b"V Main\n")
+                sock.recv(64)
+                sock.sendall(f"M {rigctld_ul} 0\n".encode())
+                sock.recv(64)
+            if rigctld_dl:
+                sock.sendall(b"V Sub\n")
+                sock.recv(64)
+                sock.sendall(f"M {rigctld_dl} 0\n".encode())
+                sock.recv(64)
             sock.close()
         except Exception:
             pass

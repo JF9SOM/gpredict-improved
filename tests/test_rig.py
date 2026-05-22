@@ -695,23 +695,43 @@ class TestHamlibNetController:
 
     # -- send_mode_only --
 
-    def test_send_mode_only_sends_v_main_m_v_sub_m(self) -> None:
-        """send_mode_only は独立ソケットで V Main → M → V Sub → M の順で送信する。"""
+    def test_send_mode_only_sends_v_main_ul_v_sub_dl(self) -> None:
+        """send_mode_only は V Main → M {ul} 0 → V Sub → M {dl} 0 の順で送信する。"""
         ctrl = self._make_ctrl()
         sent: list[bytes] = []
         mock_sock = MagicMock(spec=socket.socket)
         mock_sock.recv.return_value = b"RPRT 0\n"
         mock_sock.sendall.side_effect = lambda data: sent.append(data)
         with patch("rig.controller.socket.socket", return_value=mock_sock):
-            ctrl.send_mode_only("FM")
+            ctrl.send_mode_only("FM", "FM")
         data = b"".join(sent)
         assert b"V Main\n" in data
         assert b"M FM 0\n" in data
         assert b"V Sub\n" in data
-        idx_vmain = data.index(b"V Main\n")
-        idx_vsub = data.index(b"V Sub\n")
-        assert idx_vmain < idx_vsub
         assert data.index(b"V Main\n") < data.index(b"V Sub\n")
+
+    def test_send_mode_only_invert_usb_dl_lsb_ul(self) -> None:
+        """invert=True の場合: dl=USB (Sub) / ul=LSB (Main) が正しく送られる。"""
+        ctrl = self._make_ctrl()
+        sent: list[bytes] = []
+        mock_sock = MagicMock(spec=socket.socket)
+        mock_sock.recv.return_value = b"RPRT 0\n"
+        mock_sock.sendall.side_effect = lambda data: sent.append(data)
+        with patch("rig.controller.socket.socket", return_value=mock_sock):
+            ctrl.send_mode_only("USB", "LSB")  # dl=USB, ul=LSB (RS-44 style)
+        data = b"".join(sent)
+        # V Main must precede M LSB 0 (uplink)
+        assert b"V Main\n" in data
+        assert b"M LSB 0\n" in data
+        idx_vmain = data.index(b"V Main\n")
+        idx_lsb = data.index(b"M LSB 0\n")
+        assert idx_vmain < idx_lsb
+        # V Sub must precede M USB 0 (downlink)
+        assert b"V Sub\n" in data
+        assert b"M USB 0\n" in data
+        idx_vsub = data.index(b"V Sub\n")
+        idx_usb = data.index(b"M USB 0\n")
+        assert idx_vsub < idx_usb
 
     def test_send_mode_only_does_not_send_s1main(self) -> None:
         """send_mode_only は S 1 Main を送信しない（split状態を壊さない）。"""
@@ -721,15 +741,15 @@ class TestHamlibNetController:
         mock_sock.recv.return_value = b"RPRT 0\n"
         mock_sock.sendall.side_effect = lambda data: sent.append(data)
         with patch("rig.controller.socket.socket", return_value=mock_sock):
-            ctrl.send_mode_only("USB")
+            ctrl.send_mode_only("USB", "USB")
         data = b"".join(sent)
         assert b"S 1 Main\n" not in data
 
     def test_send_mode_only_unknown_mode_does_nothing(self) -> None:
-        """未知モードは何も送信しない。"""
+        """両モードが未知のとき何も送信しない。"""
         ctrl = self._make_ctrl()
         with patch("rig.controller.socket.socket") as mock_cls:
-            ctrl.send_mode_only("UNKNOWN")
+            ctrl.send_mode_only("UNKNOWN", "UNKNOWN")
         mock_cls.assert_not_called()
 
     def test_send_mode_only_ssb_maps_to_usb(self) -> None:
@@ -740,7 +760,7 @@ class TestHamlibNetController:
         mock_sock.recv.return_value = b"RPRT 0\n"
         mock_sock.sendall.side_effect = lambda data: sent.append(data)
         with patch("rig.controller.socket.socket", return_value=mock_sock):
-            ctrl.send_mode_only("SSB")
+            ctrl.send_mode_only("SSB", "SSB")
         data = b"".join(sent)
         assert b"M USB 0\n" in data
 
@@ -749,7 +769,7 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         with patch("rig.controller.socket.socket") as mock_cls:
             mock_cls.return_value.connect.side_effect = OSError("refused")
-            ctrl.send_mode_only("FM")  # must not raise
+            ctrl.send_mode_only("FM", "FM")  # must not raise
 
     def test_send_mode_only_uses_independent_socket(self) -> None:
         """send_mode_only は main の _sock を使わず独立したソケットを開く。"""
@@ -760,7 +780,7 @@ class TestHamlibNetController:
         mock_new_sock = MagicMock(spec=socket.socket)
         mock_new_sock.recv.return_value = b"RPRT 0\n"
         with patch("rig.controller.socket.socket", return_value=mock_new_sock):
-            ctrl.send_mode_only("FM")
+            ctrl.send_mode_only("FM", "FM")
         assert ctrl._sock is original_sock  # main socket unchanged
 
 
