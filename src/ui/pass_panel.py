@@ -1,9 +1,9 @@
 """
-パス予測パネル (タブ構成)
+Pass prediction panel (tabbed layout)
 
-PassPanel          — Upcoming Passes パネル（Target / Group の 2 タブ）
-_GroupSearchWorker — Group 検索バックグラウンドスレッド
-GroupPassResult    — Group 検索結果 1 件
+PassPanel          — Upcoming Passes panel (2 tabs: Target / Group)
+_GroupSearchWorker — background thread for Group search
+GroupPassResult    — single Group search result
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from ui.pass_chart import QUALITY_COLORS, pass_quality
 
 
 def _dt_to_qdatetime(dt: datetime) -> QDateTime:
-    """Python datetime (UTC) を QDateTime (UTC spec) に変換する。"""
+    """Convert a Python datetime (UTC) to a QDateTime (UTC spec)."""
     return QDateTime(
         QDate(dt.year, dt.month, dt.day),
         QTime(dt.hour, dt.minute, dt.second),
@@ -47,7 +47,7 @@ def _dt_to_qdatetime(dt: datetime) -> QDateTime:
 
 
 def _qdatetime_to_dt(qdt: QDateTime) -> datetime:
-    """QDateTime を Python datetime (UTC) に変換する。"""
+    """Convert a QDateTime to a Python datetime (UTC)."""
     utc = qdt.toUTC()
     d = utc.date()
     t = utc.time()
@@ -56,7 +56,7 @@ def _qdatetime_to_dt(qdt: QDateTime) -> datetime:
 
 @dataclass
 class GroupPassResult:
-    """Group タブの検索結果 1 件。"""
+    """A single search result on the Group tab."""
 
     norad_cat_id: int
     sat_name: str
@@ -67,7 +67,7 @@ _CacheKey = tuple[datetime, datetime, float, tuple[int, ...]]
 
 
 class _GroupSearchWorker(QThread):
-    """グループ衛星パス検索をバックグラウンドで実行するワーカー。"""
+    """Worker that runs a group satellite pass search in the background."""
 
     progress: Signal = Signal(int)
     finished_results: Signal = Signal(object)
@@ -90,7 +90,7 @@ class _GroupSearchWorker(QThread):
         self._cancelled = False
 
     def cancel(self) -> None:
-        """キャンセルフラグを立てる（次のイテレーションで停止）。"""
+        """Set the cancel flag (stops at the next iteration)."""
         self._cancelled = True
 
     def run(self) -> None:
@@ -113,7 +113,7 @@ class _GroupSearchWorker(QThread):
 
 
 def _make_dt_edit() -> QDateTimeEdit:
-    """カレンダーポップアップ付き UTC 表示の QDateTimeEdit を返す。"""
+    """Return a QDateTimeEdit with a calendar popup displaying UTC."""
     edit = QDateTimeEdit()
     edit.setCalendarPopup(True)
     edit.setDisplayFormat("yyyy-MM-dd HH:mm")
@@ -122,10 +122,10 @@ def _make_dt_edit() -> QDateTimeEdit:
 
 class PassPanel(QWidget):
     """
-    Upcoming Passes パネル（2 タブ構成）。
+    Upcoming Passes panel (2-tab layout).
 
-    Tab 1 "Target" — 選択衛星のパス一覧（日時範囲・クイックボタン・Search）
-    Tab 2 "Group"  — フィルター済み全衛星のパス一覧（バックグラウンド・CSV出力）
+    Tab 1 "Target" — pass list for the selected satellite (date/time range, quick buttons, Search)
+    Tab 2 "Group"  — pass list for all filtered satellites (background search, CSV export)
     """
 
     pass_selected: Signal = Signal(object)  # PassInfo
@@ -164,7 +164,7 @@ class PassPanel(QWidget):
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
-    # UI 構築
+    # UI construction
     # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
@@ -186,7 +186,7 @@ class PassPanel(QWidget):
         vbox.setContentsMargins(2, 2, 2, 2)
         vbox.setSpacing(2)
 
-        # 日時範囲行
+        # Date/time range row
         dr = QHBoxLayout()
         dr.addWidget(QLabel(_("From:")))
         self._target_from = _make_dt_edit()
@@ -198,7 +198,7 @@ class PassPanel(QWidget):
         dr.addStretch()
         vbox.addLayout(dr)
 
-        # クイックボタン + Search 行
+        # Quick buttons + Search row
         qr = QHBoxLayout()
         for label, hours in (("+ 6h", 6), ("+24h", 24), ("+ 3d", 72), ("+ 7d", 168), ("+30d", 720)):
             btn = QPushButton(label)
@@ -211,7 +211,7 @@ class PassPanel(QWidget):
         qr.addWidget(search_btn)
         vbox.addLayout(qr)
 
-        # テーブル
+        # Table
         self._target_table = QTableWidget(0, len(self._TARGET_COLS))
         self._target_table.setHorizontalHeaderLabels(list(self._TARGET_COLS))
         self._target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -231,7 +231,7 @@ class PassPanel(QWidget):
         vbox.setContentsMargins(2, 2, 2, 2)
         vbox.setSpacing(2)
 
-        # 日時範囲 + Min El 行
+        # Date/time range + Min El row
         dr = QHBoxLayout()
         dr.addWidget(QLabel(_("From:")))
         self._group_from = _make_dt_edit()
@@ -250,7 +250,7 @@ class PassPanel(QWidget):
         dr.addStretch()
         vbox.addLayout(dr)
 
-        # クイックボタン + Search + Cancel 行
+        # Quick buttons + Search + Cancel row
         qr = QHBoxLayout()
         for label, hours in (("+ 6h", 6), ("+24h", 24), ("+ 3d", 72), ("+ 7d", 168), ("+30d", 720)):
             btn = QPushButton(label)
@@ -267,13 +267,13 @@ class PassPanel(QWidget):
         qr.addWidget(self._group_cancel_btn)
         vbox.addLayout(qr)
 
-        # プログレスバー
+        # Progress bar
         self._group_progress = QProgressBar()
         self._group_progress.setRange(0, 100)
         self._group_progress.setVisible(False)
         vbox.addWidget(self._group_progress)
 
-        # テーブル
+        # Table
         self._group_table = QTableWidget(0, len(self._GROUP_COLS))
         self._group_table.setHorizontalHeaderLabels(list(self._GROUP_COLS))
         self._group_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -285,7 +285,7 @@ class PassPanel(QWidget):
         self._group_table.itemSelectionChanged.connect(self._on_group_selection_changed)
         vbox.addWidget(self._group_table)
 
-        # ページネーション + CSV エクスポート行
+        # Pagination + CSV export row
         pr = QHBoxLayout()
         self._prev_btn = QPushButton("← " + _("Prev"))
         self._prev_btn.clicked.connect(self._on_prev_page)
@@ -305,7 +305,7 @@ class PassPanel(QWidget):
         return w
 
     # ------------------------------------------------------------------ #
-    # ヘルパー
+    # Helpers
     # ------------------------------------------------------------------ #
 
     def _reset_target_datetimes(self) -> None:
@@ -362,7 +362,7 @@ class PassPanel(QWidget):
         self._next_btn.setEnabled(end < len(self._group_results))
 
     # ------------------------------------------------------------------ #
-    # コールバック — Target タブ
+    # Callbacks — Target tab
     # ------------------------------------------------------------------ #
 
     def _on_target_quick(self, hours: int) -> None:
@@ -383,7 +383,7 @@ class PassPanel(QWidget):
             self.pass_selected.emit(self._passes[row])
 
     # ------------------------------------------------------------------ #
-    # コールバック — Group タブ
+    # Callbacks — Group tab
     # ------------------------------------------------------------------ #
 
     def _on_group_quick(self, hours: int) -> None:
@@ -512,31 +512,31 @@ class PassPanel(QWidget):
             QMessageBox.warning(self, _("Export Error"), str(exc))
 
     # ------------------------------------------------------------------ #
-    # 公開 API
+    # Public API
     # ------------------------------------------------------------------ #
 
     def set_passes(self, passes: list[PassInfo]) -> None:
-        """Target タブのパス一覧を設定する（外部から直接指定する場合）。"""
+        """Set the pass list on the Target tab (called directly from outside)."""
         self._passes = passes
         self._populate_target_table(passes)
 
     def clear(self) -> None:
-        """Target タブのパス一覧をクリアする。"""
+        """Clear the pass list on the Target tab."""
         self._passes = []
         self._target_table.setRowCount(0)
 
     def set_pass_predictor(self, predictor: PassPredictor | None) -> None:
-        """Group タブの検索に使用するパス予測器を設定する。"""
+        """Set the pass predictor used by the Group tab search."""
         self._predictor = predictor
 
     def set_satellites(self, sat_list: list[tuple[int, str]]) -> None:
-        """Group タブの検索対象衛星リストを設定する。フィルター変更時に呼ぶ。"""
+        """Set the satellite list for the Group tab search. Call on filter change."""
         self._sat_list = sat_list
-        # 衛星リストが変わったのでキャッシュを無効化する
+        # Invalidate the cache because the satellite list has changed
         self._cache_key = None
         self._cache_results = []
 
-    # mypy が ANN メソッドを検出するため Any を明示的に使用する箇所
+    # Any is used explicitly here so that mypy does not flag ANN methods
     @staticmethod
     def _noop(*_args: Any) -> None:  # noqa: ANN401
         pass

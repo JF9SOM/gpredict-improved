@@ -1,5 +1,5 @@
 """
-UI モジュール — PySide6 Qt6 デスクトップ GUI コンポーネント
+UI module — PySide6 Qt6 desktop GUI components
 
-PassChartView — パス予測グラフィカル表示ウィジェット（QtCharts）
+PassChartView — graphical pass prediction display widget (QtCharts)
 """

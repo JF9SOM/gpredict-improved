@@ -1,11 +1,11 @@
 """
-衛星追尾コアエンジン
+Satellite tracking core engine
 
-SatelliteEngine  — Skyfieldを使ったリアルタイム仰角・方位角・距離・速度計算
-PassPredictor    — 指定期間のAOS/TCA/LOS予測
-DopplerCalculator — ドップラー補正（反転トランスポンダ対応）
+SatelliteEngine   — Real-time elevation, azimuth, range, and velocity calculation using Skyfield
+PassPredictor     — AOS/TCA/LOS prediction for a given time window
+DopplerCalculator — Doppler correction (supports inverting transponders)
 
-Qt UIとFastAPI WebSocketの両方から呼ばれるため、スレッドセーフに設計する。
+Designed to be thread-safe because it is called from both the Qt UI and the FastAPI WebSocket.
 """
 
 from __future__ import annotations
@@ -21,49 +21,49 @@ from skyfield.api import EarthSatellite, Time, load, wgs84
 if TYPE_CHECKING:
     from data.tle_manager import TLEManager
 
-# 光速 km/s
+# Speed of light in km/s
 _C_KM_S: float = 299_792.458
 
 
 # ---------------------------------------------------------------------------
-# データクラス（計算結果の型）
+# Data classes (types for calculation results)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Observation:
-    """ある瞬間の衛星観測値"""
+    """Satellite observation at a given instant"""
 
     norad_cat_id: int
     timestamp: datetime  # UTC
-    elevation_deg: float  # 仰角 (度)
-    azimuth_deg: float  # 方位角 (度、北=0、東=90)
-    range_km: float  # 距離 (km)
-    range_rate_km_s: float  # 視線方向速度 (km/s、正=離遠、負=接近)
-    is_above_horizon: bool  # 地平線より上か
+    elevation_deg: float  # Elevation angle (degrees)
+    azimuth_deg: float  # Azimuth angle (degrees, north=0, east=90)
+    range_km: float  # Range (km)
+    range_rate_km_s: float  # Line-of-sight velocity (km/s, positive=receding, negative=approaching)
+    is_above_horizon: bool  # Whether the satellite is above the horizon
 
 
 @dataclass(frozen=True)
 class PassInfo:
-    """1回の衛星パス情報"""
+    """Information for a single satellite pass"""
 
     norad_cat_id: int
     aos: datetime  # Acquisition of Signal (UTC)
     tca: datetime  # Time of Closest Approach (UTC)
     los: datetime  # Loss of Signal (UTC)
-    max_elevation_deg: float  # TCA時の最大仰角 (度)
-    aos_azimuth_deg: float  # AOS時の方位角
-    los_azimuth_deg: float  # LOS時の方位角
-    duration_s: float  # パス継続時間 (秒)
+    max_elevation_deg: float  # Maximum elevation at TCA (degrees)
+    aos_azimuth_deg: float  # Azimuth at AOS
+    los_azimuth_deg: float  # Azimuth at LOS
+    duration_s: float  # Pass duration (seconds)
 
 
 @dataclass(frozen=True)
 class DopplerCorrection:
-    """ドップラー補正結果"""
+    """Doppler correction result"""
 
-    downlink_hz: float  # 補正後ダウンリンク周波数 (Hz)
-    uplink_hz: float | None  # 補正後アップリンク周波数 (Hz)、受信専用ならNone
-    downlink_shift_hz: float  # ドップラーシフト量 (Hz)
+    downlink_hz: float  # Corrected downlink frequency (Hz)
+    uplink_hz: float | None  # Corrected uplink frequency (Hz); None for receive-only
+    downlink_shift_hz: float  # Doppler shift amount (Hz)
     uplink_shift_hz: float | None
 
 
@@ -74,11 +74,11 @@ class DopplerCorrection:
 
 class SatelliteEngine:
     """
-    Skyfieldラッパー。地上局座標を基準に衛星の観測値をリアルタイム計算する。
+    Skyfield wrapper. Computes real-time satellite observations relative to the ground station.
 
-    EarthSatelliteオブジェクトはLRUキャッシュで保持し、スレッドセーフに管理する。
-    計算メソッドはすべて読み取り専用なのでGILの範囲内で安全に並行実行できるが、
-    キャッシュへの書き込みは明示的なロックで保護する。
+    EarthSatellite objects are kept in an LRU cache and managed in a thread-safe way.
+    All computation methods are read-only and can be safely run concurrently within the GIL,
+    but writes to the cache are protected by an explicit lock.
     """
 
     def __init__(
@@ -90,21 +90,21 @@ class SatelliteEngine:
     ) -> None:
         """
         Args:
-            tle_manager: TLEデータソース
-            latitude_deg: 地上局緯度 (度、北緯正)
-            longitude_deg: 地上局経度 (度、東経正)
-            elevation_m: 地上局標高 (m)
+            tle_manager: TLE data source
+            latitude_deg: Ground station latitude (degrees, positive north)
+            longitude_deg: Ground station longitude (degrees, positive east)
+            elevation_m: Ground station elevation (m)
         """
         self._tle_manager = tle_manager
         self._ts = load.timescale()
         self._ground_station = wgs84.latlon(latitude_deg, longitude_deg, elevation_m)
 
-        # norad_cat_id → EarthSatellite のキャッシュ（ロック保護）
+        # Cache of norad_cat_id → EarthSatellite (protected by lock)
         self._sat_cache: dict[int, EarthSatellite] = {}
         self._cache_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
-    # 公開API
+    # Public API
     # ------------------------------------------------------------------ #
 
     def observe(
@@ -113,14 +113,14 @@ class SatelliteEngine:
         at: datetime | None = None,
     ) -> Observation | None:
         """
-        指定衛星の現在（またはat時刻）の観測値を返す。
+        Return the current (or at a given time) observation for the specified satellite.
 
         Args:
-            norad_cat_id: NORAD衛星番号
-            at: 計算基準時刻（UTC）。Noneなら現在時刻。
+            norad_cat_id: NORAD satellite number
+            at: Reference time (UTC). Uses current time if None.
 
         Returns:
-            Observation。TLEが存在しない場合はNone。
+            Observation, or None if the TLE does not exist.
         """
         sat = self._get_satellite(norad_cat_id)
         if sat is None:
@@ -147,7 +147,7 @@ class SatelliteEngine:
         norad_cat_ids: list[int],
         at: datetime | None = None,
     ) -> dict[int, Observation]:
-        """複数衛星の観測値を一括取得する。存在しないIDはスキップ。"""
+        """Fetch observations for multiple satellites at once. IDs with no TLE are skipped."""
         result: dict[int, Observation] = {}
         for norad in norad_cat_ids:
             obs = self.observe(norad, at)
@@ -161,14 +161,14 @@ class SatelliteEngine:
         at: datetime | None = None,
     ) -> tuple[float, float] | None:
         """
-        衛星の直下点（緯度・経度）を返す。
+        Return the satellite's sub-satellite point (latitude, longitude).
 
         Args:
-            norad_cat_id: NORAD 衛星番号
-            at: 計算基準時刻（UTC）。None なら現在時刻。
+            norad_cat_id: NORAD satellite number
+            at: Reference time (UTC). Uses current time if None.
 
         Returns:
-            (latitude_deg, longitude_deg)。TLE が存在しない場合は None。
+            (latitude_deg, longitude_deg), or None if the TLE does not exist.
         """
         sat = self._get_satellite(norad_cat_id)
         if sat is None:
@@ -183,14 +183,14 @@ class SatelliteEngine:
         norad_cat_id: int,
         at: datetime | None = None,
     ) -> tuple[float, float, float] | None:
-        """衛星の直下点（緯度・経度・高度 km）を返す。
+        """Return the satellite's sub-satellite point (latitude, longitude, altitude km).
 
         Args:
-            norad_cat_id: NORAD 衛星番号
-            at: 計算基準時刻（UTC）。None なら現在時刻。
+            norad_cat_id: NORAD satellite number
+            at: Reference time (UTC). Uses current time if None.
 
         Returns:
-            (latitude_deg, longitude_deg, altitude_km)。TLE が存在しない場合は None。
+            (latitude_deg, longitude_deg, altitude_km), or None if the TLE does not exist.
         """
         sat = self._get_satellite(norad_cat_id)
         if sat is None:
@@ -209,7 +209,7 @@ class SatelliteEngine:
         norad_cat_ids: list[int],
         at: datetime | None = None,
     ) -> dict[int, tuple[float, float]]:
-        """複数衛星の直下点を一括取得する。TLE が存在しない衛星はスキップ。"""
+        """Fetch sub-satellite points for multiple satellites at once. Satellites without TLE are skipped."""
         result: dict[int, tuple[float, float]] = {}
         for norad in norad_cat_ids:
             sp = self.subpoint(norad, at)
@@ -218,7 +218,7 @@ class SatelliteEngine:
         return result
 
     def invalidate_cache(self, norad_cat_id: int | None = None) -> None:
-        """TLE更新後にキャッシュをクリアする。Noneで全件クリア。"""
+        """Clear the cache after a TLE update. Pass None to clear all entries."""
         with self._cache_lock:
             if norad_cat_id is None:
                 self._sat_cache.clear()
@@ -231,12 +231,12 @@ class SatelliteEngine:
         longitude_deg: float,
         elevation_m: float = 0.0,
     ) -> None:
-        """観測地点を更新する（QTH変更時に呼ぶ）。"""
+        """Update the observer location (call when QTH changes)."""
         with self._cache_lock:
             self._ground_station = wgs84.latlon(latitude_deg, longitude_deg, elevation_m)
 
     # ------------------------------------------------------------------ #
-    # 内部ユーティリティ
+    # Internal utilities
     # ------------------------------------------------------------------ #
 
     def _get_satellite(self, norad_cat_id: int) -> EarthSatellite | None:
@@ -261,7 +261,7 @@ class SatelliteEngine:
 
     @staticmethod
     def _calc_range_rate(topo: Any) -> float:
-        """視線方向速度 (km/s) を計算する。正値=離遠、負値=接近。"""
+        """Compute line-of-sight velocity (km/s). Positive = receding, negative = approaching."""
         pos = topo.position.km
         vel = topo.velocity.km_per_s
         range_km = float(np.linalg.norm(pos))
@@ -277,10 +277,10 @@ class SatelliteEngine:
 
 class PassPredictor:
     """
-    指定期間内のAOS/TCA/LOSを予測するクラス。
+    Predicts AOS/TCA/LOS within a given time window.
 
-    Skyfieldの find_events() を使い、イベントをパス単位にグループ化する。
-    スレッドセーフ（内部状態を変更するメソッドなし）。
+    Uses Skyfield's find_events() and groups events into individual passes.
+    Thread-safe (no methods that mutate internal state).
     """
 
     def __init__(
@@ -301,7 +301,7 @@ class PassPredictor:
         longitude_deg: float,
         elevation_m: float = 0.0,
     ) -> None:
-        """観測地点を更新する（QTH変更時に呼ぶ）。"""
+        """Update the observer location (call when QTH changes)."""
         self._ground_station = wgs84.latlon(latitude_deg, longitude_deg, elevation_m)
         self._engine.update_observer(latitude_deg, longitude_deg, elevation_m)
 
@@ -313,16 +313,16 @@ class PassPredictor:
         min_elevation_deg: float = 5.0,
     ) -> list[PassInfo]:
         """
-        指定期間内のパス一覧を返す。
+        Return the list of passes within the given time window.
 
         Args:
-            norad_cat_id: NORAD衛星番号
-            start: 検索開始時刻 (UTC)
-            end: 検索終了時刻 (UTC)
-            min_elevation_deg: この仰角以上のパスのみ返す (デフォルト5度)
+            norad_cat_id: NORAD satellite number
+            start: Search start time (UTC)
+            end: Search end time (UTC)
+            min_elevation_deg: Only return passes above this elevation (default 5 degrees)
 
         Returns:
-            PassInfoのリスト（AOS昇順）。TLEが存在しない場合は空リスト。
+            List of PassInfo sorted by AOS ascending. Empty list if TLE does not exist.
         """
         sat = self._engine._get_satellite(norad_cat_id)
         if sat is None:
@@ -344,7 +344,7 @@ class PassPredictor:
         return self._group_events(norad_cat_id, sat, times, events)
 
     # ------------------------------------------------------------------ #
-    # 内部処理
+    # Internal processing
     # ------------------------------------------------------------------ #
 
     def _group_events(
@@ -354,10 +354,10 @@ class PassPredictor:
         times: object,
         events: object,
     ) -> list[PassInfo]:
-        """AOS(0)/TCA(1)/LOS(2) のイベント列をパス単位に纏める。"""
+        """Group a sequence of AOS(0)/TCA(1)/LOS(2) events into individual passes."""
         passes: list[PassInfo] = []
-        # Skyfield は AOS→TCA→LOS の順に並んでいることが保証されている
-        # ただし先頭がTCA/LOSになる場合（検索開始時点で既に可視）もある
+        # Skyfield guarantees events are ordered AOS→TCA→LOS
+        # However the sequence may start with TCA/LOS if the satellite is already visible at search start
         pending: dict[str, object] = {}
 
         times_list = list(times)  # type: ignore[call-overload]
@@ -368,7 +368,7 @@ class PassPredictor:
                 pending = {"aos": t}
             elif ev == 1 and "aos" in pending:  # TCA
                 pending["tca"] = t
-            elif ev == 2 and "tca" in pending:  # LOS — 1パス完成
+            elif ev == 2 and "tca" in pending:  # LOS — one pass complete
                 pending["los"] = t
                 info = self._build_pass_info(norad_cat_id, sat, pending)
                 if info is not None:
@@ -426,24 +426,24 @@ class PassPredictor:
 
 class DopplerCalculator:
     """
-    ドップラーシフト計算クラス。
+    Doppler shift calculator.
 
-    衛星の視線方向速度 (range_rate_km_s) から周波数補正量を算出する。
-    反転トランスポンダ（invert=True）ではアップリンクの補正方向が逆になる。
+    Computes frequency corrections from the satellite's line-of-sight velocity (range_rate_km_s).
+    For inverting transponders (invert=True), the uplink correction direction is reversed.
 
-    物理モデル:
+    Physical model:
         f_received = f_nominal * (1 - range_rate / c)
         shift_hz   = -f_nominal * range_rate / c
-        (range_rate > 0 = 離遠 → 受信周波数は名目より低い = shift < 0)
+        (range_rate > 0 = receding → received frequency lower than nominal = shift < 0)
     """
 
     @staticmethod
     def shift_hz(nominal_hz: float, range_rate_km_s: float) -> float:
         """
-        ドップラーシフト量を返す (Hz)。
+        Return the Doppler shift amount (Hz).
 
-        正値 = 受信周波数が名目より高い（接近時）
-        負値 = 受信周波数が名目より低い（離遠時）
+        Positive = received frequency higher than nominal (approaching)
+        Negative = received frequency lower than nominal (receding)
         """
         return -nominal_hz * range_rate_km_s / _C_KM_S
 
@@ -453,10 +453,10 @@ class DopplerCalculator:
         range_rate_km_s: float,
     ) -> tuple[float, float]:
         """
-        ダウンリンク周波数を補正する。
+        Correct the downlink frequency.
 
         Returns:
-            (補正後周波数 Hz, シフト量 Hz)
+            (corrected frequency Hz, shift amount Hz)
         """
         shift = DopplerCalculator.shift_hz(downlink_hz, range_rate_km_s)
         return downlink_hz + shift, shift
@@ -469,22 +469,22 @@ class DopplerCalculator:
         invert: bool = False,
     ) -> tuple[float, float]:
         """
-        アップリンク周波数を補正する。
+        Correct the uplink frequency.
 
-        反転トランスポンダ (invert=True) では、トランスポンダがパスバンドを
-        反転するため、アップリンクのドップラー補正方向がダウンリンクと逆になる。
+        For an inverting transponder (invert=True), the transponder inverts the passband,
+        so the uplink Doppler correction direction is opposite to the downlink.
 
         Args:
-            uplink_hz: 公称アップリンク周波数 (Hz)
-            range_rate_km_s: 視線速度 (km/s)
-            invert: 反転トランスポンダか否か
+            uplink_hz: Nominal uplink frequency (Hz)
+            range_rate_km_s: Line-of-sight velocity (km/s)
+            invert: Whether this is an inverting transponder
 
         Returns:
-            (補正後周波数 Hz, シフト量 Hz)
+            (corrected frequency Hz, shift amount Hz)
         """
         shift = DopplerCalculator.shift_hz(uplink_hz, range_rate_km_s)
         if invert:
-            # 反転トランスポンダ: アップリンクはダウンリンクと逆方向に補正
+            # Inverting transponder: uplink is corrected in the opposite direction to downlink
             shift = -shift
         return uplink_hz + shift, shift
 
@@ -498,13 +498,13 @@ class DopplerCalculator:
         invert: bool = False,
     ) -> DopplerCorrection:
         """
-        トランスポンダのダウンリンク・アップリンク両周波数を同時に補正する。
+        Simultaneously correct both the downlink and uplink frequencies of a transponder.
 
         Args:
-            downlink_hz: 公称ダウンリンク周波数 (Hz)
-            uplink_hz: 公称アップリンク周波数 (Hz)。受信専用ならNone。
-            range_rate_km_s: 視線速度 (km/s)
-            invert: 反転トランスポンダか否か
+            downlink_hz: Nominal downlink frequency (Hz)
+            uplink_hz: Nominal uplink frequency (Hz). None for receive-only.
+            range_rate_km_s: Line-of-sight velocity (km/s)
+            invert: Whether this is an inverting transponder
 
         Returns:
             DopplerCorrection

@@ -102,7 +102,7 @@ class TestGridToLatlon:
         assert len(result) == 2
 
     def test_invalid_length_raises(self) -> None:
-        with pytest.raises(ValueError, match="4 または 6 文字"):
+        with pytest.raises(ValueError, match="4 or 6 characters"):
             grid_to_latlon("PM8")
 
     def test_invalid_field_char_raises(self) -> None:
@@ -211,7 +211,7 @@ class TestLocationManagerSync:
         assert mgr2.current is not None
 
     def test_status_text_not_set(self, manager: LocationManager) -> None:
-        assert manager.status_text == "QTH: 未設定"
+        assert manager.status_text == "QTH: Not set"
 
     def test_status_text_north_east(self, manager: LocationManager) -> None:
         manager.from_manual(35.6895, 139.6917)

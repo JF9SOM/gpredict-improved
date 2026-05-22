@@ -1,8 +1,8 @@
 """
-AMSAT衛星運用状況スクレイパー
+AMSAT satellite operational status scraper
 
-https://www.amsat.org/status/ から衛星の運用状況を取得してDBに保存する。
-beautifulsoup4 が必要。未インストールの場合はスクレイピングをスキップする。
+Fetches satellite operational status from https://www.amsat.org/status/ and saves it to the DB.
+Requires beautifulsoup4. Scraping is skipped if it is not installed.
 """
 
 from __future__ import annotations
@@ -40,23 +40,23 @@ _TIMESTAMP_KEY = "amsat_status_updated_at"
 
 
 class AMSATStatusFetcher:
-    """AMSAT運用状況の取得・保存・提供を行うクラス。"""
+    """Class that fetches, saves, and provides AMSAT operational status."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         """
         Args:
-            conn: SQLite接続
+            conn: SQLite connection
         """
         self._conn = conn
 
     # ------------------------------------------------------------------ #
-    # 公開API
+    # Public API
     # ------------------------------------------------------------------ #
 
     async def fetch_and_update(self) -> dict[str, str]:
         """
-        AMSAT statusページをスクレイピングして衛星名→運用状況の辞書を返す。
-        結果はDBに保存する。
+        Scrape the AMSAT status page and return a dict of satellite name → operational status.
+        Results are saved to the DB.
 
         Returns:
             {"satellite_name_lower": "operational"|"partial"|"non_operational"}
@@ -77,7 +77,7 @@ class AMSATStatusFetcher:
         return status_map
 
     def load_cached(self) -> dict[str, str] | None:
-        """キャッシュ済み運用状況を返す。未保存の場合は None。"""
+        """Return the cached operational status. Returns None if not saved."""
         row = self._conn.execute(
             "SELECT value FROM app_settings WHERE key = ?",
             (_SETTINGS_KEY,),
@@ -90,7 +90,7 @@ class AMSATStatusFetcher:
             return None
 
     def is_stale(self, max_age_hours: int = 24) -> bool:
-        """キャッシュが古い（or 未取得）かどうかを返す。"""
+        """Return whether the cache is stale (or not yet fetched)."""
         row = self._conn.execute(
             "SELECT value FROM app_settings WHERE key = ?",
             (_TIMESTAMP_KEY,),
@@ -105,11 +105,11 @@ class AMSATStatusFetcher:
             return True
 
     # ------------------------------------------------------------------ #
-    # HTMLパーサー
+    # HTML parser
     # ------------------------------------------------------------------ #
 
     def _parse_html(self, html: str) -> dict[str, str]:
-        """HTMLから衛星名→運用状況の辞書を生成する。"""
+        """Generate a dict of satellite name → operational status from HTML."""
         try:
             from bs4 import BeautifulSoup
         except ImportError:
@@ -124,16 +124,16 @@ class AMSATStatusFetcher:
 
     def _parse_tables(self, soup: Any) -> dict[str, str]:
         """
-        テーブル形式のHTMLから衛星状況を抽出する。
+        Extract satellite status from table-format HTML.
 
-        ページ構造:
-          - 衛星ごとに複数の周波数行がある（例: AO-7_[U/v], AO-7_[V/a]）
-          - 各行のセル1以降に時系列ステータスが左=最新順で並ぶ
-          - bgcolor #648fff（青）= Satellite Active, #785ef0（紫）= ISS Active
-          - bgcolor C0C0C0 または空 = 報告なし（スキップ）
+        Page structure:
+          - Each satellite has multiple frequency rows (e.g. AO-7_[U/v], AO-7_[V/a])
+          - Cells from index 1 onward contain time-series status entries, left=most recent
+          - bgcolor #648fff (blue) = Satellite Active, #785ef0 (purple) = ISS Active
+          - bgcolor C0C0C0 or empty = no report submitted (skip)
 
-        判定: 各周波数の最新（左端）の非空ステータスを確認し、
-        1つでも青（Operational）があれば「operational」と判定する。
+        Determination: check the most recent (leftmost) non-empty status for each frequency;
+        if at least one is blue (Operational), the satellite is classified as "operational".
         """
         result: dict[str, str] = {}
 
@@ -142,7 +142,7 @@ class AMSATStatusFetcher:
             if len(rows) < 3:
                 continue
 
-            # 1行目に "Name" セルがあるテーブルが対象
+            # Target tables that have a "Name" cell in the first row
             header_cells = rows[0].find_all(["td", "th"])
             if not header_cells:
                 continue
@@ -170,7 +170,7 @@ class AMSATStatusFetcher:
                     sat_freq[sat_name] = [0, 0]
                 sat_freq[sat_name][1] += 1
 
-                # 左端から最初の非空セルのbgcolorを探す
+                # Find the bgcolor of the first non-empty cell from the left
                 most_recent_bg: str | None = None
                 for cell in cells[1:]:
                     bg = cell.get("bgcolor", "").strip().lower()
@@ -193,13 +193,13 @@ class AMSATStatusFetcher:
                     print(f"[AMSAT] {sat_name}: not operational")
                 result[sat_name.lower()] = status
 
-            # 対象テーブルを処理したら終了
+            # Stop after processing the target table
             break
 
         return result
 
     def _parse_fallback(self, soup: Any) -> dict[str, str]:
-        """テーブル形式でない場合に文字列マッチングで抽出するフォールバック。"""
+        """Fallback that extracts status via string matching when the table format is not found."""
         result: dict[str, str] = {}
         for elem in soup.find_all(["li", "p", "div", "tr"]):
             text = elem.get_text(strip=True)
@@ -210,7 +210,7 @@ class AMSATStatusFetcher:
                 if status_key in text_lower:
                     idx = text_lower.find(status_key)
                     name_candidate = text[:idx].strip(" :-–—/")
-                    # セパレーターで分割して最後のトークンを名前候補とする
+                    # Split by separator and take the last token as the name candidate
                     for sep in (":", "-", "–", "—", "/"):
                         if sep in name_candidate:
                             name_candidate = name_candidate.rsplit(sep, 1)[-1].strip()
@@ -220,11 +220,11 @@ class AMSATStatusFetcher:
         return result
 
     # ------------------------------------------------------------------ #
-    # 永続化
+    # Persistence
     # ------------------------------------------------------------------ #
 
     def _save(self, status_map: dict[str, str]) -> None:
-        """運用状況をapp_settingsに保存する。"""
+        """Save the operational status to app_settings."""
         now = datetime.now(UTC).isoformat()
         self._conn.execute(
             """INSERT INTO app_settings (key, value, updated_at)

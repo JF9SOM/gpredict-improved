@@ -1,13 +1,13 @@
 """
-GPredict-Improved エントリーポイント
+GPredict-Improved application entry point.
 
-起動順序:
-    1. QApplication 生成
-    2. SQLite DB 初期化
-    3. TLEManager・LocationManager・SatelliteEngine・PassPredictor 生成
-    4. FastAPI アプリ生成
-    5. MainWindow 表示（内部で Web サーバー・スケジューラを起動）
-    6. Qt イベントループ実行
+Startup sequence:
+    1. Create QApplication
+    2. Initialize SQLite DB
+    3. Create TLEManager, LocationManager, SatelliteEngine, PassPredictor
+    4. Create FastAPI app
+    5. Show MainWindow (web server and scheduler start internally)
+    6. Run Qt event loop
 """
 
 from __future__ import annotations
@@ -35,24 +35,24 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> int:
-    """アプリケーションのメインエントリーポイント。"""
+    """Application main entry point."""
     app = QApplication(sys.argv)
     app.setApplicationName("GPredict-Improved")
     app.setApplicationVersion("0.1.0")
     app.setOrganizationName("GPredict-Improved")
 
-    # Natural Earth 地図データのプリフェッチ（初回のみネットワーク取得、以降はキャッシュ）
+    # Prefetch Natural Earth map data (downloads on first run, uses cache thereafter)
     prefetch_land_data()
 
-    # SQLite DB 初期化
+    # Initialize SQLite DB
     conn = init_database()
 
-    # コアコンポーネント生成
+    # Create core components
     tle_manager = TLEManager(conn)
     location_manager = LocationManager(conn)
     location = location_manager.load_saved()
 
-    # 手動設定・GPSは上書きしない。未設定またはIP由来のみIPジオロケーションを実行する。
+    # Do not overwrite manually set or GPS location. Run IP geolocation only when unset or IP-based.
     _skip_ip = location is not None and location.source in (
         LocationSource.MANUAL,
         LocationSource.GPS,
@@ -97,7 +97,7 @@ def main() -> int:
     else:
         logger.info("No saved location — engine not initialized. Set QTH from menu.")
 
-    # FastAPI アプリ生成
+    # Create FastAPI app
     fastapi_app = create_app(
         conn=conn,
         tle_manager=tle_manager,
@@ -107,7 +107,7 @@ def main() -> int:
         location_manager=location_manager,
     )
 
-    # メインウィンドウ（Web サーバー・スケジューラも内部で起動）
+    # Show main window (web server and scheduler also start internally)
     window = MainWindow(
         conn=conn,
         tle_manager=tle_manager,

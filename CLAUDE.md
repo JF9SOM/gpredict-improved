@@ -88,6 +88,7 @@ CelesTrak     ┘                                           │
 - **フォーマッター**: `ruff format`（black互換）
 - **リンター**: `ruff check`
 - **型チェック**: `mypy --strict`
+- **コメント言語**: すべてのコードコメント（`#` 行コメント・docstring）は**英語**で書くこと。日本語コメントは使用しない。
 
 ### 命名規則
 - クラス: `PascalCase`

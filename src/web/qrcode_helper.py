@@ -1,8 +1,8 @@
 """
-QR コード生成ヘルパー
+QR code generation helper.
 
-LAN 内アクセス URL を QR コードにして PNG バイト列として返す。
-Qt6 UI のステータスバーボタンやダイアログで表示する用途を想定している。
+Encodes a LAN access URL as a QR code and returns it as PNG bytes.
+Intended for display in Qt6 UI status bar buttons and dialogs.
 """
 
 from __future__ import annotations
@@ -17,15 +17,15 @@ import qrcode.image.base
 
 def generate_qr_png(url: str, box_size: int = 10, border: int = 4) -> bytes:
     """
-    URL の QR コードを PNG バイト列として生成する。
+    Generate a QR code for the given URL and return it as PNG bytes.
 
     Args:
-        url:      エンコードする URL 文字列
-        box_size: 1 セルのピクセルサイズ（デフォルト 10）
-        border:   周囲の余白セル数（デフォルト 4）
+        url:      URL string to encode
+        box_size: Pixel size per cell (default 10)
+        border:   Number of quiet-zone cells around the code (default 4)
 
     Returns:
-        PNG 形式のバイト列
+        PNG bytes
     """
     qr: Any = qrcode.QRCode(
         version=None,
@@ -44,13 +44,13 @@ def generate_qr_png(url: str, box_size: int = 10, border: int = 4) -> bytes:
 
 def save_qr_png(url: str, path: Path, box_size: int = 10, border: int = 4) -> None:
     """
-    URL の QR コードを PNG ファイルとして保存する。
+    Generate a QR code for the given URL and save it as a PNG file.
 
     Args:
-        url:      エンコードする URL 文字列
-        path:     保存先のファイルパス
-        box_size: 1 セルのピクセルサイズ
-        border:   周囲の余白セル数
+        url:      URL string to encode
+        path:     Destination file path
+        box_size: Pixel size per cell
+        border:   Number of quiet-zone cells around the code
     """
     png_bytes = generate_qr_png(url, box_size=box_size, border=border)
     path.write_bytes(png_bytes)

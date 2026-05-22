@@ -1,14 +1,14 @@
 """
-レーダーチャート（スカイビュー）ウィジェット
+Radar chart (sky view) widget.
 
-RadarView    — PySide6 QPainter による極座標レーダー表示
-SatTrackData — 衛星の現在位置・パス軌跡データコンテナ
-az_el_to_xy  — 方位角・仰角をレーダー上の (x, y) に変換するユーティリティ
+RadarView    — Polar radar display using PySide6 QPainter
+SatTrackData — Container for satellite position and pass track data
+az_el_to_xy  — Utility to convert azimuth/elevation to radar (x, y) coordinates
 
-レーダー座標系:
-    中心 = 天頂（仰角 90°）
-    外周 = 地平線（仰角 0°）
-    上   = 北（方位角 0°）、時計回りで増加（東 = 90°）
+Radar coordinate system:
+    Center   = zenith (elevation 90°)
+    Outer    = horizon (elevation 0°)
+    Top      = North (azimuth 0°), increasing clockwise (East = 90°)
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPe
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 # ---------------------------------------------------------------------------
-# 定数
+# Constants
 # ---------------------------------------------------------------------------
 
 SAT_COLORS: list[QColor] = [
@@ -41,26 +41,26 @@ _CARDINALS: tuple[tuple[str, int], ...] = (("N", 0), ("E", 90), ("S", 180), ("W"
 
 
 # ---------------------------------------------------------------------------
-# データクラス
+# Data classes
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class SatTrackData:
     """
-    レーダーに表示する衛星の位置・軌跡データ。
+    Satellite position and pass track data for radar display.
 
     Attributes:
-        name:            衛星名（ラベル表示用）
-        norad_cat_id:    NORAD カタログ番号
-        azimuth_deg:     現在の方位角（度、北=0、東=90）
-        elevation_deg:   現在の仰角（度、0=地平線、90=天頂）
-        is_visible:      地平線より上か
-        track:           パス軌跡 [(az_deg, el_deg), ...] AOS→LOS 順
-        aos_time:        AOS 時刻（UTC）— 次パスのAOS（未可視時）または現パスAOS
-        los_time:        LOS 時刻（UTC）— 現パスLOS（可視時）または次パスLOS
-        next_max_el:     次パス（または現パス）の最大仰角（度）
-        next_duration_s: 次パス（または現パス）の継続時間（秒）
+        name:            Satellite name (for label display)
+        norad_cat_id:    NORAD catalog number
+        azimuth_deg:     Current azimuth (degrees, North=0, East=90)
+        elevation_deg:   Current elevation (degrees, 0=horizon, 90=zenith)
+        is_visible:      Whether the satellite is above the horizon
+        track:           Pass track [(az_deg, el_deg), ...] in AOS→LOS order
+        aos_time:        AOS time (UTC) — next pass AOS when not visible, current AOS when visible
+        los_time:        LOS time (UTC) — current pass LOS when visible, next pass LOS otherwise
+        next_max_el:     Maximum elevation of the next (or current) pass (degrees)
+        next_duration_s: Duration of the next (or current) pass (seconds)
     """
 
     name: str
@@ -76,7 +76,7 @@ class SatTrackData:
 
 
 # ---------------------------------------------------------------------------
-# ユーティリティ（UI 非依存）
+# Utilities (UI-independent)
 # ---------------------------------------------------------------------------
 
 
@@ -88,16 +88,16 @@ def az_el_to_xy(
     radius: float,
 ) -> tuple[float, float]:
     """
-    方位角・仰角を極座標レーダー上の (x, y) に変換する。
+    Convert azimuth/elevation to (x, y) on the polar radar.
 
     Args:
-        azimuth_deg:   方位角（度、北=0、東=90）
-        elevation_deg: 仰角（度、0=地平線、90=天頂）
-        cx, cy:        レーダー中心座標（ピクセル）
-        radius:        地平線円の半径（ピクセル）
+        azimuth_deg:   Azimuth in degrees (North=0, East=90)
+        elevation_deg: Elevation in degrees (0=horizon, 90=zenith)
+        cx, cy:        Radar center coordinates (pixels)
+        radius:        Radius of the horizon circle (pixels)
 
     Returns:
-        (x, y) レーダー上のピクセル座標
+        (x, y) pixel coordinates on the radar
     """
     el = max(0.0, min(90.0, elevation_deg))
     r = (90.0 - el) / 90.0 * radius
@@ -108,15 +108,15 @@ def az_el_to_xy(
 
 
 # ---------------------------------------------------------------------------
-# RadarView ウィジェット
+# RadarView widget
 # ---------------------------------------------------------------------------
 
 
 class RadarView(QWidget):
     """
-    衛星の現在位置とパス軌跡を極座標レーダーで表示する PySide6 ウィジェット。
+    PySide6 widget that displays satellite positions and pass tracks on a polar radar.
 
-    使い方::
+    Usage::
 
         radar = RadarView()
         radar.set_tracks([
@@ -129,7 +129,7 @@ class RadarView(QWidget):
         layout.addWidget(radar)
 
     Signals:
-        sat_clicked(str): 衛星ドットのクリック時に衛星名を emit する
+        sat_clicked(str): emitted with the satellite name when a satellite dot is clicked
     """
 
     sat_clicked: Signal = Signal(str)
@@ -142,33 +142,33 @@ class RadarView(QWidget):
         self._dot_hit_radius: float = 10.0
 
     # ------------------------------------------------------------------ #
-    # 公開 API
+    # Public API
     # ------------------------------------------------------------------ #
 
     def set_tracks(self, tracks: list[SatTrackData]) -> None:
         """
-        表示する衛星リストを設定してレーダーを再描画する。
+        Set the satellite list to display and repaint the radar.
 
         Args:
-            tracks: SatTrackData のリスト（空でクリア）
+            tracks: List of SatTrackData (empty list clears the radar)
         """
         self._tracks = tracks
         self.update()
 
     def clear(self) -> None:
-        """すべての衛星をクリアする。"""
+        """Clear all satellites from the radar."""
         self._tracks = []
         self.update()
 
     # ------------------------------------------------------------------ #
-    # Qt イベントハンドラー
+    # Qt event handlers
     # ------------------------------------------------------------------ #
 
     def sizeHint(self) -> QSize:
         return QSize(400, 400)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """衛星ドット付近のクリックで sat_clicked を emit する。"""
+        """Emit sat_clicked when a click falls near a satellite dot."""
         cx, cy, r = self._radar_geometry()
         px = event.position().x()
         py = event.position().y()
@@ -188,14 +188,14 @@ class RadarView(QWidget):
             painter.end()
 
     # ------------------------------------------------------------------ #
-    # 描画ヘルパー
+    # Drawing helpers
     # ------------------------------------------------------------------ #
 
     def _radar_geometry(self) -> tuple[float, float, float]:
-        """(center_x, center_y, radius) を返す。下部テキスト分のマージンを確保する。"""
+        """Return (center_x, center_y, radius) with bottom margin reserved for status text."""
         w = self.width()
         h = self.height()
-        margin = 70  # 次パス情報テキスト用に余裕を持たせる
+        margin = 70  # reserve space for next-pass info text
         r = (min(w, h - margin) - 20) / 2.0
         cx = w / 2.0
         cy = (h - margin) / 2.0 + 10.0
@@ -254,16 +254,16 @@ class RadarView(QWidget):
         for label, az in _CARDINALS:
             x, y = az_el_to_xy(float(az), 0.0, cx, cy, r)
             offset = 14
-            if az == 0:  # N — 上
+            if az == 0:  # N — top
                 x -= 4.0
                 y -= float(offset - 4)
-            elif az == 90:  # E — 右
+            elif az == 90:  # E — right
                 x += 4.0
                 y += 4.0
-            elif az == 180:  # S — 下
+            elif az == 180:  # S — bottom
                 x -= 4.0
                 y += float(offset)
-            else:  # W — 左
+            else:  # W — left
                 x -= float(offset + 2)
                 y += 4.0
             color = QColor("#e74c3c") if label == "N" else QColor("#bdc3c7")
@@ -288,20 +288,20 @@ class RadarView(QWidget):
 
         pts = [az_el_to_xy(az, el, cx, cy, r) for az, el in track.track]
 
-        # 青い軌跡ライン
+        # Cyan track line
         p.setPen(QPen(_TRACK_COLOR, 2))
         for i in range(len(pts) - 1):
             x0, y0 = pts[i]
             x1, y1 = pts[i + 1]
             p.drawLine(int(x0), int(y0), int(x1), int(y1))
 
-        # AOS 点（緑の塗り潰し円）
+        # AOS point (green filled circle)
         ax, ay = pts[0]
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(_AOS_COLOR)
         p.drawEllipse(int(ax) - 4, int(ay) - 4, 8, 8)
 
-        # LOS 点（赤の塗り潰し円）
+        # LOS point (red filled circle)
         lx, ly = pts[-1]
         p.setBrush(_LOS_COLOR)
         p.drawEllipse(int(lx) - 4, int(ly) - 4, 8, 8)
@@ -331,7 +331,7 @@ class RadarView(QWidget):
         x, y = az_el_to_xy(track.azimuth_deg, track.elevation_deg, cx, cy, r)
         dot_r = 6
 
-        # 現在位置: 赤い中抜き円（可視・不可視を問わず統一）
+        # Current position: red hollow circle (same style whether visible or not)
         p.setPen(QPen(QColor("#f44336"), 2))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(int(x) - dot_r, int(y) - dot_r, dot_r * 2, dot_r * 2)
@@ -343,7 +343,7 @@ class RadarView(QWidget):
         p.drawText(int(x) + dot_r + 2, int(y) + 4, track.name)
 
     def _draw_status(self, p: QPainter, cx: float, cy: float, r: float) -> None:
-        """レーダー円の下部に現在パス情報または次パス情報を表示する。"""
+        """Draw current or next pass info below the radar circle."""
         font = QFont()
         font.setPointSize(12)
         p.setFont(font)
@@ -353,7 +353,7 @@ class RadarView(QWidget):
 
         for i, track in enumerate(self._tracks):
             if track.is_visible:
-                # IN PASS: 緑色でパス中情報を表示
+                # IN PASS: show current pass info in green
                 los_str = ""
                 if track.los_time is not None:
                     los_str = f"  LOS: {track.los_time.strftime('%H:%M')} UTC"
@@ -363,7 +363,7 @@ class RadarView(QWidget):
                 )
                 p.setPen(QColor("#2ecc71"))
             elif track.aos_time is not None:
-                # 次パス情報: "Next: MM/DD HH:MM UTC  Max X.X°  Xm Ys"
+                # Next pass info: "Next: MM/DD HH:MM UTC  Max X.X°  Xm Ys"
                 aos_str = track.aos_time.strftime("%m/%d %H:%M") + " UTC"
                 max_el_str = (
                     f"  Max {track.next_max_el:.1f}°" if track.next_max_el is not None else ""

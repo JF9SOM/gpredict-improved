@@ -1,11 +1,11 @@
 """
-世界地図ウィジェット
+World map widget.
 
-Natural Earth 110m 解像度の陸地ポリゴンデータを使って高精度な世界地図を描画する。
-データは初回起動時に自動ダウンロードしてローカルにキャッシュする。
-Shapely を使って GeoJSON ジオメトリを解析する。
+Draws a high-resolution world map using Natural Earth 110m land polygon data.
+Data is automatically downloaded on first launch and cached locally.
+Uses Shapely to parse GeoJSON geometry.
 
-データソース:
+Data source:
     https://github.com/nvkelso/natural-earth-vector (ne_110m_land.geojson)
 """
 
@@ -27,7 +27,7 @@ from shapely.geometry import shape as geojson_shape
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 定数
+# Constants
 # ---------------------------------------------------------------------------
 
 _NE_LAND_URL = (
@@ -36,9 +36,9 @@ _NE_LAND_URL = (
 )
 _CACHE_FILENAME = "ne_110m_land.geojson"
 
-# フォールバック用簡略ポリゴン (lat, lon) — NE データ取得失敗時に使用
+# Simplified fallback polygons (lat, lon) used when NE data download fails
 _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
-    # 北アメリカ
+    # North America
     [
         (71, -162),
         (71, -141),
@@ -67,7 +67,7 @@ _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
         (72, -106),
         (71, -162),
     ],
-    # 南アメリカ
+    # South America
     [
         (12, -72),
         (8, -77),
@@ -89,7 +89,7 @@ _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
         (10, -62),
         (12, -72),
     ],
-    # ヨーロッパ
+    # Europe
     [
         (71, 27),
         (65, 14),
@@ -111,7 +111,7 @@ _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
         (68, 27),
         (71, 27),
     ],
-    # アフリカ
+    # Africa
     [
         (37, -6),
         (37, 11),
@@ -134,7 +134,7 @@ _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
         (35, -5),
         (37, -6),
     ],
-    # アジア（本土）
+    # Asia (mainland)
     [
         (41, 27),
         (42, 35),
@@ -172,7 +172,7 @@ _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
         (42, 44),
         (41, 27),
     ],
-    # オーストラリア
+    # Australia
     [
         (-10, 131),
         (-15, 129),
@@ -187,7 +187,7 @@ _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
         (-10, 142),
         (-10, 131),
     ],
-    # グリーンランド
+    # Greenland
     [
         (83, -30),
         (77, -18),
@@ -198,7 +198,7 @@ _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
         (80, -53),
         (83, -30),
     ],
-    # 南極大陸
+    # Antarctica
     [
         (-65, -180),
         (-68, -150),
@@ -219,12 +219,12 @@ _FALLBACK_CONTINENTS: list[list[tuple[float, float]]] = [
 ]
 
 # ---------------------------------------------------------------------------
-# データ取得・解析
+# Data loading and parsing
 # ---------------------------------------------------------------------------
 
 
 def _cache_path() -> Path:
-    """GeoJSON キャッシュファイルのパスを返す。"""
+    """Return the path to the GeoJSON cache file."""
     from platformdirs import user_data_dir
 
     data_dir = Path(user_data_dir("gpredict-improved", "gpredict-improved"))
@@ -234,32 +234,32 @@ def _cache_path() -> Path:
 
 def _extract_ring_coords(ring: list[list[float]]) -> list[tuple[float, float]]:
     """
-    GeoJSON リング座標を (lat, lon) タプルリストに変換する。
+    Convert GeoJSON ring coordinates to a list of (lat, lon) tuples.
 
-    GeoJSON の座標順は [lon, lat] なので反転して返す。
-    要素数が 2 未満の座標はスキップする。
+    GeoJSON coordinates are in [lon, lat] order, so they are reversed on return.
+    Coordinates with fewer than 2 elements are skipped.
 
     Args:
-        ring: [[lon, lat], ...] 形式の座標リスト
+        ring: Coordinate list in [[lon, lat], ...] format
 
     Returns:
-        (lat, lon) タプルのリスト
+        List of (lat, lon) tuples
     """
     return [(c[1], c[0]) for c in ring if len(c) >= 2]
 
 
 def _parse_geojson(data: dict[str, Any]) -> list[list[tuple[float, float]]]:
     """
-    GeoJSON データを解析して陸地ポリゴンリストを返す。
+    Parse GeoJSON data and return a list of land polygons.
 
-    Shapely を使って Polygon / MultiPolygon ジオメトリを解析する。
-    座標は内部表現 (lat, lon) タプルのリストとして返す。
+    Uses Shapely to parse Polygon / MultiPolygon geometries.
+    Coordinates are returned as (lat, lon) tuple lists in internal representation.
 
     Args:
-        data: GeoJSON FeatureCollection 辞書
+        data: GeoJSON FeatureCollection dict
 
     Returns:
-        (lat, lon) タプルリストのリスト（各要素が1ポリゴン）
+        List of (lat, lon) tuple lists (one element per polygon)
     """
     result: list[list[tuple[float, float]]] = []
 
@@ -285,31 +285,31 @@ def _parse_geojson(data: dict[str, Any]) -> list[list[tuple[float, float]]]:
 
 def _exterior_latlon(poly: Polygon) -> list[tuple[float, float]]:
     """
-    Shapely Polygon の外周座標を (lat, lon) タプルリストに変換する。
+    Convert the exterior ring of a Shapely Polygon to a list of (lat, lon) tuples.
 
-    GeoJSON / Shapely の座標順は (lon, lat) なので反転して返す。
-    有効なポリゴンでない場合は空リストを返す。
+    GeoJSON / Shapely coordinates are in (lon, lat) order, so they are reversed.
+    Returns an empty list for invalid polygons.
     """
     if poly.is_empty:
         return []
     coords = list(poly.exterior.coords)
     if len(coords) < 3:
         return []
-    # GeoJSON は (lon, lat) 順 → (lat, lon) に変換
+    # GeoJSON is (lon, lat) order → convert to (lat, lon)
     return [(c[1], c[0]) for c in coords]
 
 
 def _load_land_polygons() -> list[list[tuple[float, float]]]:
     """
-    Natural Earth 110m 陸地ポリゴンを読み込む。
+    Load Natural Earth 110m land polygons.
 
-    優先順位:
-        1. ローカルキャッシュ（高速）
-        2. ネットワークダウンロード → キャッシュ保存
-        3. フォールバック簡略データ（オフライン・エラー時）
+    Priority:
+        1. Local cache (fast)
+        2. Network download → save to cache
+        3. Simplified fallback data (offline / error)
 
     Returns:
-        (lat, lon) タプルリストのリスト
+        List of (lat, lon) tuple lists
     """
     cache = _cache_path()
 
@@ -337,18 +337,18 @@ def _load_land_polygons() -> list[list[tuple[float, float]]]:
         return list(_FALLBACK_CONTINENTS)
 
 
-# プロセス内メモリキャッシュ（一度だけ読み込む）
+# In-process memory cache (loaded only once)
 _land_polygons_cache: list[list[tuple[float, float]]] | None = None
 
 
 def get_land_polygons() -> list[list[tuple[float, float]]]:
     """
-    陸地ポリゴンデータを返す（遅延ロード・プロセス内キャッシュ）。
+    Return land polygon data (lazy-loaded, in-process cache).
 
-    初回呼び出し時にファイルキャッシュまたはネットワークから読み込む。
+    Loads from file cache or network on first call.
 
     Returns:
-        (lat, lon) タプルリストのリスト
+        List of (lat, lon) tuple lists
     """
     global _land_polygons_cache
     if _land_polygons_cache is None:
@@ -358,27 +358,26 @@ def get_land_polygons() -> list[list[tuple[float, float]]]:
 
 def prefetch_land_data() -> None:
     """
-    陸地ポリゴンデータをプリフェッチする。
+    Prefetch land polygon data.
 
-    アプリ起動時（Qt イベントループ開始前）に呼び出すことで、
-    初回描画時のブロッキングを回避する。
-    キャッシュが存在しない場合はネットワークからダウンロードする（初回のみ）。
+    Call at application startup (before the Qt event loop starts) to avoid
+    blocking on the first paint. Downloads from network if no cache exists (first run only).
     """
     get_land_polygons()
 
 
 # ---------------------------------------------------------------------------
-# WorldMapView ウィジェット
+# WorldMapView widget
 # ---------------------------------------------------------------------------
 
 
 class WorldMapView(QWidget):
     """
-    2D 等緯度経度図（Equirectangular）ウィジェット。
+    2D equirectangular projection widget.
 
-    Natural Earth 110m 解像度の陸地ポリゴンで世界地図を描画し、
-    衛星直下点と自局位置（★印）をリアルタイムに表示する。
-    上が北、左端が西経 180°、右端が東経 180°。
+    Draws a world map using Natural Earth 110m land polygons and displays
+    satellite sub-satellite points and observer position (★ mark) in real time.
+    North is up; left edge is 180°W, right edge is 180°E.
     """
 
     sat_clicked: Signal = Signal(int)  # norad_cat_id
@@ -393,9 +392,9 @@ class WorldMapView(QWidget):
         self._observer_lon: float | None = None
         self._dot_radius: float = 5.0
         self._hit_radius: float = 12.0
-        # 選択衛星フットプリント: (norad, lat_deg, lon_deg, alt_km)
+        # Selected satellite footprint: (norad, lat_deg, lon_deg, alt_km)
         self._footprint: tuple[int, float, float, float] | None = None
-        # フィルター: None = 全表示、set = 指定 NORAD のみ表示
+        # Filter: None = show all, set = show only specified NORADs
         self._visible_norads: set[int] | None = None
 
     def sizeHint(self) -> QSize:
@@ -406,7 +405,7 @@ class WorldMapView(QWidget):
         satellites: dict[int, tuple[str, float, float, QColor]],
     ) -> None:
         """
-        衛星の直下点データを設定して再描画する。
+        Set satellite sub-satellite point data and repaint.
 
         Args:
             satellites: {norad_cat_id: (name, lat_deg, lon_deg, QColor)}
@@ -416,41 +415,41 @@ class WorldMapView(QWidget):
 
     def set_visible_norads(self, norads: set[int] | None) -> None:
         """
-        表示する衛星を NORAD 番号のセットで絞り込む。
+        Restrict displayed satellites to the specified set of NORAD numbers.
 
         Args:
-            norads: 表示対象の NORAD 番号セット。None で全衛星表示。
+            norads: Set of NORAD numbers to display. None shows all satellites.
         """
         self._visible_norads = norads
         self.update()
 
     def draw_footprint(self, norad: int, lat: float, lon: float, alt_km: float) -> None:
-        """選択衛星のフットプリント（可視範囲）を更新する。
+        """Update the footprint (visibility range) of the selected satellite.
 
-        次の paintEvent で半透明の青い円として描画される。
+        Drawn as a semi-transparent blue circle in the next paintEvent.
 
         Args:
-            norad:   NORAD カタログ番号
-            lat:     衛星直下点緯度（度）
-            lon:     衛星直下点経度（度）
-            alt_km:  衛星高度（km）
+            norad:   NORAD catalog number
+            lat:     Sub-satellite point latitude (degrees)
+            lon:     Sub-satellite point longitude (degrees)
+            alt_km:  Satellite altitude (km)
         """
         self._footprint = (norad, lat, lon, alt_km)
         self.update()
 
     def clear_footprint(self) -> None:
-        """フットプリント表示をクリアする。"""
+        """Clear the footprint display."""
         if self._footprint is not None:
             self._footprint = None
             self.update()
 
     def set_observer_location(self, lat: float, lon: float) -> None:
         """
-        自局位置（QTH）を設定して再描画する。地図上に ★ 印で表示する。
+        Set the observer (QTH) location and repaint. Displayed as a ★ on the map.
 
         Args:
-            lat: 緯度（度、北緯正）
-            lon: 経度（度、東経正）
+            lat: Latitude (degrees, positive = North)
+            lon: Longitude (degrees, positive = East)
         """
         if self._observer_lat != lat or self._observer_lon != lon:
             self._observer_lat = lat
@@ -459,23 +458,23 @@ class WorldMapView(QWidget):
 
     def latlon_to_xy(self, lat: float, lon: float, w: float, h: float) -> tuple[float, float]:
         """
-        緯度・経度をウィジェット座標に変換する（等緯度経度図）。
+        Convert latitude/longitude to widget coordinates (equirectangular projection).
 
         Args:
-            lat: 緯度（度、北緯正）
-            lon: 経度（度、東経正）
-            w:   ウィジェット幅（ピクセル）
-            h:   ウィジェット高さ（ピクセル）
+            lat: Latitude (degrees, positive = North)
+            lon: Longitude (degrees, positive = East)
+            w:   Widget width (pixels)
+            h:   Widget height (pixels)
 
         Returns:
-            (x, y) ウィジェット座標
+            (x, y) widget coordinates
         """
         x = (lon + 180.0) / 360.0 * w
         y = (90.0 - lat) / 180.0 * h
         return x, y
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """衛星ドット付近のクリックで sat_clicked を emit する。"""
+        """Emit sat_clicked when the user clicks near a satellite dot."""
         w, h = float(self.width()), float(self.height())
         px, py = event.position().x(), event.position().y()
         for norad, sat_info in reversed(list(self._satellites.items())):
@@ -496,19 +495,19 @@ class WorldMapView(QWidget):
     def _draw(self, p: QPainter) -> None:
         w, h = float(self.width()), float(self.height())
 
-        # 背景（海: 中青）
+        # Background (ocean: medium blue)
         p.fillRect(0, 0, int(w), int(h), QColor("#1565C0"))
 
-        # 陸地ポリゴン（Natural Earth 110m）
+        # Land polygons (Natural Earth 110m)
         p.setPen(QPen(QColor("#1B5E20"), 1))
         p.setBrush(QColor("#388E3C"))
         for polygon_coords in get_land_polygons():
-            # 内部表現は (lat, lon) 順
+            # Internal representation is (lat, lon) order
             points = [QPointF(*self.latlon_to_xy(lat, lon, w, h)) for lat, lon in polygon_coords]
             if len(points) >= 3:
                 p.drawPolygon(QPolygonF(points))
 
-        # グリッド線（30° 間隔、明るい水色の破線）
+        # Grid lines (30° intervals, light cyan dashed)
         grid_pen = QPen(QColor("#90CAF9"), 1)
         grid_pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(grid_pen)
@@ -520,22 +519,22 @@ class WorldMapView(QWidget):
             x, _ = self.latlon_to_xy(0.0, float(lon), w, h)
             p.drawLine(int(x), 0, int(x), int(h))
 
-        # 赤道（金色の実線、強調）
+        # Equator (gold solid line, emphasized)
         _, eq_y = self.latlon_to_xy(0.0, 0.0, w, h)
         p.setPen(QPen(QColor("#FFD700"), 2))
         p.drawLine(0, int(eq_y), int(w), int(eq_y))
 
-        # 自局位置（★印）
+        # Observer location (star marker)
         if self._observer_lat is not None and self._observer_lon is not None:
             ox, oy = self.latlon_to_xy(self._observer_lat, self._observer_lon, w, h)
             p.setPen(QPen(QColor("#FFFFFF"), 1))
             p.setBrush(QColor("#FFFF00"))
             self._draw_star(p, ox, oy, 8.0)
 
-        # フットプリント（衛星ドットより先に描画して重なりを正しく表示）
+        # Footprint (drawn before satellite dots so dots render on top)
         self._draw_footprint(p, w, h)
 
-        # 衛星ドット + ラベル
+        # Satellite dots + labels
         label_font = QFont()
         label_font.setPointSize(8)
         p.setFont(label_font)
@@ -543,9 +542,9 @@ class WorldMapView(QWidget):
         sel_norad = self._footprint[0] if self._footprint is not None else None
         for norad, info in self._satellites.items():
             if self._visible_norads is not None and norad not in self._visible_norads:
-                continue  # フィルター外の衛星はスキップ
+                continue  # satellite is outside the visible filter
             if norad == sel_norad:
-                continue  # 選択衛星は後で大きく描画
+                continue  # selected satellite is drawn larger below
             sx, sy = self.latlon_to_xy(info[1], info[2], w, h)
             if math.isnan(sx) or math.isnan(sy):
                 continue
@@ -556,8 +555,8 @@ class WorldMapView(QWidget):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawText(int(sx) + dr + 2, int(sy) + 4, info[0])
 
-        # 選択衛星を大きい黄色い輪郭付きドット＋白ラベルで描画
-        # フィルター外であっても選択衛星は常に表示する
+        # Draw selected satellite as a larger dot with yellow outline and white label.
+        # Always shown even when outside the current filter.
         if sel_norad is not None and sel_norad in self._satellites:
             sel_info = self._satellites[sel_norad]
             sx, sy = self.latlon_to_xy(sel_info[1], sel_info[2], w, h)
@@ -572,11 +571,11 @@ class WorldMapView(QWidget):
             p.drawText(int(sx) + sel_r + 2, int(sy) + 4, sel_info[0])
 
     def _draw_footprint(self, p: QPainter, w: float, h: float) -> None:
-        """フットプリント（可視範囲の円）を等緯度経度図上に描画する。
+        """Draw the footprint (visibility circle) on the equirectangular map.
 
-        1度刻み361点の方位角ベースで座標を計算し、画面上のX距離が
-        画面幅の1/3を超える線分をスキップする方式で描画する。
-        日付変更線越え・極付近でも正しく描画される。
+        Computes 361 screen points at 1-degree bearing intervals and skips
+        any line segment whose X span exceeds one-third of the widget width,
+        which handles date-line crossings and polar regions correctly.
         """
         if self._footprint is None:
             return
@@ -587,7 +586,7 @@ class WorldMapView(QWidget):
         rho = math.acos(min(cos_rho, 1.0))
         lat0_r = math.radians(lat0)
 
-        # 1度刻み361点の画面座標を計算
+        # Compute 361 screen coordinates at 1-degree bearing intervals
         screen_pts: list[tuple[float, float]] = []
         for i in range(361):
             bearing = math.radians(i)
@@ -606,7 +605,7 @@ class WorldMapView(QWidget):
 
         threshold = w / 3.0
 
-        # 塗りつぶし: スキップ箇所でサブポリゴンに分割して描画
+        # Fill: split into sub-polygons at each date-line skip and draw each
         sub_polys: list[list[QPointF]] = []
         cur_poly: list[QPointF] = []
         for i, (x, y) in enumerate(screen_pts):
@@ -624,7 +623,7 @@ class WorldMapView(QWidget):
             if len(poly) >= 3:
                 p.drawPolygon(QPolygonF(poly))
 
-        # 輪郭線: 異常に長い線分（日付変更線越え）をスキップして描画
+        # Outline: skip segments that cross the date line (abnormally long X span)
         p.setPen(QPen(QColor(255, 255, 255, 220), 2.0))
         p.setBrush(Qt.BrushStyle.NoBrush)
         for i in range(len(screen_pts) - 1):
@@ -633,7 +632,7 @@ class WorldMapView(QWidget):
             if abs(x2 - x1) < threshold:
                 p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
-        # フットプリント中心に十字線
+        # Crosshair at footprint center
         cx, cy = self.latlon_to_xy(lat0, lon0, w, h)
         cross = 10
         p.setPen(QPen(QColor(255, 255, 255, 200), 1.5))
@@ -642,13 +641,13 @@ class WorldMapView(QWidget):
 
     def _draw_star(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         """
-        5 角星を描画する。
+        Draw a 5-pointed star.
 
         Args:
             p:  QPainter
-            cx: 中心 X 座標（ピクセル）
-            cy: 中心 Y 座標（ピクセル）
-            r:  外接円半径（ピクセル）
+            cx: Center X coordinate (pixels)
+            cy: Center Y coordinate (pixels)
+            r:  Circumscribed circle radius (pixels)
         """
         points: list[QPointF] = []
         for i in range(10):

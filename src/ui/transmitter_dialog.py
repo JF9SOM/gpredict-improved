@@ -1,8 +1,8 @@
 """
-トランスポンダ手動追加・編集ダイアログ
+Manual transmitter add/edit dialog.
 
-NORAD ID・周波数・モード・CTCSSトーンを入力してDBに保存する（manual_override=True）。
-existing を渡すと編集モードになる。
+Accepts NORAD ID, frequency, mode, and CTCSS tone and saves to DB (manual_override=True).
+Pass existing to enter edit mode.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ _CTCSS_TYPES: list[str] = ["", "CTCSS", "DCS"]
 
 
 class TransmitterDialog(QDialog):
-    """トランスポンダ手動追加・編集ダイアログ。"""
+    """Manual transmitter add/edit dialog."""
 
     def __init__(
         self,
@@ -45,10 +45,10 @@ class TransmitterDialog(QDialog):
     ) -> None:
         """
         Args:
-            transmitter_manager: トランスポンダ管理クラス
-            norad_cat_id:        初期NORAD ID（Noneなら25544=ISSがデフォルト）
-            existing:            編集対象レコード（Noneなら追加モード）
-            parent:              親ウィジェット
+            transmitter_manager: Transmitter manager instance
+            norad_cat_id:        Initial NORAD ID (defaults to 25544=ISS when None)
+            existing:            Record to edit (add mode when None)
+            parent:              Parent widget
         """
         super().__init__(parent)
         self._tm = transmitter_manager
@@ -64,13 +64,13 @@ class TransmitterDialog(QDialog):
             self._norad_spin.setValue(norad_cat_id)
 
     # ------------------------------------------------------------------ #
-    # UI構築
+    # UI construction
     # ------------------------------------------------------------------ #
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        # 衛星
+        # Satellite
         sat_group = QGroupBox(_("Satellite"))
         sat_form = QFormLayout(sat_group)
         self._norad_spin = QSpinBox()
@@ -87,7 +87,7 @@ class TransmitterDialog(QDialog):
         sat_form.addRow(_("Description:"), self._desc_edit)
         layout.addWidget(sat_group)
 
-        # 周波数（MHz入力 → 内部で Hz に変換）
+        # Frequency (MHz input, converted to Hz internally)
         freq_group = QGroupBox(_("Frequency"))
         freq_form = QFormLayout(freq_group)
 
@@ -121,7 +121,7 @@ class TransmitterDialog(QDialog):
 
         layout.addWidget(freq_group)
 
-        # モード・タイプ
+        # Mode and type
         mode_group = QGroupBox(_("Mode"))
         mode_form = QFormLayout(mode_group)
 
@@ -138,7 +138,7 @@ class TransmitterDialog(QDialog):
 
         layout.addWidget(mode_group)
 
-        # CTCSSトーン
+        # CTCSS tone
         ctcss_group = QGroupBox(_("CTCSS / DCS Tone"))
         ctcss_form = QFormLayout(ctcss_group)
 
@@ -155,21 +155,21 @@ class TransmitterDialog(QDialog):
 
         layout.addWidget(ctcss_group)
 
-        # メモ
+        # Notes
         notes_form = QFormLayout()
         self._notes_edit = QLineEdit()
         self._notes_edit.setPlaceholderText(_("Optional notes"))
         notes_form.addRow(_("Notes:"), self._notes_edit)
         layout.addLayout(notes_form)
 
-        # 上書き保護
+        # Overwrite protection
         self._overwrite_check = QCheckBox(
             _("Overwrite protection (prevent SATNOGS sync from overwriting)")
         )
         self._overwrite_check.setChecked(True)
         layout.addWidget(self._overwrite_check)
 
-        # ボタン
+        # Buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -178,24 +178,24 @@ class TransmitterDialog(QDialog):
         layout.addWidget(buttons)
 
     # ------------------------------------------------------------------ #
-    # 内部ユーティリティ
+    # Internal utilities
     # ------------------------------------------------------------------ #
 
     def _mhz_to_hz(self, mhz: float) -> int | None:
-        """MHz を Hz に変換する。0.0（specialValue）の場合は None を返す。"""
+        """Convert MHz to Hz. Returns None for 0.0 (specialValue)."""
         if mhz <= 0.0:
             return None
         return int(round(mhz * 1_000_000))
 
     @staticmethod
     def _hz_to_mhz(hz: int | None) -> float:
-        """Hz を MHz に変換する。None の場合は 0.0（specialValue）を返す。"""
+        """Convert Hz to MHz. Returns 0.0 (specialValue) when hz is None."""
         if hz is None:
             return 0.0
         return hz / 1_000_000
 
     def _prefill(self, rec: dict[str, Any]) -> None:
-        """既存レコードの値をウィジェットに設定する（編集モード用）。"""
+        """Populate widgets with values from an existing record (edit mode)."""
         self._norad_spin.setValue(rec.get("norad_cat_id", 25544))
         self._norad_spin.setEnabled(False)
         self._satnogs_norad_spin.setEnabled(False)
@@ -230,15 +230,15 @@ class TransmitterDialog(QDialog):
         self._overwrite_check.setChecked(bool(rec.get("manual_override", 1)))
 
     # ------------------------------------------------------------------ #
-    # シグナルハンドラー
+    # Signal handlers
     # ------------------------------------------------------------------ #
 
     def _on_accept(self) -> None:
-        """OKボタン時の処理。"""
+        """Handle OK button press."""
         norad = self._norad_spin.value()
         satnogs_norad = self._satnogs_norad_spin.value()
 
-        # SatNOGS インポートモード（SatNOGS NORAD ID が指定されている場合）
+        # SatNOGS import mode (when a SatNOGS NORAD ID is specified)
         if not self._edit_mode and satnogs_norad != 0:
             self._do_satnogs_import(norad, satnogs_norad)
             return
@@ -305,7 +305,7 @@ class TransmitterDialog(QDialog):
             QMessageBox.critical(self, _("Error"), str(exc))
 
     def _do_satnogs_import(self, primary_norad: int, satnogs_norad: int) -> None:
-        """SatNOGS NORAD IDで周波数データを取得してprimary NORADにマッピングして保存する。"""
+        """Fetch frequency data by SatNOGS NORAD ID and save it mapped to the primary NORAD."""
         try:
             result = asyncio.run(
                 self._tm.sync_from_satnogs(

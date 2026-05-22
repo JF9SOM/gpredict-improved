@@ -1,7 +1,7 @@
 """
-Radio Control ウィジェット
+Radio Control widget.
 
-RadioControlWidget — 選択衛星の無線機・ローテーター制御パネル
+RadioControlWidget — Rig and rotator control panel for the selected satellite.
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ from rig.controller import RigController, RigState, RotatorController, RotatorSt
 
 class RadioControlWidget(QWidget):
     """
-    無線機・ローテーター制御パネル。
+    Rig and rotator control panel.
 
-    選択衛星のドップラー補正済み周波数・モード・ローテーター位置・
-    無線機/ローテーター接続状態を表示し、接続操作ボタンを提供する。
+    Displays Doppler-corrected frequency, mode, rotator position, and
+    rig/rotator connection status for the selected satellite, with connect/disconnect buttons.
     """
 
     transmitter_changed: Signal = Signal(object)
@@ -46,7 +46,7 @@ class RadioControlWidget(QWidget):
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
-    # UI 構築
+    # UI construction
     # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
@@ -54,7 +54,7 @@ class RadioControlWidget(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
 
-        # 衛星情報 + トランスポンダ選択
+        # Satellite info + transponder selection
         sat_group = QGroupBox(_("Satellite"))
         sat_form = QFormLayout(sat_group)
         sat_form.setContentsMargins(4, 4, 4, 4)
@@ -67,7 +67,7 @@ class RadioControlWidget(QWidget):
         sat_form.addRow(_("NORAD:"), self._norad_label)
         sat_form.addRow(_("Transponder:"), self._xpdr_combo)
 
-        # T / L ボタン行
+        # T / L button row
         tl_row = QHBoxLayout()
         self._tune_btn = QPushButton(_("T"))
         self._tune_btn.setToolTip(_("Tune: reset downlink/uplink to center of transponder band"))
@@ -83,7 +83,7 @@ class RadioControlWidget(QWidget):
 
         layout.addWidget(sat_group)
 
-        # 周波数 / ドップラー
+        # Frequency / Doppler
         freq_group = QGroupBox(_("Frequency"))
         freq_form = QFormLayout(freq_group)
         freq_form.setContentsMargins(4, 4, 4, 4)
@@ -101,7 +101,7 @@ class RadioControlWidget(QWidget):
         freq_form.addRow(_("CTCSS:"), self._ctcss_label)
         layout.addWidget(freq_group)
 
-        # ローテーター位置
+        # Rotator position
         rot_group = QGroupBox(_("Rotator"))
         rot_form = QFormLayout(rot_group)
         rot_form.setContentsMargins(4, 4, 4, 4)
@@ -111,7 +111,7 @@ class RadioControlWidget(QWidget):
         rot_form.addRow(_("EL:"), self._rot_el_label)
         layout.addWidget(rot_group)
 
-        # 接続状態
+        # Connection status
         status_group = QGroupBox(_("Status"))
         status_form = QFormLayout(status_group)
         status_form.setContentsMargins(4, 4, 4, 4)
@@ -133,7 +133,7 @@ class RadioControlWidget(QWidget):
 
         layout.addWidget(status_group)
 
-        # ボタン行
+        # Button row
         btn_row = QHBoxLayout()
         self._connect_rig_btn = QPushButton(_("Connect Rig"))
         self._connect_rig_btn.clicked.connect(self._on_connect_rig)
@@ -149,16 +149,16 @@ class RadioControlWidget(QWidget):
         self._update_rot_status()
 
     # ------------------------------------------------------------------ #
-    # 公開 API
+    # Public API
     # ------------------------------------------------------------------ #
 
     def set_satellite(self, norad: int, name: str) -> None:
-        """選択衛星を設定する。"""
+        """Set the selected satellite."""
         self._sat_name_label.setText(name)
         self._norad_label.setText(str(norad))
 
     def clear_satellite(self) -> None:
-        """衛星情報・周波数表示をクリアする。"""
+        """Clear satellite info and frequency display."""
         self._sat_name_label.setText("—")
         self._norad_label.setText("—")
         self._xpdr_combo.blockSignals(True)
@@ -173,10 +173,10 @@ class RadioControlWidget(QWidget):
         transmitters: list[dict[str, Any]],
         default_index: int = 0,
     ) -> None:
-        """トランスポンダリストをコンボボックスに設定し、デフォルト選択を適用する。
+        """Populate the transponder combo box and apply the default selection.
 
-        リスト先頭がデフォルト選択（呼び出し側でORDER BY優先度を適用済み前提）。
-        transmitter_changed シグナルでデフォルト選択を通知する。
+        The first item is the default (caller is expected to sort by priority beforehand).
+        Emits transmitter_changed with the default selection.
         """
         self._transmitters = transmitters
         self._xpdr_combo.blockSignals(True)
@@ -202,7 +202,7 @@ class RadioControlWidget(QWidget):
         mode: str | None = None,
         ctcss_hz: float | None = None,
     ) -> None:
-        """ドップラー補正済み周波数と各種パラメーターを更新する。"""
+        """Update the Doppler-corrected frequency and related parameters."""
         if downlink_corrected_hz is not None:
             self._downlink_label.setText(f"{downlink_corrected_hz / 1e6:.6f} MHz")
             if downlink_shift_hz is not None:
@@ -232,7 +232,7 @@ class RadioControlWidget(QWidget):
             self._ctcss_label.setText("—")
 
     def update_rotator(self, state: RotatorState | None) -> None:
-        """ローテーター現在位置を更新する。"""
+        """Update the current rotator position."""
         if state is None:
             self._rot_az_label.setText("—")
             self._rot_el_label.setText("—")
@@ -241,30 +241,30 @@ class RadioControlWidget(QWidget):
             self._rot_el_label.setText(f"{state.elevation_deg:.1f}°")
 
     def set_rig(self, rig: RigController | None) -> None:
-        """無線機コントローラーを設定する。"""
+        """Set the rig controller."""
         self._rig = rig
         self._update_rig_status()
 
     def set_rotator(self, rotator: RotatorController | None) -> None:
-        """ローテーターコントローラーを設定する。"""
+        """Set the rotator controller."""
         self._rotator = rotator
         self._update_rot_status()
 
     def set_cycle(self, ms: int) -> None:
-        """Cycle スピンボックスの値を外部から設定する（シグナルを発火しない）。"""
+        """Set the Cycle spin box value externally without emitting a signal."""
         self._cycle_spin.blockSignals(True)
         self._cycle_spin.setValue(max(10, min(10000, ms)))
         self._cycle_spin.blockSignals(False)
 
     def refresh_status(self) -> None:
-        """接続状態表示を更新する（タイマー呼び出し用）。"""
+        """Update the connection status display (called by timer)."""
         self._update_rig_status()
         self._update_rot_status()
         if self._rotator is not None and self._rotator.is_connected:
             self.update_rotator(self._rotator.get_position())
 
     # ------------------------------------------------------------------ #
-    # 内部ヘルパー
+    # Internal helpers
     # ------------------------------------------------------------------ #
 
     def _clear_frequency(self) -> None:
@@ -280,7 +280,7 @@ class RadioControlWidget(QWidget):
 
     @staticmethod
     def _xpdr_label(xpdr: dict[str, Any]) -> str:
-        """コンボボックス表示用ラベルを生成する。"""
+        """Generate a display label for the transponder combo box."""
         dl = xpdr.get("downlink_low")
         dl_str = f"{dl / 1e6:.3f} MHz" if dl else "—"
         xtype = xpdr.get("type", "")

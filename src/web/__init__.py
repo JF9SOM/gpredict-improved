@@ -1,8 +1,8 @@
 """
-Web モジュール — FastAPI REST API + WebSocket サーバー
+Web module — FastAPI REST API + WebSocket server.
 
-create_app()  → FastAPI アプリ生成（テスト用依存注入対応）
-WebServer     → Qt6 バックグラウンドスレッドから uvicorn を起動・停止
-ConnectionManager → WebSocket 接続管理・ブロードキャスト
-generate_qr_png   → アクセス URL の QR コード PNG 生成
+create_app()      → Create FastAPI app (supports dependency injection for tests)
+WebServer         → Start/stop uvicorn from a Qt6 background thread
+ConnectionManager → Manage WebSocket connections and broadcast
+generate_qr_png   → Generate QR code PNG for the access URL
 """

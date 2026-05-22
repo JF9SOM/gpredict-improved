@@ -1,1 +1,1 @@
-"""GPredict-Improved データ管理"""
+"""GPredict-Improved data management"""

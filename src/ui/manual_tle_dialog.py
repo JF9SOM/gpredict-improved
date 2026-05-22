@@ -1,9 +1,9 @@
 """
-手動TLE追加ダイアログ
+Manual TLE addition dialog
 
-ManualTLEDialog — Satellite > Add Manual TLE... で開くダイアログ。
-NORADカタログ番号でCelesTrakから自動取得するか、
-TLE 3行を手動入力してDBに追加する。
+ManualTLEDialog — dialog opened from Satellite > Add Manual TLE...
+Automatically fetches TLE from CelesTrak using a NORAD catalog number,
+or allows the user to paste three TLE lines manually and save them to the DB.
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ from i18n import _
 
 
 class ManualTLEDialog(QDialog):
-    """Satellite > Add Manual TLE... ダイアログ。
+    """Satellite > Add Manual TLE... dialog.
 
-    NORAD カタログ番号を入力して CelesTrak から自動取得するか、
-    TLE 3 行を手動で貼り付けて DB に追加する。
+    Fetches TLE automatically from CelesTrak using a NORAD catalog number,
+    or allows pasting three TLE lines manually to add them to the DB.
     """
 
     def __init__(self, tle_manager: TLEManager, parent: QWidget | None = None) -> None:
@@ -50,11 +50,11 @@ class ManualTLEDialog(QDialog):
 
     @property
     def added_norad(self) -> int | None:
-        """追加された衛星の NORAD カタログ番号。キャンセル時は None。"""
+        """NORAD catalog number of the added satellite. None if the dialog was cancelled."""
         return self._added_norad
 
     # ------------------------------------------------------------------ #
-    # UI 構築
+    # UI construction
     # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
@@ -62,7 +62,7 @@ class ManualTLEDialog(QDialog):
 
         self._tabs = QTabWidget()
 
-        # Tab 1: NORAD ID → CelesTrak 自動取得
+        # Tab 1: NORAD ID -> CelesTrak auto-fetch
         fetch_tab = QWidget()
         fetch_layout = QVBoxLayout(fetch_tab)
         fetch_form = QFormLayout()
@@ -84,7 +84,7 @@ class ManualTLEDialog(QDialog):
 
         self._tabs.addTab(fetch_tab, _("Fetch by NORAD ID"))
 
-        # Tab 2: TLE 手動貼り付け
+        # Tab 2: manual TLE paste
         manual_tab = QWidget()
         manual_layout = QVBoxLayout(manual_tab)
         manual_layout.addWidget(QLabel(_("Paste TLE (3 lines: Name, Line 1, Line 2):")))
@@ -107,11 +107,11 @@ class ManualTLEDialog(QDialog):
         layout.addWidget(buttons)
 
     # ------------------------------------------------------------------ #
-    # イベントハンドラー
+    # Event handlers
     # ------------------------------------------------------------------ #
 
     def _on_fetch(self) -> None:
-        """Fetch ボタン: CelesTrak から TLE を取得して DB に追加する。"""
+        """Fetch button: retrieve TLE from CelesTrak and add it to the DB."""
         norad = self._norad_spin.value()
         self._fetch_status.setText(_("Fetching..."))
         self._fetch_btn.setEnabled(False)
@@ -134,7 +134,7 @@ class ManualTLEDialog(QDialog):
             self._fetch_btn.setEnabled(True)
 
     def _on_accept(self) -> None:
-        """OK ボタン処理。"""
+        """OK button handler."""
         if self._tabs.currentIndex() == 0:
             if self._added_norad is None:
                 QMessageBox.warning(
@@ -148,7 +148,7 @@ class ManualTLEDialog(QDialog):
             self._accept_manual()
 
     def _accept_manual(self) -> None:
-        """Manual タブ: TLE テキストをパースして DB に追加する。"""
+        """Manual tab: parse the TLE text and add it to the DB."""
         text = self._tle_edit.toPlainText().strip()
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         if len(lines) < 3:  # noqa: PLR2004

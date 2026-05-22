@@ -1,8 +1,8 @@
 """
-トランスポンダ管理モジュール
+Transponder management module
 
-SATNOGSからのデータ取得と、手動追加データの統合管理。
-manual_override=True のレコードはSATNOGS同期で上書きされない。
+Manages data retrieved from SATNOGS and manually added data in an integrated way.
+Records with manual_override=True are not overwritten by SATNOGS sync.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ SATNOGS_API_BASE = "https://db.satnogs.org/api"
 SATNOGS_TRANSMITTERS_URL = f"{SATNOGS_API_BASE}/transmitters/"
 SATNOGS_SATELLITES_URL = f"{SATNOGS_API_BASE}/satellites/"
 
-# SatNOGS status → DB status の正規化マップ
-# 'future'/'re-entered' は CHECK制約('alive','dead','unknown')に合わせて変換する
+# SatNOGS status → DB status normalization map
+# 'future'/'re-entered' are converted to match the CHECK constraint ('alive','dead','unknown')
 _SATNOGS_STATUS_MAP: dict[str, str] = {
     "alive": "alive",
     "dead": "dead",
@@ -30,16 +30,16 @@ _SATNOGS_STATUS_MAP: dict[str, str] = {
 
 class TransmitterManager:
     """
-    トランスポンダ情報のCRUD + SATNOGS同期を管理するクラス。
-    UIスレッドとバックグラウンドスレッドの両方から呼ばれるため、
-    メソッドごとに独立したDB接続を使う（thread-safe）。
+    Class managing transponder CRUD operations and SATNOGS synchronization.
+    Called from both the UI thread and background threads;
+    each method uses an independent DB connection (thread-safe).
     """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
     # ------------------------------------------------------------------ #
-    # 読み取り
+    # Read
     # ------------------------------------------------------------------ #
 
     def get_transmitters(
@@ -48,8 +48,8 @@ class TransmitterManager:
         include_dead: bool = False,
     ) -> list[dict[str, Any]]:
         """
-        指定衛星のトランスポンダ一覧を返す。
-        手動追加データとSATNOGSデータを統合して返す。
+        Return the transponder list for the specified satellite.
+        Returns manually added data and SATNOGS data in an integrated way.
         """
         query = """
             SELECT * FROM transmitters
@@ -62,7 +62,7 @@ class TransmitterManager:
         return [dict(r) for r in rows]
 
     def get_all_satellites(self) -> list[dict[str, Any]]:
-        """追尾可能な衛星一覧（TLEあり）を返す"""
+        """Return the list of trackable satellites (those with TLE data)"""
         rows = self._conn.execute("""
             SELECT s.*, t.quality_score, t.fetched_at as tle_fetched_at
             FROM satellites s
@@ -72,7 +72,7 @@ class TransmitterManager:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ #
-    # 手動追加・編集・削除
+    # Manual add / edit / delete
     # ------------------------------------------------------------------ #
 
     def add_manual_transmitter(
@@ -94,13 +94,13 @@ class TransmitterManager:
         manual_override: bool = True,
     ) -> str:
         """
-        手動でトランスポンダを追加する。
-        返り値: 生成されたUUID
+        Manually add a transponder.
+        Returns: the generated UUID
         """
         new_uuid = f"manual-{uuid.uuid4()}"
         now = datetime.now(UTC).isoformat()
 
-        # 衛星レコードがなければ仮登録
+        # Register a placeholder satellite record if it does not exist
         self._conn.execute(
             """
             INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)
@@ -153,8 +153,8 @@ class TransmitterManager:
         **fields: Any,
     ) -> None:
         """
-        トランスポンダを更新する。
-        manual_override を明示的に渡した場合はその値を使う。渡さない場合は現状を維持。
+        Update a transponder.
+        If manual_override is explicitly passed, that value is used; otherwise the current value is preserved.
         """
         allowed = {
             "description",
@@ -187,12 +187,12 @@ class TransmitterManager:
         self._conn.commit()
 
     def delete_transmitter(self, xpdr_uuid: str) -> None:
-        """トランスポンダを削除する（手動追加分のみ推奨）"""
+        """Delete a transponder (recommended only for manually added ones)"""
         self._conn.execute("DELETE FROM transmitters WHERE uuid = ?", (xpdr_uuid,))
         self._conn.commit()
 
     # ------------------------------------------------------------------ #
-    # SATNOGS同期
+    # SATNOGS sync
     # ------------------------------------------------------------------ #
 
     async def sync_from_satnogs(
@@ -202,15 +202,15 @@ class TransmitterManager:
         target_norad_cat_id: int | None = None,
     ) -> dict[str, int]:
         """
-        SATNOGSからトランスポンダ情報を取得してDBを更新する。
-        manual_override=True のレコードは上書きしない。
+        Fetch transponder information from SATNOGS and update the DB.
+        Records with manual_override=True are not overwritten.
 
         Args:
-            norad_cat_id:        指定すると1衛星のみ同期。Noneで全件。
-            progress_callback:   (current, total) を受け取るコールバック
-            target_norad_cat_id: 保存先 NORAD ID のオーバーライド。
-                                 CelesTrakとSatNOGSで NORAD が異なる場合に使用。
-                                 指定すると取得した全レコードをこの NORAD で保存する。
+            norad_cat_id:        If specified, syncs only that satellite. None syncs all.
+            progress_callback:   Callback receiving (current, total)
+            target_norad_cat_id: Override for the storage NORAD ID.
+                                 Used when CelesTrak and SatNOGS have different NORADs.
+                                 When specified, all fetched records are saved under this NORAD.
 
         Returns:
             {"inserted": N, "updated": N, "skipped": N}
@@ -235,7 +235,7 @@ class TransmitterManager:
             if not xpdr_uuid:
                 continue
 
-            # manual_override=1 のレコードはスキップ
+            # Skip records with manual_override=1
             existing = self._conn.execute(
                 "SELECT manual_override FROM transmitters WHERE uuid = ?",
                 (xpdr_uuid,),
@@ -249,15 +249,15 @@ class TransmitterManager:
             if not sat_id:
                 continue
 
-            # norad_follow_id（正式NORAD）が存在する場合は保存先として優先する。
-            # これにより仮NORAD(例: 98325)のデータが正式NORAD(例: 68795)に自動紐付けされる。
+            # If norad_follow_id (official NORAD) exists, use it as the storage destination.
+            # This automatically links provisional NORAD (e.g. 98325) data to the official NORAD (e.g. 68795).
             auto_storage = (
                 xpdr.get("norad_follow_id") or xpdr.get("satellite__norad_cat_id") or sat_id
             )
-            # target_norad_cat_id が明示指定された場合はそちらを優先（後方互換）
+            # Prefer target_norad_cat_id when explicitly specified (backward compatibility)
             storage_id = target_norad_cat_id if target_norad_cat_id is not None else auto_storage
 
-            # 衛星レコード確保
+            # Ensure the satellite record exists
             self._conn.execute(
                 """
                 INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)
@@ -266,8 +266,8 @@ class TransmitterManager:
                 (storage_id, xpdr.get("description", f"#{storage_id}"), now),
             )
 
-            # 仮NORADが正式NORADと異なる → 仮NORAD衛星を自動非表示(is_hidden=2)
-            # target_norad_cat_id が外部指定された場合は対象外（後方互換）
+            # Provisional NORAD differs from official NORAD → auto-hide provisional NORAD satellite (is_hidden=2)
+            # Not applicable when target_norad_cat_id is externally specified (backward compatibility)
             if target_norad_cat_id is None and int(auto_storage) != int(sat_id):
                 self._conn.execute(
                     "UPDATE satellites SET is_hidden = 2 WHERE norad_cat_id = ? AND is_hidden = 0",
@@ -286,8 +286,8 @@ class TransmitterManager:
                 xpdr.get("mode"),
                 int(bool(xpdr.get("invert", False))),
                 xpdr.get("baud"),
-                xpdr.get("ctcss_tone"),  # SATNOGSがあれば
-                None,  # tone_type: SATNOGSに無い場合
+                xpdr.get("ctcss_tone"),  # if available from SATNOGS
+                None,  # tone_type: not available in SATNOGS
                 int(bool(xpdr.get("alive", True))),
                 now,
             )
@@ -321,9 +321,9 @@ class TransmitterManager:
                 )
                 stats["inserted"] += 1
 
-        # トランスミッターが0件かつSatNOGS未登録(status='unknown')の孤立衛星を自動非表示。
-        # これは sync_from_satnogs() 完了後の最終状態に基づいて判定するため、
-        # 全トランスミッターの処理が終わった後に1回だけ実行する。
+        # Auto-hide orphan satellites with 0 transmitters and not registered in SatNOGS (status='unknown').
+        # This is determined from the final state after sync_from_satnogs() completes,
+        # so it runs only once after all transmitters have been processed.
         self._conn.execute(
             """
             UPDATE satellites SET is_hidden = 2
@@ -341,11 +341,11 @@ class TransmitterManager:
         self,
         progress_callback: Any = None,
     ) -> dict[str, int]:
-        """SATNOGSから全衛星名を取得してsatellitesテーブルのnameを更新する。
+        """Fetch all satellite names from SATNOGS and update the name column in the satellites table.
 
-        CelesTrakは暫定名（OBJECT C など）を使うことがあるため、
-        正式名をSATNOGSから取得して上書きする。
-        DBに存在しない衛星（TLE未取得）はスキップする。
+        CelesTrak sometimes uses provisional names (e.g. OBJECT C), so the official name
+        is fetched from SATNOGS and used to overwrite it.
+        Satellites not in the DB (TLE not yet fetched) are skipped.
 
         Returns:
             {"updated": N, "skipped": N}
@@ -382,7 +382,7 @@ class TransmitterManager:
                     raw_status = str(sat.get("status", "unknown")).lower()
                     status = _SATNOGS_STATUS_MAP.get(raw_status, "unknown")
 
-                    # norad_follow_id が自身と異なる → 仮NORADの残骸衛星
+                    # norad_follow_id differs from its own NORAD → provisional NORAD remnant satellite
                     follow_raw = sat.get("norad_follow_id")
                     norad_follow = int(follow_raw) if follow_raw else None
                     is_remnant = bool(norad_follow and norad_follow != norad)
@@ -399,7 +399,7 @@ class TransmitterManager:
                                 " is_hidden = 2, updated_at = ? WHERE norad_cat_id = ?",
                                 (name, status, now, norad),
                             )
-                            # follow先の正式NORADのstatusが'unknown'なら引き継ぐ
+                            # Propagate status to the official NORAD if it is still 'unknown'
                             if norad_follow is not None and status in ("alive", "dead"):
                                 self._conn.execute(
                                     "UPDATE satellites SET status = ?, updated_at = ?"
@@ -420,7 +420,7 @@ class TransmitterManager:
                     if progress_callback:
                         progress_callback(total_processed)
 
-        # トランスミッターが0件かつstatus='unknown'の孤立衛星を自動非表示。
+        # Auto-hide orphan satellites with 0 transmitters and status='unknown'.
         self._conn.execute(
             """
             UPDATE satellites SET is_hidden = 2
@@ -450,11 +450,11 @@ class TransmitterManager:
         self._conn.commit()
 
     # ------------------------------------------------------------------ #
-    # エクスポート / インポート
+    # Export / Import
     # ------------------------------------------------------------------ #
 
     def export_manual_transmitters(self) -> list[dict[str, Any]]:
-        """手動追加トランスポンダをJSONシリアライズ可能な形式で返す"""
+        """Return manually added transponders in a JSON-serializable format"""
         rows = self._conn.execute("""
             SELECT * FROM transmitters WHERE source = 'manual'
         """).fetchall()
@@ -462,8 +462,8 @@ class TransmitterManager:
 
     def import_transmitters(self, data: list[dict[str, Any]]) -> int:
         """
-        JSONからトランスポンダをインポートする。
-        既存UUIDは上書き（upsert）。
+        Import transponders from JSON.
+        Existing UUIDs are overwritten (upsert).
         """
         now = datetime.now(UTC).isoformat()
         count = 0

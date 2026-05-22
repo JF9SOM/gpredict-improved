@@ -1,19 +1,19 @@
 """
-FastAPI アプリケーション
+FastAPI application.
 
-create_app() で依存オブジェクトを受け取り、設定済み FastAPI インスタンスを返す。
-テスト時はインメモリ DB と None エンジンで生成できる。
+create_app() receives dependency objects and returns a configured FastAPI instance.
+For tests it can be created with an in-memory DB and None engine.
 
-エンドポイント一覧:
-    GET  /api/satellites                    — 衛星一覧
-    GET  /api/favorites                     — お気に入り衛星一覧
-    POST /api/favorites/{norad}             — お気に入りに追加
-    DEL  /api/favorites/{norad}             — お気に入りから削除
-    GET  /api/satellites/{norad}/transmitters — トランスポンダ一覧
-    GET  /api/satellites/{norad}/passes     — パス予測
-    GET  /api/tle/status                    — TLE 品質一覧
-    GET  /api/status                        — サーバー状態・バージョン
-    WS   /ws/tracking?norad=XXXXX          — リアルタイム追尾データ
+Endpoints:
+    GET  /api/satellites                    — satellite list
+    GET  /api/favorites                     — favorite satellite list
+    POST /api/favorites/{norad}             — add to favorites
+    DEL  /api/favorites/{norad}             — remove from favorites
+    GET  /api/satellites/{norad}/transmitters — transmitter list
+    GET  /api/satellites/{norad}/passes     — pass prediction
+    GET  /api/tle/status                    — TLE quality list
+    GET  /api/status                        — server status / version
+    WS   /ws/tracking?norad=XXXXX          — real-time tracking data
 """
 
 from __future__ import annotations
@@ -56,12 +56,12 @@ APP_VERSION = "0.1.0"
 
 
 # ---------------------------------------------------------------------------
-# Pydantic レスポンスモデル
+# Pydantic response models
 # ---------------------------------------------------------------------------
 
 
 class SatelliteOut(BaseModel):
-    """衛星基本情報レスポンス"""
+    """Satellite basic information response."""
 
     norad_cat_id: int
     name: str
@@ -71,7 +71,7 @@ class SatelliteOut(BaseModel):
 
 
 class TransmitterOut(BaseModel):
-    """トランスポンダ情報レスポンス"""
+    """Transmitter/transponder information response."""
 
     uuid: str
     norad_cat_id: int
@@ -93,24 +93,24 @@ class TransmitterOut(BaseModel):
 
 
 class PassOut(BaseModel):
-    """パス予測レスポンス（時刻は ISO 8601 UTC 文字列）"""
+    """Pass prediction response (timestamps as ISO 8601 UTC strings)."""
 
     norad_cat_id: int
     aos: str
     tca: str
     los: str
     max_elevation_deg: float
-    max_elevation_time: str  # TCA と同値（API 利便性のための別名）
+    max_elevation_time: str  # same as TCA (convenience alias for API consumers)
     aos_azimuth_deg: float
     los_azimuth_deg: float
     duration_s: float
-    duration_seconds: float  # duration_s と同値（フロントエンド利便性のための別名）
+    duration_seconds: float  # same as duration_s (convenience alias for frontend)
     quality: str  # "excellent" | "good" | "fair" | "low"
-    track_points: list[dict[str, float]] | None = None  # track=true 時のみ返す
+    track_points: list[dict[str, float]] | None = None  # included only when track=true
 
 
 class GroupPassOut(BaseModel):
-    """グループパス予測レスポンス"""
+    """Group pass prediction response."""
 
     norad_cat_id: int
     sat_name: str
@@ -125,7 +125,7 @@ class GroupPassOut(BaseModel):
 
 
 class TLEStatusOut(BaseModel):
-    """TLE 品質情報レスポンス"""
+    """TLE quality information response."""
 
     norad_cat_id: int
     name: str
@@ -136,7 +136,7 @@ class TLEStatusOut(BaseModel):
 
 
 class ServerStatusOut(BaseModel):
-    """サーバー状態レスポンス"""
+    """Server status response."""
 
     version: str
     status: str
@@ -146,7 +146,7 @@ class ServerStatusOut(BaseModel):
 
 
 class BrowserLocationIn(BaseModel):
-    """ブラウザ Geolocation API からの位置情報リクエスト"""
+    """Location request from the browser Geolocation API."""
 
     latitude: float
     longitude: float
@@ -155,7 +155,7 @@ class BrowserLocationIn(BaseModel):
 
 
 class LocationOut(BaseModel):
-    """自局位置情報レスポンス"""
+    """Observer (QTH) location response."""
 
     latitude_deg: float
     longitude_deg: float
@@ -168,13 +168,13 @@ class LocationOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# ユーティリティ
+# Utilities
 # ---------------------------------------------------------------------------
 
 
 def pass_quality(max_elevation_deg: float) -> str:
     """
-    最大仰角からパスの品質ランクを返す。
+    Return the quality rank for a pass based on its maximum elevation.
 
     Returns:
         "excellent" (>=60°) / "good" (>=30°) / "fair" (>=10°) / "low" (<10°)
@@ -189,7 +189,7 @@ def pass_quality(max_elevation_deg: float) -> str:
 
 
 def _parse_alt_names(raw: Any) -> list[str]:
-    """alt_names カラム（JSON 文字列 or None）を list[str] に変換する。"""
+    """Convert the alt_names column (JSON string or None) to list[str]."""
     if raw is None:
         return []
     if isinstance(raw, list):
@@ -202,7 +202,7 @@ def _parse_alt_names(raw: Any) -> list[str]:
 
 
 def _build_tracking_payload(norad: int, engine: SatelliteEngine | None) -> dict[str, Any]:
-    """WebSocket に送る追尾データ辞書を生成する。"""
+    """Build the tracking data dict to send over WebSocket."""
     if engine is None:
         return {"norad": norad, "error": "engine not available"}
     obs = engine.observe(norad)
@@ -220,12 +220,12 @@ def _build_tracking_payload(norad: int, engine: SatelliteEngine | None) -> dict[
 
 
 # ---------------------------------------------------------------------------
-# アプリファクトリー
+# App factory
 # ---------------------------------------------------------------------------
 
 
 def _get_amsat_map(db: sqlite3.Connection) -> dict[str, str]:
-    """AMSAT 運用状況マップを DB から取得する。"""
+    """Fetch the AMSAT operational status map from the DB."""
     row = db.execute("SELECT value FROM app_settings WHERE key = 'amsat_status_data'").fetchone()
     if row is None or not row[0]:
         return {}
@@ -236,7 +236,7 @@ def _get_amsat_map(db: sqlite3.Connection) -> dict[str, str]:
 
 
 def _amsat_status(name: str, amsat_map: dict[str, str]) -> str | None:
-    """AMSAT 運用状況マップから衛星の運用状況を返す（単語境界マッチング）。"""
+    """Return the operational status for a satellite from the AMSAT map (word-boundary matching)."""
     lower = name.lower()
     if lower in amsat_map:
         return amsat_map[lower]
@@ -253,7 +253,7 @@ def _amsat_status(name: str, amsat_map: dict[str, str]) -> str | None:
 
 
 def _parse_dt_utc(s: str) -> datetime:
-    """ISO 8601 文字列を UTC aware datetime に変換する。タイムゾーン未指定は UTC とみなす。"""
+    """Convert an ISO 8601 string to a UTC-aware datetime. Naive strings are treated as UTC."""
     dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
@@ -267,7 +267,7 @@ def _compute_track_points(
     engine: SatelliteEngine,
     step_s: int = 15,
 ) -> list[dict[str, float]]:
-    """AOS から LOS まで step_s 秒刻みで仰角・方位角のリストを返す。"""
+    """Return elevation/azimuth samples from AOS to LOS at step_s-second intervals."""
     points: list[dict[str, float]] = []
     t = aos
     while t <= los:
@@ -279,7 +279,7 @@ def _compute_track_points(
 
 
 def _location_to_out(loc: Location, mgr: LocationManager) -> LocationOut:
-    """Location オブジェクトを LocationOut レスポンスモデルに変換する。"""
+    """Convert a Location object to a LocationOut response model."""
     return LocationOut(
         latitude_deg=loc.latitude_deg,
         longitude_deg=loc.longitude_deg,
@@ -301,18 +301,18 @@ def create_app(
     location_manager: LocationManager | None = None,
 ) -> FastAPI:
     """
-    FastAPI アプリケーションを生成して返す。
+    Create and return a configured FastAPI application.
 
     Args:
-        conn:             SQLite 接続（衛星・トランスポンダ・TLE クエリ用）
-        tle_manager:      TLE マネージャー（品質一覧取得用）
-        pass_predictor:   パス予測器。None の場合はパス予測エンドポイントが空リストを返す
-        engine:           衛星エンジン。None の場合は WebSocket がエラーを返す
-        start_time:       アップタイム計算の起点。None なら現在時刻
-        location_manager: 位置情報マネージャー。None の場合は位置エンドポイントが 503 を返す
+        conn:             SQLite connection (for satellite/transmitter/TLE queries)
+        tle_manager:      TLE manager (for quality list retrieval)
+        pass_predictor:   Pass predictor. Pass endpoints return empty list when None.
+        engine:           Satellite engine. WebSocket returns an error when None.
+        start_time:       Uptime calculation base. Defaults to now when None.
+        location_manager: Location manager. Location endpoints return 503 when None.
 
     Returns:
-        設定済み FastAPI インスタンス
+        Configured FastAPI instance
     """
     _start = start_time or datetime.now(UTC)
     manager = ConnectionManager()
@@ -320,7 +320,7 @@ def create_app(
     app = FastAPI(
         title="GPredict-Improved API",
         version=APP_VERSION,
-        description="衛星追尾ソフトウェア GPredict-Improved の REST / WebSocket API",
+        description="REST / WebSocket API for the satellite tracking software GPredict-Improved",
     )
 
     _static = _find_static_dir()
@@ -328,24 +328,24 @@ def create_app(
         app.mount("/static", StaticFiles(directory=str(_static)), name="static")
 
     # ------------------------------------------------------------------ #
-    # 依存関数（クロージャでキャプチャ）
+    # Dependency functions (captured by closure)
     # ------------------------------------------------------------------ #
 
     def get_conn() -> sqlite3.Connection:
-        """SQLite 接続を返す依存関数。"""
+        """Return the SQLite connection."""
         return conn
 
     def get_tle_manager() -> TLEManager:
-        """TLEManager を返す依存関数。"""
+        """Return the TLEManager."""
         return tle_manager
 
     # ------------------------------------------------------------------ #
-    # REST エンドポイント
+    # REST endpoints
     # ------------------------------------------------------------------ #
 
     @app.get("/", response_class=HTMLResponse, response_model=None)
     async def root() -> HTMLResponse:
-        """スマホ向けメインページを返す。"""
+        """Return the main page for mobile browsers."""
         static_dir = _find_static_dir()
         if static_dir is not None:
             index_html = static_dir / "index.html"
@@ -359,7 +359,7 @@ def create_app(
     async def get_amsat_status(
         db: sqlite3.Connection = Depends(get_conn),
     ) -> dict[str, str]:
-        """AMSAT 運用状況マップを返す。{"衛星名小文字": "operational|non_operational"} 形式。"""
+        """Return the AMSAT operational status map as {"lowercase_name": "operational|non_operational"}."""
         row = db.execute(
             "SELECT value FROM app_settings WHERE key = 'amsat_status_data'"
         ).fetchone()
@@ -372,10 +372,10 @@ def create_app(
 
     @app.get("/api/satellites", response_model=list[SatelliteOut])
     async def list_satellites(
-        group: str | None = Query(default=None, description="tle_group フィルター"),
+        group: str | None = Query(default=None, description="tle_group filter"),
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[SatelliteOut]:
-        """衛星一覧を名前順で返す。group を指定するとグループでフィルタリング。"""
+        """Return the satellite list sorted by name. Filtered by group when specified."""
         if group == "operational":
             amsat_map = _get_amsat_map(db)
             rows = db.execute(
@@ -427,7 +427,7 @@ def create_app(
     async def list_favorites(
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[SatelliteOut]:
-        """お気に入り衛星一覧を返す（is_favorite=1）。"""
+        """Return the list of favorite satellites (is_favorite=1)."""
         rows = db.execute(
             "SELECT norad_cat_id, name, alt_names, status, updated_at"
             " FROM satellites WHERE is_favorite = 1 ORDER BY name"
@@ -448,7 +448,7 @@ def create_app(
         norad: int,
         db: sqlite3.Connection = Depends(get_conn),
     ) -> None:
-        """指定衛星をお気に入りに追加する（is_favorite=1）。存在しなければ 404。"""
+        """Add the specified satellite to favorites (is_favorite=1). Returns 404 if not found."""
         if (
             db.execute("SELECT 1 FROM satellites WHERE norad_cat_id = ?", (norad,)).fetchone()
             is None
@@ -462,7 +462,7 @@ def create_app(
         norad: int,
         db: sqlite3.Connection = Depends(get_conn),
     ) -> None:
-        """指定衛星をお気に入りから削除する（is_favorite=0）。存在しなければ 404。"""
+        """Remove the specified satellite from favorites (is_favorite=0). Returns 404 if not found."""
         if (
             db.execute("SELECT 1 FROM satellites WHERE norad_cat_id = ?", (norad,)).fetchone()
             is None
@@ -479,7 +479,7 @@ def create_app(
         norad: int,
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[TransmitterOut]:
-        """指定衛星のトランスポンダ一覧を返す。衛星が存在しなければ 404。"""
+        """Return the transmitter list for the specified satellite. Returns 404 if not found."""
         if (
             db.execute("SELECT 1 FROM satellites WHERE norad_cat_id = ?", (norad,)).fetchone()
             is None
@@ -516,19 +516,19 @@ def create_app(
     @app.get("/api/satellites/{norad}/passes", response_model=list[PassOut])
     async def get_passes(
         norad: int,
-        hours: float = Query(default=24.0, gt=0, le=168, description="予測時間幅（時間）"),
-        min_el: float = Query(default=5.0, ge=0, le=90, description="最低仰角（度）"),
-        track: bool = Query(default=False, description="15秒刻みの軌跡点（az, el）を含める"),
-        from_dt: str | None = Query(default=None, description="開始日時 (ISO 8601)"),
-        to_dt: str | None = Query(default=None, description="終了日時 (ISO 8601)"),
+        hours: float = Query(default=24.0, gt=0, le=168, description="Prediction window (hours)"),
+        min_el: float = Query(default=5.0, ge=0, le=90, description="Minimum elevation (degrees)"),
+        track: bool = Query(default=False, description="Include 15-second track points (az, el)"),
+        from_dt: str | None = Query(default=None, description="Start datetime (ISO 8601)"),
+        to_dt: str | None = Query(default=None, description="End datetime (ISO 8601)"),
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[PassOut]:
         """
-        指定衛星のパス予測を返す。
+        Return pass predictions for the specified satellite.
 
-        track=true を指定すると各パスに 15 秒刻みの仰角・方位角リストが付く。
-        from_dt/to_dt を指定すると任意の期間を検索できる。省略時は now から hours 時間。
-        pass_predictor が None の場合は常に空リストを返す（エンジンなし状態）。
+        With track=true each pass includes 15-second elevation/azimuth samples.
+        from_dt/to_dt allows a custom time range; defaults to now + hours when omitted.
+        Returns an empty list when pass_predictor is None (no engine).
         """
         if (
             db.execute("SELECT 1 FROM satellites WHERE norad_cat_id = ?", (norad,)).fetchone()
@@ -580,13 +580,13 @@ def create_app(
 
     @app.get("/api/passes/group", response_model=list[GroupPassOut])
     async def get_group_passes(
-        group: str = Query(default="amateur", description="グループフィルター"),
-        from_dt: str | None = Query(default=None, description="開始日時 (ISO 8601)"),
-        to_dt: str | None = Query(default=None, description="終了日時 (ISO 8601)"),
-        min_el: float = Query(default=5.0, ge=0, le=90, description="最低仰角（度）"),
+        group: str = Query(default="amateur", description="Group filter"),
+        from_dt: str | None = Query(default=None, description="Start datetime (ISO 8601)"),
+        to_dt: str | None = Query(default=None, description="End datetime (ISO 8601)"),
+        min_el: float = Query(default=5.0, ge=0, le=90, description="Minimum elevation (degrees)"),
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[GroupPassOut]:
-        """グループ内全衛星のパス予測を AOS 順で返す。pass_predictor が None の場合は空リスト。"""
+        """Return pass predictions for all satellites in the group sorted by AOS. Empty list when pass_predictor is None."""
         now = datetime.now(UTC)
         try:
             start = _parse_dt_utc(from_dt) if from_dt is not None else now
@@ -652,7 +652,7 @@ def create_app(
     async def tle_status(
         tm: TLEManager = Depends(get_tle_manager),
     ) -> list[TLEStatusOut]:
-        """全衛星の TLE 品質一覧を返す。品質スコア昇順（poor が先）。"""
+        """Return TLE quality for all satellites sorted by quality score ascending (poor first)."""
         rows = tm.get_all_quality_status()
         return [
             TLEStatusOut(
@@ -670,7 +670,7 @@ def create_app(
     async def server_status(
         db: sqlite3.Connection = Depends(get_conn),
     ) -> ServerStatusOut:
-        """サーバー状態・バージョン・DB 件数・アップタイムを返す。"""
+        """Return server status, version, DB record counts, and uptime."""
         sat_count: int = db.execute("SELECT COUNT(*) FROM satellites").fetchone()[0]
         tle_count: int = db.execute("SELECT COUNT(*) FROM tle_data").fetchone()[0]
         return ServerStatusOut(
@@ -683,7 +683,7 @@ def create_app(
 
     @app.get("/api/location", response_model=LocationOut)
     async def get_location() -> LocationOut:
-        """現在の自局位置情報を返す。位置が未設定の場合は 503 を返す。"""
+        """Return the current observer (QTH) location. Returns 503 if not configured."""
         if location_manager is None:
             raise HTTPException(status_code=503, detail="location manager not configured")
         loc = location_manager.current or location_manager.load_saved()
@@ -694,10 +694,10 @@ def create_app(
     @app.post("/api/location/browser", response_model=LocationOut)
     async def post_browser_location(body: BrowserLocationIn) -> LocationOut:
         """
-        ブラウザ Geolocation API から受け取った座標を保存する。
+        Store coordinates received from the browser Geolocation API.
 
-        フロントエンドの navigator.geolocation.getCurrentPosition() で取得した
-        座標をこのエンドポイントに POST することで自局位置を設定できる。
+        POST coordinates obtained by navigator.geolocation.getCurrentPosition()
+        on the frontend to this endpoint to set the observer location.
         """
         if location_manager is None:
             raise HTTPException(status_code=503, detail="location manager not configured")
@@ -716,15 +716,17 @@ def create_app(
     @app.websocket("/ws/tracking")
     async def ws_tracking(
         websocket: WebSocket,
-        norad: int = Query(default=25544, description="追尾する衛星の NORAD カタログ番号"),
+        norad: int = Query(
+            default=25544, description="NORAD catalog number of the satellite to track"
+        ),
     ) -> None:
         """
-        衛星追尾 WebSocket エンドポイント。
+        Satellite tracking WebSocket endpoint.
 
-        接続後、1 秒ごとに仰角・方位角・距離・視線速度を JSON で送信する。
-        エンジンが未設定または TLE がない場合はエラーペイロードを送信する。
+        Sends elevation, azimuth, range, and range-rate as JSON every second.
+        Sends an error payload when the engine is not configured or TLE is missing.
 
-        送信ペイロード例::
+        Example payload::
 
             {
                 "norad": 25544,

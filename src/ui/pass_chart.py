@@ -1,15 +1,15 @@
 """
-パス予測グラフィカル表示ウィジェット
+Graphical pass prediction display widget
 
-PassChartView  — PySide6 + QtCharts による仰角 vs 時刻チャート（時間範囲選択付き）
-pass_quality() — 最大仰角から品質ランクを返す共用ユーティリティ
-elevation_points() — AOS/TCA/LOS からサイン近似の仰角点列を生成する
+PassChartView  — elevation vs time chart using PySide6 + QtCharts (with time range selector)
+pass_quality() — shared utility that returns a quality rank from a maximum elevation
+elevation_points() — generates a sine-approximated elevation point sequence from AOS/TCA/LOS
 
-品質ランクと色:
-    excellent (>=60°): 緑 #2ecc71
-    good      (>=30°): 青 #3498db
-    fair      (>=10°): 黄 #f1c40f
-    low       (< 10°): グレー #95a5a6
+Quality ranks and colours:
+    excellent (>=60°): green  #2ecc71
+    good      (>=30°): blue   #3498db
+    fair      (>=10°): yellow #f1c40f
+    low       (< 10°): grey   #95a5a6
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from core.engine import PassInfo
 
 # ---------------------------------------------------------------------------
-# 定数
+# Constants
 # ---------------------------------------------------------------------------
 
 QUALITY_COLORS: dict[str, QColor] = {
@@ -63,16 +63,16 @@ _RANGE_OPTIONS: tuple[tuple[str, float], ...] = (
 
 
 # ---------------------------------------------------------------------------
-# ユーティリティ（UI に依存しない純粋関数）
+# Utilities (pure functions with no UI dependency)
 # ---------------------------------------------------------------------------
 
 
 def pass_quality(max_elevation_deg: float) -> str:
     """
-    最大仰角からパスの品質ランク文字列を返す。
+    Return the pass quality rank string from a maximum elevation.
 
     Args:
-        max_elevation_deg: パスの最大仰角（度）
+        max_elevation_deg: maximum elevation of the pass (degrees)
 
     Returns:
         "excellent" (>=60) / "good" (>=30) / "fair" (>=10) / "low" (<10)
@@ -94,20 +94,20 @@ def elevation_points(
     n_points: int = _ELEVATION_SAMPLE_POINTS,
 ) -> list[tuple[float, float]]:
     """
-    AOS・TCA・LOS と最大仰角からサイン近似の仰角点列を生成する。
+    Generate a sine-approximated elevation point sequence from AOS, TCA, LOS, and max elevation.
 
-    AOS→TCA 区間は sin(π·t/2)、TCA→LOS 区間は cos(π·t/2) で近似する。
-    x 値は Unix タイムスタンプ [ms]、y 値は仰角 [度]。
+    The AOS->TCA segment uses sin(pi*t/2) and the TCA->LOS segment uses cos(pi*t/2).
+    x values are Unix timestamps [ms]; y values are elevation [degrees].
 
     Args:
-        aos: 衛星可視開始時刻 (UTC)
-        tca: 最大仰角時刻 (UTC)
-        los: 衛星可視終了時刻 (UTC)
-        max_elevation_deg: 最大仰角（度）
-        n_points: AOS→TCA・TCA→LOS それぞれのサンプル数
+        aos: satellite rise time (UTC)
+        tca: time of maximum elevation (UTC)
+        los: satellite set time (UTC)
+        max_elevation_deg: maximum elevation (degrees)
+        n_points: number of samples for each of the AOS->TCA and TCA->LOS segments
 
     Returns:
-        (timestamp_ms, elevation_deg) のリスト
+        list of (timestamp_ms, elevation_deg) tuples
     """
     if aos.tzinfo is None:
         aos = aos.replace(tzinfo=UTC)
@@ -121,17 +121,17 @@ def elevation_points(
     los_ms = los.timestamp() * 1000.0
     points: list[tuple[float, float]] = []
 
-    # AOS → TCA（sin カーブ上昇）
+    # AOS -> TCA (sin curve rising)
     for i in range(n_points):
         t = i / n_points
         el = max_elevation_deg * math.sin(math.pi * t / 2.0)
         ms = aos_ms + t * (tca_ms - aos_ms)
         points.append((ms, el))
 
-    # TCA（頂点）
+    # TCA (peak)
     points.append((tca_ms, max_elevation_deg))
 
-    # TCA → LOS（cos カーブ下降）
+    # TCA -> LOS (cos curve descending)
     for i in range(1, n_points + 1):
         t = i / n_points
         el = max_elevation_deg * math.cos(math.pi * t / 2.0)
@@ -142,26 +142,26 @@ def elevation_points(
 
 
 # ---------------------------------------------------------------------------
-# PassChartView ウィジェット
+# PassChartView widget
 # ---------------------------------------------------------------------------
 
 
 class PassChartView(QWidget):
     """
-    衛星パスの仰角 vs 時刻チャートを表示する PySide6 ウィジェット。
+    PySide6 widget that displays a satellite pass elevation vs time chart.
 
-    上部に時間範囲プルダウンを持ち、選択範囲内のパスのみ描画する。
-    各パス山頂には最大仰角ラベルを QGraphicsTextItem でシーンに直接配置する。
+    Has a time-range dropdown at the top and draws only passes within the selected range.
+    Peak elevation labels are placed directly in the scene as QGraphicsTextItems.
 
-    使い方::
+    Usage::
 
         chart = PassChartView()
         chart.set_passes(passes, sat_name="ISS (ZARYA)")
         layout.addWidget(chart)
 
     Signals:
-        pass_clicked(PassInfo): パスの曲線クリック時に発火する
-        range_changed(float):   時間範囲プルダウン変更時に選択時間数を emit する
+        pass_clicked(PassInfo): emitted when a pass curve is clicked
+        range_changed(float):   emits the selected number of hours when the time range changes
     """
 
     pass_clicked: Signal = Signal(object)  # emit(PassInfo)
@@ -177,7 +177,7 @@ class PassChartView(QWidget):
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
-    # UI 構築
+    # UI construction
     # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
@@ -185,7 +185,7 @@ class PassChartView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        # 時間範囲プルダウン
+        # Time range dropdown
         header = QWidget()
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(6, 2, 6, 2)
@@ -193,13 +193,13 @@ class PassChartView(QWidget):
         self._range_combo = QComboBox()
         for label, _ in _RANGE_OPTIONS:
             self._range_combo.addItem(label)
-        self._range_combo.setCurrentIndex(len(_RANGE_OPTIONS) - 1)  # "Next 24 hours" をデフォルト
+        self._range_combo.setCurrentIndex(len(_RANGE_OPTIONS) - 1)  # default to "Next 24 hours"
         self._range_combo.currentIndexChanged.connect(self._on_range_changed)
         h_layout.addWidget(self._range_combo)
         h_layout.addStretch()
         layout.addWidget(header)
 
-        # チャートビュー（アニメーション無効でシリーズが即時描画される）
+        # Chart view (animation disabled so series render immediately)
         self._chart = QChart()
         self._chart.setAnimationOptions(QChart.AnimationOption.NoAnimation)
         self._chart.legend().setVisible(True)
@@ -214,23 +214,23 @@ class PassChartView(QWidget):
         layout.addWidget(self._chart_view)
 
     # ------------------------------------------------------------------ #
-    # 公開 API
+    # Public API
     # ------------------------------------------------------------------ #
 
     def set_passes(self, passes: list[PassInfo], sat_name: str = "") -> None:
         """
-        表示するパスリストを設定してチャートを再描画する。
+        Set the pass list to display and redraw the chart.
 
         Args:
-            passes:   PassInfo のリスト（最大24時間分を推奨）
-            sat_name: チャートタイトルに使う衛星名
+            passes:   list of PassInfo objects (up to 24 hours recommended)
+            sat_name: satellite name used in the chart title
         """
         self._passes = passes
         self._sat_name = sat_name
         self._rebuild()
 
     def clear(self) -> None:
-        """チャートをクリアする。"""
+        """Clear the chart."""
         self._passes = []
         self._sat_name = ""
         self._series_to_pass = {}
@@ -242,7 +242,7 @@ class PassChartView(QWidget):
         self._chart.setTitle("")
 
     # ------------------------------------------------------------------ #
-    # チャート構築
+    # Chart construction
     # ------------------------------------------------------------------ #
 
     def _on_range_changed(self, _idx: int) -> None:
@@ -255,8 +255,8 @@ class PassChartView(QWidget):
         return _RANGE_OPTIONS[idx][1]
 
     def _rebuild(self) -> None:
-        """選択された時間範囲のパスでチャートを再構築する。"""
-        # 既存のピークラベルをシーンから除去してから series を削除する
+        """Rebuild the chart using passes within the selected time range."""
+        # Remove existing peak labels from the scene before deleting series
         self._clear_peak_labels()
         self._overlay = []
         self._chart.removeAllSeries()
@@ -293,7 +293,7 @@ class PassChartView(QWidget):
             quality = pass_quality(p.max_elevation_deg)
             overlay.append((series, p.max_elevation_deg, QUALITY_COLORS[quality]))
 
-        # 現在時刻ライン
+        # Current time line
         t_end = max(p.los for p in filtered)
         if now <= t_end:
             now_series = self._build_now_line(now)
@@ -301,7 +301,7 @@ class PassChartView(QWidget):
             now_series.attachAxis(dt_axis)
             now_series.attachAxis(el_axis)
 
-        # series 全追加後に range を設定（attachAxis が auto-range を上書きするため）
+        # Set the range after all series have been added (attachAxis overwrites auto-range)
         dt_axis.setRange(
             QDateTime.fromMSecsSinceEpoch(int(now.timestamp() * 1000)),
             QDateTime.fromMSecsSinceEpoch(int(cutoff.timestamp() * 1000)),
@@ -310,12 +310,12 @@ class PassChartView(QWidget):
 
         self._overlay = overlay
 
-        # Qt Charts のレイアウト計算が確定する 150ms 後にラベルをシーンへ配置する
-        # （mapToPosition() は layout 確定前だと不正な座標を返すため）
+        # Place labels in the scene 150 ms after Qt Charts finishes layout calculation
+        # (mapToPosition() returns incorrect coordinates before layout is finalised)
         QTimer.singleShot(150, self._add_peak_labels)
 
     def _clear_peak_labels(self) -> None:
-        """シーン上のピークラベル QGraphicsTextItem をすべて削除する。"""
+        """Remove all peak-label QGraphicsTextItems from the scene."""
         scene = self._chart.scene()
         if scene is not None:
             for item in self._peak_label_items:
@@ -323,31 +323,31 @@ class PassChartView(QWidget):
         self._peak_label_items.clear()
 
     def showEvent(self, event: object) -> None:  # noqa: ANN001
-        """タブ切り替えなどで表示された際にラベルを（再）配置する。
+        """(Re)place labels when the widget becomes visible (e.g. on tab switch).
 
-        showEvent 直後はチャートの描画マッピングが未確定なため、
-        小さな遅延を挟んでから _add_peak_labels() を呼ぶ。
+        The chart's drawing mapping is not yet finalised immediately after showEvent,
+        so _add_peak_labels() is called after a short delay.
         """
         super().showEvent(event)  # type: ignore[arg-type]
         if self._overlay:
             QTimer.singleShot(50, self._add_peak_labels)
 
     def _add_peak_labels(self, retry: int = 0) -> None:
-        """各パス山頂の仰角ラベルを QGraphicsTextItem としてシーンに配置する。
+        """Place elevation labels at each pass peak as QGraphicsTextItems in the scene.
 
-        根本原因と対策:
-          - QTabWidget の非アクティブタブは isVisible()=False。
-            このとき plotArea() は valid-looking なサイズを返すが、
-            chart 内部のデータ→ピクセル変換が未初期化のため
-            mapToPosition() が (0,0) 付近を返しラベルが左上隅に集まる。
-          - isVisible() を確認し、非表示なら何もせず showEvent に任せる。
-          - mapToPosition() はチャートローカル座標を返すため、
-            mapToScene() でシーン座標に変換してから setPos() に渡す。
-          - plotArea が極小の場合は最大 5 回まで 150ms 間隔でリトライする。
+        Root cause and mitigation:
+          - Inactive QTabWidget tabs have isVisible()=False.
+            In that state plotArea() returns a plausible size, but the chart's
+            internal data-to-pixel mapping is uninitialised, so mapToPosition()
+            returns values near (0,0) and all labels cluster in the top-left corner.
+          - Check isVisible() and do nothing if hidden (showEvent will trigger later).
+          - mapToPosition() returns chart-local coordinates, so convert to scene
+            coordinates with mapToScene() before calling setPos().
+          - If plotArea is very small, retry up to 5 times at 150 ms intervals.
         """
         self._clear_peak_labels()
 
-        # 非表示のチャートに対しては配置しない（showEvent でトリガーされる）
+        # Do not place labels on a hidden chart (showEvent will trigger them)
         if not self.isVisible():
             return
 
@@ -366,7 +366,7 @@ class PassChartView(QWidget):
         label_font.setBold(True)
 
         for series, max_el, color in self._overlay:
-            # 仰角が最大のデータ点を探す
+            # Find the data point with the highest elevation
             best: QPointF | None = None
             for i in range(series.count()):
                 pt = series.at(i)
@@ -376,12 +376,12 @@ class PassChartView(QWidget):
                 continue
 
             try:
-                # mapToPosition() はチャートローカル座標を返す
+                # mapToPosition() returns chart-local coordinates
                 chart_pt = self._chart.mapToPosition(best, series)
                 if not plot_area.contains(chart_pt):
                     continue
 
-                # チャートローカル座標 → シーン座標に変換してから配置する
+                # Convert chart-local coordinates to scene coordinates before placing
                 scene_pos = self._chart.mapToScene(chart_pt)
 
                 lbl = f"{max_el:.0f}°"
@@ -440,7 +440,7 @@ class PassChartView(QWidget):
         return series
 
     # ------------------------------------------------------------------ #
-    # シグナルハンドラー
+    # Signal handlers
     # ------------------------------------------------------------------ #
 
     def _on_series_clicked(self, point: QPointF) -> None:

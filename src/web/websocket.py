@@ -1,8 +1,8 @@
 """
-WebSocket 接続マネージャー
+WebSocket connection manager.
 
-ConnectionManager が全クライアントへのブロードキャストとセッション管理を担う。
-FastAPI WebSocket ハンドラーと 1 秒ブロードキャストループから呼ばれる。
+ConnectionManager handles broadcasting to all clients and session management.
+Called from FastAPI WebSocket handlers and the 1-second broadcast loop.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 
 class ConnectionManager:
     """
-    WebSocket 接続の追加・削除と全クライアントへの一斉送信を管理するクラス。
+    Manages WebSocket connection registration/removal and broadcasting to all clients.
 
-    すべてのメソッドは FastAPI が動かす asyncio イベントループ内で呼ばれるため、
-    asyncio.Lock でアクセスを直列化する。
+    All methods run inside the asyncio event loop driven by FastAPI,
+    so access is serialized with asyncio.Lock.
     """
 
     def __init__(self) -> None:
@@ -29,28 +29,28 @@ class ConnectionManager:
         self._lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ #
-    # 接続管理
+    # Connection management
     # ------------------------------------------------------------------ #
 
     async def connect(self, ws: WebSocket) -> None:
-        """WebSocket ハンドシェイクを完了し、接続を登録する。"""
+        """Complete the WebSocket handshake and register the connection."""
         await ws.accept()
         async with self._lock:
             self._active.add(ws)
         logger.info("WS: client connected  (total=%d)", len(self._active))
 
     async def disconnect(self, ws: WebSocket) -> None:
-        """接続を登録から外す。既に外れていても安全。"""
+        """Unregister the connection. Safe to call even if already disconnected."""
         async with self._lock:
             self._active.discard(ws)
         logger.info("WS: client disconnected (total=%d)", len(self._active))
 
     # ------------------------------------------------------------------ #
-    # 送信
+    # Sending
     # ------------------------------------------------------------------ #
 
     async def broadcast_json(self, data: dict[str, Any]) -> None:
-        """接続中の全クライアントに JSON データを送信する。送信失敗した接続は切断扱い。"""
+        """Send JSON data to all connected clients. Failed connections are treated as disconnected."""
         async with self._lock:
             targets = set(self._active)
 
@@ -67,17 +67,17 @@ class ConnectionManager:
             logger.info("WS: removed %d dead connection(s)", len(dead))
 
     async def send_json(self, ws: WebSocket, data: dict[str, Any]) -> None:
-        """特定クライアントに JSON データを送信する。失敗したら接続を切断扱い。"""
+        """Send JSON data to a specific client. Treats the connection as disconnected on failure."""
         try:
             await ws.send_json(data)
         except Exception:
             await self.disconnect(ws)
 
     # ------------------------------------------------------------------ #
-    # 状態参照
+    # State
     # ------------------------------------------------------------------ #
 
     @property
     def connection_count(self) -> int:
-        """現在の接続数。"""
+        """Current number of active connections."""
         return len(self._active)

@@ -1,8 +1,8 @@
 """
-uvicorn サーバー起動・停止ヘルパー
+uvicorn server start/stop helper.
 
-Qt6 バックグラウンドスレッドから呼び出し、asyncio イベントループごと
-uvicorn を別スレッドで動かす。メインスレッド（Qt6 UI）はブロックしない。
+Called from a Qt6 background thread; runs uvicorn with its own asyncio event loop
+in a separate thread so the main thread (Qt6 UI) is never blocked.
 """
 
 from __future__ import annotations
@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 
 def get_lan_ip() -> str:
     """
-    LAN 内 IP アドレスを返す。
+    Return the LAN IP address.
 
-    UDP ソケットを外部に向けて接続することで、OS に使用するインターフェースを
-    選ばせる。実際にはデータを送信しない。
-    ネットワーク未接続の場合は "127.0.0.1" を返す。
+    Connects a UDP socket toward an external address so the OS selects the
+    outbound interface. No data is actually sent.
+    Returns "127.0.0.1" when not connected to any network.
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -36,15 +36,15 @@ def get_lan_ip() -> str:
 
 class WebServer:
     """
-    uvicorn を バックグラウンドスレッドで起動・停止するヘルパークラス。
+    Helper class that starts and stops uvicorn in a background thread.
 
-    Qt6 の QThread または通常の threading.Thread から使う。
+    Use from a Qt6 QThread or a plain threading.Thread.
 
-    使い方::
+    Usage::
 
         server = WebServer(app, port=8080)
-        url = server.start()  # → "http://192.168.1.10:8080"
-        # ... アプリ使用 ...
+        url = server.start()  # -> "http://192.168.1.10:8080"
+        # ... use the app ...
         server.stop()
     """
 
@@ -57,10 +57,10 @@ class WebServer:
     ) -> None:
         """
         Args:
-            app:       FastAPI (ASGI) アプリケーション
-            host:      バインドアドレス（デフォルト全 IF）
-            port:      ポート番号（デフォルト 8080）
-            log_level: uvicorn ログレベル
+            app:       FastAPI (ASGI) application
+            host:      Bind address (default all interfaces)
+            port:      Port number (default 8080)
+            log_level: uvicorn log level
         """
         self._app = app
         self._host = host
@@ -70,15 +70,15 @@ class WebServer:
         self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ #
-    # 公開 API
+    # Public API
     # ------------------------------------------------------------------ #
 
     def start(self) -> str:
         """
-        サーバーをバックグラウンドスレッドで起動する。
+        Start the server in a background thread.
 
         Returns:
-            LAN 内アクセス URL（例: "http://192.168.1.10:8080"）
+            LAN access URL (e.g. "http://192.168.1.10:8080")
         """
         if self._thread is not None and self._thread.is_alive():
             logger.warning("WebServer.start() called while already running — ignored")
@@ -104,10 +104,10 @@ class WebServer:
 
     def stop(self, timeout: float = 5.0) -> None:
         """
-        サーバーを停止してスレッドが終了するのを待つ。
+        Stop the server and wait for the thread to finish.
 
         Args:
-            timeout: スレッド終了待ちのタイムアウト秒数
+            timeout: Seconds to wait for the thread to exit
         """
         if self._server is not None:
             self._server.should_exit = True
@@ -119,15 +119,15 @@ class WebServer:
 
     @property
     def is_running(self) -> bool:
-        """サーバーが起動中かどうか。"""
+        """Whether the server is currently running."""
         return self._thread is not None and self._thread.is_alive()
 
     # ------------------------------------------------------------------ #
-    # 内部
+    # Internal
     # ------------------------------------------------------------------ #
 
     def _run(self) -> None:
-        """スレッドのエントリーポイント。asyncio ループを生成して uvicorn を実行する。"""
+        """Thread entry point. Creates an asyncio loop and runs uvicorn."""
         assert self._server is not None
         asyncio.run(self._server.serve())
 

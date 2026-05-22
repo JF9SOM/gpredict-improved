@@ -1,9 +1,10 @@
 """
-リグ設定ダイアログ
+Rig settings dialog.
 
-RigSettingsDialog — Radio > Rig Settings で開くダイアログ。
-Hamlib 直接接続 / NET (rigctld) 接続を選択できる。
-Hamlib Python バインディングから全機種を取得し、検索フィルター付きで表示する。
+RigSettingsDialog — Dialog opened from Radio > Rig Settings.
+Supports Hamlib direct connection and NET (rigctld) connection.
+Fetches all supported models from the Hamlib Python binding and
+displays them with a search filter.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from PySide6.QtWidgets import (
 from i18n import _
 
 # ---------------------------------------------------------------------------
-# Hamlib Python バインディング（利用可能な場合のみ）
+# Hamlib Python binding (imported only when available)
 # ---------------------------------------------------------------------------
 
 try:
@@ -45,11 +46,11 @@ except ModuleNotFoundError:
     _HAMLIB_OK = False
 
 # ---------------------------------------------------------------------------
-# フォールバックモデルリスト（Hamlib Python バインディングが使えない環境用）
-# Hamlib 4.x の実際のモデル番号を使用
+# Fallback model list (for environments without the Hamlib Python binding).
+# Uses actual Hamlib 4.x model numbers.
 # ---------------------------------------------------------------------------
 _FALLBACK_MODELS: list[tuple[int, str, str]] = [
-    # Hamlib 内部
+    # Hamlib internal
     (1, "Hamlib", "Dummy"),
     (2, "Hamlib", "NET rigctl"),
     (4, "FLRig", "FLRig"),
@@ -163,13 +164,13 @@ _FALLBACK_MODELS: list[tuple[int, str, str]] = [
 
 
 def _load_from_hamlib_api() -> list[tuple[int, str, str]]:
-    """``Hamlib.riglist`` 辞書から全サポートモデルを取得する。
+    """Fetch all supported models from the ``Hamlib.riglist`` dictionary.
 
-    ``Hamlib.riglist`` は ``{model_id: RigCaps}`` 形式の辞書で、
-    各値の ``.mfg_name`` / ``.model_name`` 属性からメーカー・機種名を取得できる。
+    ``Hamlib.riglist`` is a ``{model_id: RigCaps}`` dict whose values expose
+    ``.mfg_name`` and ``.model_name`` attributes for the manufacturer and model.
 
     Returns:
-        (model_id, manufacturer, model_name) のリスト。取得失敗時は空リスト。
+        List of (model_id, manufacturer, model_name). Empty on failure.
     """
     if not _HAMLIB_OK or _hamlib_mod is None:
         return []
@@ -186,14 +187,14 @@ def _load_from_hamlib_api() -> list[tuple[int, str, str]]:
 
 
 def _load_hamlib_models() -> list[tuple[int, str, str]]:
-    """全 Hamlib サポートモデルを取得してメーカー・機種名順でソートして返す。
+    """Return all supported Hamlib models sorted by manufacturer and model name.
 
-    取得優先順位:
-        1. Hamlib Python バインディングの ``riglist`` 辞書
-        2. ハードコードされたフォールバックリスト
+    Priority:
+        1. ``riglist`` dictionary from the Hamlib Python binding
+        2. Hard-coded fallback list
 
     Returns:
-        (model_id, manufacturer, model_name) のリスト。
+        List of (model_id, manufacturer, model_name).
     """
     models = _load_from_hamlib_api()
     if not models:
@@ -202,7 +203,7 @@ def _load_hamlib_models() -> list[tuple[int, str, str]]:
 
 
 def _scan_serial_ports() -> list[str]:
-    """利用可能なシリアルポートをスキャンして返す。追加依存なし。"""
+    """Scan for available serial ports and return them. No extra dependencies needed."""
     if sys.platform.startswith("win"):
         try:
             import winreg  # type: ignore[import]
@@ -237,9 +238,9 @@ def _scan_serial_ports() -> list[str]:
 
 
 class RigSettingsDialog(QDialog):
-    """Radio > Rig Settings ダイアログ。
+    """Radio > Rig Settings dialog.
 
-    Hamlib がサポートする全機種を検索フィルター付きで表示する。
+    Displays all Hamlib-supported models with a search filter.
     """
 
     def __init__(self, conn: Any, parent: QWidget | None = None) -> None:
@@ -254,13 +255,13 @@ class RigSettingsDialog(QDialog):
         self._on_scan_ports()
 
     # ------------------------------------------------------------------ #
-    # UI 構築
+    # UI construction
     # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        # --- 接続モード ---
+        # --- Connection mode ---
         mode_group = QGroupBox(_("Connection Mode"))
         mode_layout = QVBoxLayout(mode_group)
         self._radio_direct = QRadioButton(_("Direct (Hamlib built-in)"))
@@ -271,7 +272,7 @@ class RigSettingsDialog(QDialog):
         mode_layout.addWidget(self._radio_net)
         layout.addWidget(mode_group)
 
-        # --- Direct 設定 ---
+        # --- Direct connection settings ---
         self._direct_group = QGroupBox(_("Direct Connection Settings"))
         direct_form = QFormLayout(self._direct_group)
 
@@ -305,7 +306,7 @@ class RigSettingsDialog(QDialog):
 
         layout.addWidget(self._direct_group)
 
-        # --- NET 設定 ---
+        # --- NET connection settings ---
         self._net_group = QGroupBox(_("NET Connection Settings"))
         net_form = QFormLayout(self._net_group)
         self._host_edit = QLineEdit("localhost")
@@ -327,7 +328,7 @@ class RigSettingsDialog(QDialog):
         type_form.addRow(_("Radio Type:"), self._radio_type_combo)
         layout.addWidget(type_group)
 
-        # --- ステータス ---
+        # --- Status ---
         self._status_label = QLabel("")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._status_label)
@@ -341,31 +342,31 @@ class RigSettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     # ------------------------------------------------------------------ #
-    # モデルリスト
+    # Model list
     # ------------------------------------------------------------------ #
 
     def _load_models(self) -> None:
-        """Hamlib モデルリストを取得してコンボボックスを初期化する。"""
+        """Fetch the Hamlib model list and initialise the combo box."""
         self._all_models = _load_hamlib_models()
         self._populate_model_combo(self._all_models)
         n = len(self._all_models)
         self._status_label.setText(_("{n} rig models available").format(n=n))
 
     def _populate_model_combo(self, models: list[tuple[int, str, str]]) -> None:
-        """モデルコンボボックスを指定リストで更新する。現在の選択を可能な限り維持する。"""
+        """Update the model combo box with the given list, preserving the current selection."""
         current_id: int | None = self._model_combo.currentData()
         self._model_combo.clear()
         for mid, mfg, name in models:
             label = f"{mfg} — {name} (#{mid})" if mfg else f"{name} (#{mid})"
             self._model_combo.addItem(label, mid)
-        # 前回の選択を復元
+        # Restore the previous selection
         for i in range(self._model_combo.count()):
             if self._model_combo.itemData(i) == current_id:
                 self._model_combo.setCurrentIndex(i)
                 break
 
     def _on_model_search(self, text: str) -> None:
-        """検索テキストに応じてモデルリストをリアルタイムフィルタリングする。"""
+        """Filter the model list in real time as the user types."""
         query = text.lower().strip()
         if not query:
             self._populate_model_combo(self._all_models)
@@ -386,7 +387,7 @@ class RigSettingsDialog(QDialog):
             )
 
     # ------------------------------------------------------------------ #
-    # ポートスキャン / モード切り替え
+    # Port scan / mode toggle
     # ------------------------------------------------------------------ #
 
     def _on_mode_toggled(self, _checked: bool) -> None:
@@ -395,7 +396,7 @@ class RigSettingsDialog(QDialog):
         self._net_group.setVisible(not is_direct)
 
     def _on_scan_ports(self) -> None:
-        """シリアルポートをスキャンしてコンボボックスを更新する。"""
+        """Scan serial ports and update the combo box."""
         current = self._port_combo.currentText()
         ports = _scan_serial_ports()
         self._port_combo.clear()
@@ -412,7 +413,7 @@ class RigSettingsDialog(QDialog):
                 self._port_combo.setEditText(current)
 
     # ------------------------------------------------------------------ #
-    # 設定読み書き
+    # Settings load / save
     # ------------------------------------------------------------------ #
 
     def _load_settings(self) -> None:

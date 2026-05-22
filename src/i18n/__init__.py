@@ -1,15 +1,15 @@
 """
-多言語対応（i18n）基盤モジュール
+Internationalization (i18n) foundation module.
 
-Python 標準 gettext ベースの翻訳システム。
-新言語は locale/<lang>/LC_MESSAGES/gpredict_improved.po を追加して
-msgfmt でコンパイルするだけで対応可能。
+Translation system based on Python standard gettext.
+To add a new language, add locale/<lang>/LC_MESSAGES/gpredict_improved.po
+and compile it with msgfmt.
 
-使い方:
+Usage:
     from i18n import _, ngettext, set_language
 
     set_language("ja")
-    print(_("Satellite Tracker"))   # -> "衛星追尾ソフト"
+    print(_("Satellite Tracker"))   # -> translated string
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import threading
 from pathlib import Path
 
 _DOMAIN = "gpredict_improved"
-# プロジェクトルート直下の locale/ ディレクトリ
+# locale/ directory at the project root
 _LOCALE_DIR = Path(__file__).parent.parent.parent / "locale"
 
 _lock = threading.Lock()
@@ -28,30 +28,30 @@ _translation: gettext.NullTranslations = gettext.NullTranslations()
 
 
 # ---------------------------------------------------------------------------
-# 公開 API
+# Public API
 # ---------------------------------------------------------------------------
 
 
 def _(message: str) -> str:
-    """メッセージを現在の言語に翻訳して返す。
+    """Translate a message to the current language.
 
-    他モジュールが ``from i18n import _`` した後に set_language() を呼んでも、
-    常に最新の翻訳カタログを参照する。
+    Even if other modules do ``from i18n import _`` before set_language() is called,
+    they always reference the latest translation catalog.
     """
     return _translation.gettext(message)
 
 
 def ngettext(singular: str, plural: str, n: int) -> str:
-    """複数形に対応した翻訳関数。"""
+    """Translate with plural form support."""
     return _translation.ngettext(singular, plural, n)
 
 
 def set_language(lang: str) -> None:
-    """アクティブな言語を変更する。
+    """Change the active language.
 
     Args:
-        lang: 言語コード（"en"、"ja" など）。
-              対応する .mo ファイルが存在しない場合は英語（恒等変換）にフォールバック。
+        lang: Language code (e.g. "en", "ja").
+              Falls back to English (identity transform) if no matching .mo file exists.
     """
     global _translation, _current_lang
 
@@ -69,7 +69,7 @@ def set_language(lang: str) -> None:
                 languages=[lang],
             )
         except FileNotFoundError:
-            # .mo ファイルが存在しない場合は英語にフォールバック
+            # Fall back to English when no .mo file is found
             translation = gettext.NullTranslations()
 
         _translation = translation
@@ -77,12 +77,12 @@ def set_language(lang: str) -> None:
 
 
 def get_language() -> str:
-    """現在の言語コードを返す（例: "en"、"ja"）。"""
+    """Return the current language code (e.g. "en", "ja")."""
     return _current_lang
 
 
 def available_languages() -> list[str]:
-    """利用可能な言語コードの一覧を返す。常に "en" を含む。"""
+    """Return a list of available language codes. Always includes "en"."""
     langs: list[str] = ["en"]
     if _LOCALE_DIR.exists():
         for lang_dir in sorted(_LOCALE_DIR.iterdir()):

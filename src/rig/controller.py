@@ -1,15 +1,15 @@
 """
-Hamlib 無線機・ローテーター制御モジュール
+Hamlib transceiver and rotator control module
 
-RigController       — 無線機制御の抽象基底クラス
-HamlibDirectController — python-hamlib で直接 COMポート接続
-HamlibNetController — TCP 経由で rigctld に接続（GPredict NET Control 互換）
-RotatorController   — ローテーター制御の抽象基底クラス
-HamlibRotatorController — Hamlib ローテーター制御
-HamlibVersionChecker   — インストール済み Hamlib バージョンチェック
+RigController          — Abstract base class for transceiver control
+HamlibDirectController — Direct serial port connection via python-hamlib
+HamlibNetController    — TCP connection to rigctld (compatible with GPredict NET Control)
+RotatorController      — Abstract base class for rotator control
+HamlibRotatorController — Hamlib rotator control
+HamlibVersionChecker   — Check the installed Hamlib version
 
-Hamlib 未インストール環境では自動的にモックにフォールバックするため、
-CI（python-hamlib なし）でもテストが通る。
+Automatically falls back to a mock when Hamlib is not installed,
+so tests pass even in CI environments without python-hamlib.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Hamlib import — 未インストール時はモックにフォールバック
+# Hamlib import — falls back to mock when not installed
 # ---------------------------------------------------------------------------
 
 try:
@@ -45,12 +45,12 @@ except ModuleNotFoundError:
 
 
 # ---------------------------------------------------------------------------
-# モードマッピング（SATNOGS モード文字列 → Hamlib 定数）
+# Mode mapping (SATNOGS mode string → Hamlib constant)
 # ---------------------------------------------------------------------------
 
 
 def _build_mode_map() -> dict[str, int]:
-    """Hamlib が使えるときは実定数を、モック時はダミー整数をマップする。"""
+    """Map real constants when Hamlib is available, or dummy integers in mock mode."""
     if HAMLIB_AVAILABLE:
         return {
             "DIGITALVOICE": _hamlib_mod.RIG_MODE_FM,
@@ -80,12 +80,12 @@ MODE_MAP: dict[str, int] = _build_mode_map()
 
 
 # ---------------------------------------------------------------------------
-# データクラス
+# Data classes
 # ---------------------------------------------------------------------------
 
 
 class RigState(Enum):
-    """無線機接続状態。"""
+    """Transceiver connection state."""
 
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
@@ -95,7 +95,7 @@ class RigState(Enum):
 
 @dataclass
 class RigInfo:
-    """接続中の無線機情報。"""
+    """Information about the connected transceiver."""
 
     model_id: int
     model_name: str
@@ -106,7 +106,7 @@ class RigInfo:
 
 @dataclass
 class FrequencyState:
-    """現在の周波数・モード状態。"""
+    """Current frequency and mode state."""
 
     freq_hz: float = 0.0
     mode: str = "FM"
@@ -117,7 +117,7 @@ class FrequencyState:
 
 @dataclass
 class RotatorState:
-    """ローテーター状態。"""
+    """Rotator state."""
 
     azimuth_deg: float = 0.0
     elevation_deg: float = 0.0
@@ -126,7 +126,7 @@ class RotatorState:
 
 @dataclass
 class VersionInfo:
-    """Hamlib バージョン情報と更新確認結果。"""
+    """Hamlib version information and update check result."""
 
     installed: str
     latest: str
@@ -144,20 +144,20 @@ class VersionInfo:
 
 
 class RigControlError(Exception):
-    """無線機制御エラー（rigctld コマンド失敗・通信エラー時に送出）。"""
+    """Transceiver control error (raised on rigctld command failure or communication error)."""
 
 
 # ---------------------------------------------------------------------------
-# 抽象基底クラス — RigController
+# Abstract base class — RigController
 # ---------------------------------------------------------------------------
 
 
 class RigController(ABC):
     """
-    無線機制御の抽象基底クラス。
+    Abstract base class for transceiver control.
 
-    すべての公開メソッドはスレッドセーフ（内部ロックで保護）。
-    Qt UI スレッドと追尾バックグラウンドスレッドの両方から呼ばれる。
+    All public methods are thread-safe (protected by an internal lock).
+    Called from both the Qt UI thread and the tracking background thread.
     """
 
     def __init__(self) -> None:
@@ -165,70 +165,70 @@ class RigController(ABC):
         self._state = RigState.DISCONNECTED
         self._freq_state = FrequencyState()
 
-    # -- 接続管理 --
+    # -- Connection management --
 
     @abstractmethod
     def connect(self) -> bool:
-        """接続を確立する。成功時 True。"""
+        """Establish a connection. Returns True on success."""
 
     @abstractmethod
     def disconnect(self) -> None:
-        """接続を切断する。"""
+        """Disconnect."""
 
     @property
     def state(self) -> RigState:
-        """現在の接続状態。"""
+        """Current connection state."""
         with self._lock:
             return self._state
 
     @property
     def is_connected(self) -> bool:
-        """接続中かどうか。"""
+        """Whether currently connected."""
         return self.state == RigState.CONNECTED
 
-    # -- 周波数・モード --
+    # -- Frequency and mode --
 
     @abstractmethod
     def set_frequency(self, freq_hz: float, vfo: str = "VFOA") -> bool:
-        """周波数を Hz 単位で設定する。"""
+        """Set the frequency in Hz."""
 
     @abstractmethod
     def get_frequency(self, vfo: str = "VFOA") -> float:
-        """現在の周波数を Hz で返す。エラー時は -1.0。"""
+        """Return the current frequency in Hz. Returns -1.0 on error."""
 
     @abstractmethod
     def set_mode(self, mode: str, passband_hz: int = 0, vfo: str = "VFOA") -> bool:
-        """モードを設定する。mode は SATNOGS 形式文字列（"FM", "SSB" など）。"""
+        """Set the mode. mode is a SATNOGS format string ("FM", "SSB", etc.)."""
 
     @abstractmethod
     def get_mode(self, vfo: str = "VFOA") -> str:
-        """現在のモードを SATNOGS 形式文字列で返す。"""
+        """Return the current mode as a SATNOGS format string."""
 
-    # -- CTCSS / DCS トーン --
+    # -- CTCSS / DCS tone --
 
     @abstractmethod
     def set_ctcss_tone(self, tone_hz: float) -> bool:
-        """CTCSS トーンを設定する（0.0 で無効化）。"""
+        """Set the CTCSS tone (0.0 to disable)."""
 
     @abstractmethod
     def set_dcs_code(self, code: int) -> bool:
-        """DCS コードを設定する（0 で無効化）。"""
+        """Set the DCS code (0 to disable)."""
 
     # -- VFO --
 
     @abstractmethod
     def set_vfo(self, vfo: str) -> bool:
-        """アクティブ VFO を切り替える（"VFOA" / "VFOB" / "Main" / "Sub"）。"""
+        """Switch the active VFO ("VFOA" / "VFOB" / "Main" / "Sub")."""
 
     def set_vfo_frequencies(
         self,
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        """VFOA・VFOB の周波数を安全に設定する。
+        """Safely set the VFOA and VFOB frequencies.
 
-        サブクラスでオーバーライド可能。デフォルトは set_frequency を順次呼ぶ。
-        未接続時は False。失敗時は RigControlError を送出する。
+        Can be overridden in subclasses. Default calls set_frequency sequentially.
+        Returns False when not connected. Raises RigControlError on failure.
         """
         ok = True
         if vfoa_hz is not None:
@@ -237,18 +237,18 @@ class RigController(ABC):
             ok = self.set_frequency(vfob_hz, "VFOB") and ok
         return ok
 
-    # -- ユーティリティ --
+    # -- Utilities --
 
     @abstractmethod
     def get_rig_info(self) -> RigInfo | None:
-        """接続中の無線機情報を返す。未接続時は None。"""
+        """Return connected rig info, or None when not connected."""
 
     def _mode_to_hamlib(self, mode: str) -> int:
-        """SATNOGS モード文字列を Hamlib 定数に変換する。未知のモードは FM 扱い。"""
+        """Convert a SATNOGS mode string to a Hamlib constant. Unknown modes fall back to FM."""
         return MODE_MAP.get(mode, MODE_MAP["FM"])
 
     def _hamlib_to_mode(self, hamlib_mode: int) -> str:
-        """Hamlib 定数を SATNOGS モード文字列に変換する。"""
+        """Convert a Hamlib mode constant to a SATNOGS mode string."""
         reverse = {v: k for k, v in MODE_MAP.items()}
         return reverse.get(hamlib_mode, "FM")
 
@@ -260,9 +260,9 @@ class RigController(ABC):
 
 class HamlibDirectController(RigController):
     """
-    python-hamlib を使ってシリアルポートに直接接続する無線機コントローラー。
+    Transceiver controller that connects directly to a serial port via python-hamlib.
 
-    Hamlib 未インストール時はモックとして動作する。
+    Falls back to mock mode when Hamlib is not installed.
     """
 
     def __init__(
@@ -276,12 +276,12 @@ class HamlibDirectController(RigController):
     ) -> None:
         """
         Args:
-            model_id:  Hamlib rig model ID（例: IC-9700 = 3081）
-            port:      シリアルポート（"/dev/ttyUSB0", "COM3" など）
-            baud_rate: ボーレート
-            data_bits: データビット数
-            stop_bits: ストップビット数
-            handshake: フロー制御 ("None", "XONXOFF", "Hardware")
+            model_id:  Hamlib rig model ID (e.g. IC-9700 = 3081)
+            port:      Serial port ("/dev/ttyUSB0", "COM3", etc.)
+            baud_rate: Baud rate
+            data_bits: Data bits
+            stop_bits: Stop bits
+            handshake: Flow control ("None", "XONXOFF", "Hardware")
         """
         super().__init__()
         self._model_id = model_id
@@ -292,10 +292,10 @@ class HamlibDirectController(RigController):
         self._handshake = handshake
         self._rig: Any = None  # Hamlib.Rig instance or mock
 
-    # -- 接続管理 --
+    # -- Connection management --
 
     def connect(self) -> bool:
-        """シリアルポートに接続する。"""
+        """Connect to the serial port."""
         with self._lock:
             if self._state == RigState.CONNECTED:
                 return True
@@ -325,7 +325,7 @@ class HamlibDirectController(RigController):
             return False
 
     def disconnect(self) -> None:
-        """シリアルポートを切断する。"""
+        """Disconnect from the serial port."""
         with self._lock:
             if self._state == RigState.DISCONNECTED:
                 return
@@ -339,10 +339,10 @@ class HamlibDirectController(RigController):
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
-    # -- 周波数・モード --
+    # -- Frequency and mode --
 
     def set_frequency(self, freq_hz: float, vfo: str = "VFOA") -> bool:
-        """周波数を設定する。"""
+        """Set the frequency in Hz."""
         if not self.is_connected or self._rig is None:
             return False
         try:
@@ -356,7 +356,7 @@ class HamlibDirectController(RigController):
             return False
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
-        """現在の周波数を返す。"""
+        """Return the current frequency in Hz."""
         if not self.is_connected or self._rig is None:
             return -1.0
         try:
@@ -367,7 +367,7 @@ class HamlibDirectController(RigController):
             return -1.0
 
     def set_mode(self, mode: str, passband_hz: int = 0, vfo: str = "VFOA") -> bool:
-        """モードとパスバンドを設定する。"""
+        """Set the mode and passband."""
         if not self.is_connected or self._rig is None:
             return False
         try:
@@ -383,7 +383,7 @@ class HamlibDirectController(RigController):
             return False
 
     def get_mode(self, vfo: str = "VFOA") -> str:
-        """現在のモードを返す。"""
+        """Return the current mode as a SATNOGS format string."""
         if not self.is_connected or self._rig is None:
             return "FM"
         try:
@@ -395,7 +395,7 @@ class HamlibDirectController(RigController):
             return "FM"
 
     def set_ctcss_tone(self, tone_hz: float) -> bool:
-        """CTCSS トーンを設定する。tone_hz=0.0 で無効化。"""
+        """Set the CTCSS tone. Pass tone_hz=0.0 to disable."""
         if not self.is_connected or self._rig is None:
             return False
         if not HAMLIB_AVAILABLE:
@@ -403,7 +403,7 @@ class HamlibDirectController(RigController):
                 self._freq_state.ctcss_tone = tone_hz
             return True
         try:
-            # Hamlib は tone を 10倍整数（例: 88.5 Hz → 885）で扱う
+            # Hamlib represents tones as integers scaled by 10 (e.g. 88.5 Hz → 885)
             tone_int = int(round(tone_hz * 10))
             if tone_hz > 0:
                 self._rig.set_func(
@@ -430,7 +430,7 @@ class HamlibDirectController(RigController):
             return False
 
     def set_dcs_code(self, code: int) -> bool:
-        """DCS コードを設定する。code=0 で無効化。"""
+        """Set the DCS code. Pass code=0 to disable."""
         if not self.is_connected or self._rig is None:
             return False
         if not HAMLIB_AVAILABLE:
@@ -463,7 +463,7 @@ class HamlibDirectController(RigController):
             return False
 
     def set_vfo(self, vfo: str) -> bool:
-        """アクティブ VFO を切り替える。"""
+        """Switch the active VFO."""
         if not self.is_connected or self._rig is None:
             return False
         try:
@@ -474,7 +474,7 @@ class HamlibDirectController(RigController):
             return False
 
     def get_rig_info(self) -> RigInfo | None:
-        """接続中の無線機情報を返す。"""
+        """Return info about the connected rig."""
         if not self.is_connected:
             return None
         model_name = f"Model {self._model_id}"
@@ -489,10 +489,10 @@ class HamlibDirectController(RigController):
             state=self.state,
         )
 
-    # -- 内部ユーティリティ --
+    # -- Internal utilities --
 
     def _vfo_str_to_const(self, vfo: str) -> int:
-        """VFO 文字列を Hamlib 定数または整数に変換する。"""
+        """Convert a VFO string to the corresponding Hamlib constant (or integer in mock mode)."""
         if not HAMLIB_AVAILABLE:
             return 0
         vfo_map = {
@@ -505,29 +505,29 @@ class HamlibDirectController(RigController):
 
 
 # ---------------------------------------------------------------------------
-# HamlibNetController（rigctld TCP 接続）
+# HamlibNetController (rigctld TCP connection)
 # ---------------------------------------------------------------------------
 
 
 class HamlibNetController(RigController):
     """
-    TCP 経由で rigctld に接続する無線機コントローラー。
+    Transceiver controller that connects to rigctld over TCP.
 
-    GPredict NET Control モードと互換性があり、既存の rigctld セットアップを
-    そのまま利用できる。独自プロトコル（改行区切りテキスト）を使用。
+    Compatible with GPredict NET Control mode — works with any existing
+    rigctld setup. Uses the rigctld newline-delimited text protocol.
     """
 
-    _TIMEOUT = 10.0  # seconds — FTX-1 等の低速 CAT バックエンドに対応
+    _TIMEOUT = 10.0  # seconds — allows for slow CAT backends such as FTX-1
 
     def __init__(
         self, host: str = "localhost", port: int = 4532, radio_type: str = "full_duplex"
     ) -> None:
         """
         Args:
-            host:        rigctld が動作しているホスト
-            port:        rigctld のポート番号（デフォルト 4532）
-            radio_type:  "full_duplex"=F+I 両方送信（デフォルト）/
-                         "rx_only"=F のみ / "tx_only"=I のみ
+            host:        Host where rigctld is running
+            port:        rigctld port number (default 4532)
+            radio_type:  "full_duplex"=send both F and I (default) /
+                         "rx_only"=F only / "tx_only"=I only
         """
         super().__init__()
         self._host = host
@@ -535,21 +535,21 @@ class HamlibNetController(RigController):
         self._radio_type = radio_type
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
-        self._cmd_lock = threading.Lock()  # send+recv を直列化してレスポンスのズレを防ぐ
-        self._cached_model_name: str = ""  # 接続時に一度だけ取得してキャッシュする
-        self._last_dl_hz: float | None = None  # None = connect直後。F/I 送信を強制する
+        self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
+        self._cached_model_name: str = ""  # fetched once on connect and cached
+        self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
 
-    # -- 接続管理 --
+    # -- Connection management --
 
     @property
     def is_connected(self) -> bool:
-        """接続中かつソケットが有効なときのみ True。"""
+        """True only when connected and the socket is valid."""
         with self._lock:
             return self._state == RigState.CONNECTED and self._sock is not None
 
     def connect(self) -> bool:
-        """rigctld への TCP 接続を確立する。"""
+        """Establish a TCP connection to rigctld."""
         with self._lock:
             if self._state == RigState.CONNECTED:
                 return True
@@ -562,20 +562,20 @@ class HamlibNetController(RigController):
             self._sock = sock
             with self._lock:
                 self._state = RigState.CONNECTED
-            # 再接続時に前回セッションの周波数状態を引き継がないようリセットする。
-            # リセットしないと _last_dl_hz is not None → 先頭 f チェックを送信 →
-            # S 1 Main 直後の CAT 遅延でタイムアウト → 即切断ループになる。
+            # Reset frequency state so reconnection does not inherit the previous session.
+            # Without this, _last_dl_hz is not None → the initial f-check is sent →
+            # CAT delay after S 1 Main causes a timeout → immediate disconnect loop.
             self._last_dl_hz = None
             self._last_ul_hz = None
             logger.info("RigNet: connected to %s:%d", self._host, self._port)
-            # _ と \chk_vfo はオプショナルな情報取得コマンド。
-            # raw socket で 2s タイムアウト付きで送ると、FTX-1 等の低速バックエンドでは
-            # タイムアウト後に応答がバッファに残留し、後続の _cmd() 呼び出しが
-            # 別コマンドの応答を誤読する（コマンド/応答ずれ）。
-            # 接続シーケンスでは送らず、S 1 Main のみ送る。
+            # _ and \chk_vfo are optional info-query commands.
+            # Sending them with a 2 s timeout over a raw socket leaves stale data in the
+            # receive buffer on slow backends (e.g. FTX-1), causing subsequent _cmd() calls
+            # to read the wrong response (command/response misalignment).
+            # Only S 1 Main is sent during the connection sequence.
             self._init_vfo()
-            # _init_vfo() 内の _cmd() が OSError（タイムアウト含む）で
-            # ソケットを閉じた場合は接続失敗として ERROR に遷移する。
+            # If _init_vfo()'s _cmd() raises OSError (including timeout) and closes the
+            # socket, treat the connection as failed and transition to ERROR.
             if self._sock is None:
                 with self._lock:
                     self._state = RigState.ERROR
@@ -589,7 +589,7 @@ class HamlibNetController(RigController):
             return False
 
     def disconnect(self) -> None:
-        """TCP 接続を切断する。"""
+        """Disconnect the TCP connection."""
         with self._lock:
             if self._state == RigState.DISCONNECTED:
                 return
@@ -605,16 +605,16 @@ class HamlibNetController(RigController):
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
-    # -- 低レベル通信 --
+    # -- Low-level communication --
 
     def _cmd(self, command: str) -> str:
-        """rigctld にコマンドを送り、応答を返す。
+        """Send a command to rigctld and return the response.
 
-        すべてのコマンドで RPRT 行が現れるまで読み続ける。
-        これにより読み取りコマンド（f/i 等）の応答行がバッファに残って
-        次コマンドの応答と混在する問題を防ぐ。
-        _cmd_lock で send+recv を直列化して複数スレッドの応答ズレを防ぐ。
-        OSError 発生時はソケットを閉じて DISCONNECTED に遷移する。
+        Reads until the RPRT line appears, which prevents response data from
+        read commands (f/i, etc.) from lingering in the buffer and being
+        misread as the next command's response.
+        _cmd_lock serialises send+recv to prevent misalignment across threads.
+        On OSError, the socket is closed and the state transitions to DISCONNECTED.
         """
         with self._cmd_lock:
             if self._sock is None:
@@ -641,10 +641,11 @@ class HamlibNetController(RigController):
                 return ""
 
     def _fetch_model_name(self) -> str:
-        """接続時に一度だけ _ コマンドでモデル名を取得する。
+        """Fetch the model name once at connect time using the _ command.
 
-        _cmd() を経由せず直接ソケットを操作する。_ コマンドに非対応の rigctld や
-        タイムアウトが発生しても接続を破壊せず "host:port" にフォールバックする。
+        Operates on the raw socket directly, bypassing _cmd(), so that an
+        unsupported _ command or a timeout does not break the connection —
+        it falls back to "host:port" instead.
         """
         if self._sock is None:
             return f"{self._host}:{self._port}"
@@ -674,29 +675,29 @@ class HamlibNetController(RigController):
                     self._sock.settimeout(prev_timeout)
 
     def _init_vfo(self) -> None:
-        """split ON + TX VFO = Main を設定する（接続時1回だけ）。
+        """Enable split and set TX VFO to Main (called once at connect time).
 
-        tcpdump で確認した本家 gpredict のシーケンス: S 1 Main
-        _cmd() 経由で送信するため _cmd_lock で直列化され、
-        raw socket の独立した recv ループによるバッファ残留が起きない。
+        Sequence observed from the original gpredict via tcpdump: S 1 Main.
+        Sent through _cmd() so _cmd_lock serialises it and prevents buffer
+        residue from an independent recv loop on the raw socket.
         """
         resp = self._cmd("S 1 Main")
         if "RPRT 0" not in resp:
             logger.warning("RigNet: split setup returned %r", resp)
 
-    # -- 内部ユーティリティ --
+    # -- Internal utilities --
 
     def _detect_vfo_mode(self) -> bool:
-        """\\chk_vfo を送信して rigctld の VFO モードを検出する。
+        r"""Send \chk_vfo to detect the rigctld VFO mode.
 
-        _cmd() を経由せず直接 socket を操作することで、タイムアウトや
-        コマンド非対応時でも接続を破壊せずに False を返す。
+        Operates on the raw socket directly so that a timeout or unsupported
+        command does not break the connection — returns False in that case.
 
-        応答形式（rigctld）:
-          vfo_mode=on  → "1\\nRPRT 0\\n"
-          vfo_mode=off → "0\\nRPRT 0\\n"
-          非対応        → "RPRT -1\\n"
-          タイムアウト  → OSError (socket.timeout)
+        rigctld response format:
+          vfo_mode=on  → "1\nRPRT 0\n"
+          vfo_mode=off → "0\nRPRT 0\n"
+          unsupported  → "RPRT -1\n"
+          timeout      → OSError (socket.timeout)
         """
         if self._sock is None:
             return False
@@ -725,14 +726,14 @@ class HamlibNetController(RigController):
 
     @staticmethod
     def _normalize_vfo(vfo: str) -> str:
-        """VFO 文字列を rigctld が受け付ける形式に正規化する。"""
+        """Normalise a VFO string to the form accepted by rigctld."""
         _map = {"VFOA": "VFOA", "VFOB": "VFOB", "Main": "Main", "Sub": "Sub"}
         return _map.get(vfo, vfo)
 
-    # -- 周波数・モード --
+    # -- Frequency and mode --
 
     def _set_one_vfo(self, vfo: str, freq_hz: float) -> None:
-        """単一 VFO の周波数を設定する内部ヘルパー。失敗時は RigControlError。"""
+        """Internal helper to set a single VFO frequency. Raises RigControlError on failure."""
         norm_vfo = self._normalize_vfo(vfo)
         if self._vfo_mode:
             resp = self._cmd(f"\\set_freq {norm_vfo} {int(freq_hz)}")
@@ -747,11 +748,11 @@ class HamlibNetController(RigController):
             self._freq_state.freq_hz = freq_hz
 
     def set_frequency(self, freq_hz: float, vfo: str = "VFOA") -> bool:
-        """周波数を設定する。
+        """Set the frequency in Hz.
 
-        未接続時は False を返す。
-        接続中にコマンドが失敗した場合は RigControlError を送出する。
-        split コマンドは送信しない（FTX-1 等の split 問題を回避するため）。
+        Returns False when not connected.
+        Raises RigControlError when the command fails while connected.
+        No split command is sent (avoids split issues on FTX-1 and similar rigs).
         """
         if not self.is_connected:
             return False
@@ -763,25 +764,28 @@ class HamlibNetController(RigController):
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        """毎秒の追尾ループで RX/TX 周波数を設定する。
+        """Set RX/TX frequencies in the per-second tracking loop.
 
-        f/i（get_freq/get_split_freq）は一切送らない。
-        FTX-1 等の低速 CAT バックエンドでは f コマンドが 10s を超えてタイムアウトし、
-        毎サイクル切断 → S 1 Main を含む再接続ループが発生するため。
+        Never sends f/i (get_freq/get_split_freq) commands.
+        On slow CAT backends such as the FTX-1, the f command can take more
+        than 10 s and trigger a timeout, leading to a per-cycle
+        disconnect → reconnect (including S 1 Main) loop.
 
-        プロトコル（write-only）:
-          [RX サイクル]
-            F {dl_hz}  — Sub（RX/ダウンリンク）に書き込み
-                         前回から 1 Hz 以上変化したとき、または初回（_last_dl_hz is None）のみ。
-          [TX サイクル]
-            ※ RX 後に is_connected を確認し、切断済みなら TX をスキップする。
-            I {ul_hz}  — Main（TX/アップリンク）に書き込み
-                         前回から 1 Hz 以上変化したとき、または初回（_last_ul_hz is None）のみ。
+        Write-only protocol:
+          [RX cycle]
+            F {dl_hz}  — write to Sub (RX/downlink)
+                         only when changed by 1 Hz or more, or on the first call
+                         (_last_dl_hz is None).
+          [TX cycle]
+            After the RX cycle, is_connected is checked; TX is skipped if disconnected.
+            I {ul_hz}  — write to Main (TX/uplink)
+                         only when changed by 1 Hz or more, or on the first call
+                         (_last_ul_hz is None).
 
-        connect() 時に _init_vfo() が S 1 Main（split ON、TX VFO=Main）を送信済み:
-          F → Sub（RX/ダウンリンク）
-          I → Main（TX/アップリンク）
-        vfob_hz が None の場合は TX サイクルを省略する。
+        connect() calls _init_vfo() which sends S 1 Main (split ON, TX VFO=Main):
+          F → Sub (RX/downlink)
+          I → Main (TX/uplink)
+        The TX cycle is skipped when vfob_hz is None.
         """
         if not self.is_connected:
             return False
@@ -789,7 +793,7 @@ class HamlibNetController(RigController):
         send_rx = self._radio_type != "tx_only"
         send_tx = self._radio_type != "rx_only"
 
-        # RX サイクル
+        # RX cycle
         if send_rx and vfoa_hz is not None:
             last_dl = self._last_dl_hz
             if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
@@ -801,11 +805,11 @@ class HamlibNetController(RigController):
                     self._freq_state.freq_hz = vfoa_hz
                 self._last_dl_hz = vfoa_hz
 
-        # F が OSError で切断した場合は TX をスキップ
+        # Skip TX if F caused an OSError and disconnected
         if not self.is_connected:
             return True
 
-        # TX サイクル
+        # TX cycle
         if send_tx and vfob_hz is not None:
             last_ul = self._last_ul_hz
             if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
@@ -825,7 +829,7 @@ class HamlibNetController(RigController):
             return -1.0
 
     def set_mode(self, mode: str, passband_hz: int = 0, vfo: str = "VFOA") -> bool:
-        # rigctld の M コマンドは "M <mode> <passband>" 形式
+        # rigctld M command format: "M <mode> <passband>"
         hamlib_mode_name = _SATNOGS_TO_RIGCTLD_MODE.get(mode, "FM")
         resp = self._cmd(f"M {hamlib_mode_name} {passband_hz}")
         ok = "RPRT 0" in resp
@@ -867,7 +871,7 @@ class HamlibNetController(RigController):
         )
 
 
-# rigctld モード名マッピング
+# rigctld mode name mapping
 _SATNOGS_TO_RIGCTLD_MODE: dict[str, str] = {
     "DIGITALVOICE": "FM",
     "FM": "FM",
@@ -883,12 +887,12 @@ _RIGCTLD_MODE_TO_SATNOGS: dict[str, str] = {v: k for k, v in _SATNOGS_TO_RIGCTLD
 
 
 # ---------------------------------------------------------------------------
-# 抽象基底クラス — RotatorController
+# Abstract base class — RotatorController
 # ---------------------------------------------------------------------------
 
 
 class RotatorController(ABC):
-    """ローテーター制御の抽象基底クラス。"""
+    """Abstract base class for rotator control."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -897,33 +901,33 @@ class RotatorController(ABC):
 
     @abstractmethod
     def connect(self) -> bool:
-        """接続を確立する。"""
+        """Establish a connection."""
 
     @abstractmethod
     def disconnect(self) -> None:
-        """接続を切断する。"""
+        """Disconnect."""
 
     @property
     def is_connected(self) -> bool:
-        """接続中かどうか。"""
+        """Whether currently connected."""
         with self._lock:
             return self._state == RigState.CONNECTED
 
     @abstractmethod
     def set_position(self, azimuth_deg: float, elevation_deg: float) -> bool:
-        """方位角・仰角を設定する（度単位）。"""
+        """Set the azimuth and elevation in degrees."""
 
     @abstractmethod
     def get_position(self) -> RotatorState:
-        """現在の方位角・仰角を返す。"""
+        """Return the current azimuth and elevation."""
 
     @abstractmethod
     def stop(self) -> bool:
-        """回転を停止する。"""
+        """Stop rotation."""
 
     @abstractmethod
     def park(self) -> bool:
-        """ホームポジションに戻す。"""
+        """Return to the home position."""
 
 
 # ---------------------------------------------------------------------------
@@ -933,10 +937,10 @@ class RotatorController(ABC):
 
 class HamlibRotatorController(RotatorController):
     """
-    Hamlib を使ったローテーター制御クラス。
+    Rotator controller using Hamlib.
 
-    直接接続（HamlibDirect 相当）と NET 接続（rotctld）の両方に対応する。
-    net_mode=True のとき rotctld に TCP 接続する。
+    Supports both direct serial connection (equivalent to HamlibDirect) and
+    NET connection (rotctld). When net_mode=True, connects to rotctld over TCP.
     """
 
     def __init__(
@@ -960,7 +964,7 @@ class HamlibRotatorController(RotatorController):
         self._sock: socket.socket | None = None
 
     def connect(self) -> bool:
-        """ローテーターに接続する。"""
+        """Connect to the rotator."""
         with self._lock:
             if self._state == RigState.CONNECTED:
                 return True
@@ -992,7 +996,7 @@ class HamlibRotatorController(RotatorController):
             return False
 
     def disconnect(self) -> None:
-        """ローテーターを切断する。"""
+        """Disconnect the rotator."""
         try:
             if self._net_mode and self._sock:
                 self._sock.close()
@@ -1007,7 +1011,7 @@ class HamlibRotatorController(RotatorController):
                 self._state = RigState.DISCONNECTED
 
     def set_position(self, azimuth_deg: float, elevation_deg: float) -> bool:
-        """方位角・仰角を指定して回転させる。"""
+        """Rotate to the specified azimuth and elevation."""
         if not self.is_connected:
             return False
         try:
@@ -1027,7 +1031,7 @@ class HamlibRotatorController(RotatorController):
             return False
 
     def get_position(self) -> RotatorState:
-        """現在の方位角・仰角を返す。"""
+        """Return the current azimuth and elevation."""
         if not self.is_connected:
             return RotatorState()
         try:
@@ -1057,7 +1061,7 @@ class HamlibRotatorController(RotatorController):
             )
 
     def stop(self) -> bool:
-        """回転を停止する。"""
+        """Stop rotation."""
         if not self.is_connected:
             return False
         try:
@@ -1073,7 +1077,7 @@ class HamlibRotatorController(RotatorController):
             return False
 
     def park(self) -> bool:
-        """ホームポジションに戻す（rotctld: K コマンド）。"""
+        """Return to the home position (rotctld: K command)."""
         if not self.is_connected:
             return False
         try:
@@ -1094,14 +1098,14 @@ class HamlibRotatorController(RotatorController):
 
 class HamlibVersionChecker:
     """
-    インストール済み Hamlib のバージョンを取得し、
-    GitHub API で最新リリースと比較して古い場合は警告情報を返す。
+    Fetches the installed Hamlib version and compares it against the latest
+    GitHub release, returning a warning when an upgrade is available.
     """
 
     _GITHUB_API = "https://api.github.com/repos/Hamlib/Hamlib/releases/latest"
 
     def get_installed_version(self) -> str:
-        """インストール済み Hamlib バージョン文字列を返す。未インストール時は "not installed"。"""
+        """Return the installed Hamlib version string, or "not installed" when absent."""
         if HAMLIB_AVAILABLE:
             try:
                 return str(_hamlib_mod.cvar.hamlib_version)
@@ -1111,10 +1115,10 @@ class HamlibVersionChecker:
 
     async def check_version(self, timeout: float = 10.0) -> VersionInfo:
         """
-        GitHub API で最新バージョンを確認して VersionInfo を返す。
+        Check the latest version via the GitHub API and return a VersionInfo.
 
-        ネットワーク不通時はインストール済みバージョンのみ返し、
-        is_outdated=False（警告なし）とする。
+        When the network is unavailable, returns the installed version only
+        with is_outdated=False (no warning).
         """
         installed = self.get_installed_version()
         try:
@@ -1143,7 +1147,7 @@ class HamlibVersionChecker:
 
     @staticmethod
     def _version_lt(a: str, b: str) -> bool:
-        """バージョン文字列 a < b を比較する（セマンティックバージョニング想定）。"""
+        """Return True when version string a is less than b (semantic versioning assumed)."""
 
         def _parts(v: str) -> tuple[int, ...]:
             parts = []
@@ -1160,12 +1164,12 @@ class HamlibVersionChecker:
 
 
 # ---------------------------------------------------------------------------
-# 内部モッククラス（Hamlib 未インストール環境用）
+# Internal mock classes (for environments without Hamlib)
 # ---------------------------------------------------------------------------
 
 
 class _MockRig:
-    """python-hamlib が使えない環境でのスタブ。テストと CI 用。"""
+    """Stub for environments where python-hamlib is unavailable. Used in tests and CI."""
 
     def __init__(self, model_id: int) -> None:
         self._model_id = model_id
@@ -1203,7 +1207,7 @@ class _MockRig:
 
 
 class _MockRotator:
-    """python-hamlib が使えない環境でのローテータースタブ。"""
+    """Rotator stub for environments where python-hamlib is unavailable."""
 
     def __init__(self) -> None:
         self._az: float = 0.0

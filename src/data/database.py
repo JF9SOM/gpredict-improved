@@ -1,6 +1,6 @@
 """
-データベーススキーマ定義と初期化
-SQLite + alembic によるマイグレーション管理
+Database schema definition and initialization
+Migration management with SQLite + alembic
 """
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
--- 衛星基本情報
+-- Satellite basic information
 CREATE TABLE IF NOT EXISTS satellites (
     norad_cat_id    INTEGER PRIMARY KEY,
     name            TEXT NOT NULL,
-    alt_names       TEXT DEFAULT '[]',   -- JSON配列
+    alt_names       TEXT DEFAULT '[]',   -- JSON array
     status          TEXT DEFAULT 'unknown'
                     CHECK(status IN ('alive','dead','unknown')),
     is_favorite     INTEGER DEFAULT 0,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS satellites (
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- トランスポンダ・送信機情報（SATNOGS + 手動追加）
+-- Transponder/transmitter information (SATNOGS + manual additions)
 CREATE TABLE IF NOT EXISTS transmitters (
     uuid            TEXT PRIMARY KEY,
     norad_cat_id    INTEGER NOT NULL REFERENCES satellites(norad_cat_id)
@@ -33,25 +33,25 @@ CREATE TABLE IF NOT EXISTS transmitters (
     description     TEXT NOT NULL,
     type            TEXT DEFAULT 'Transponder'
                     CHECK(type IN ('Transmitter','Transponder','Beacon','Transceiver')),
-    uplink_low      INTEGER,            -- Hz (Noneなら受信専用)
-    uplink_high     INTEGER,            -- Hz (バンド型トランスポンダの上端)
+    uplink_low      INTEGER,            -- Hz (None means receive-only)
+    uplink_high     INTEGER,            -- Hz (upper bound for band-type transponders)
     downlink_low    INTEGER,            -- Hz
     downlink_high   INTEGER,            -- Hz
     mode            TEXT,               -- 'FM','SSB','CW','DIGITALVOICE',...
-    invert          INTEGER DEFAULT 0,  -- 反転トランスポンダ (0/1)
-    baud            INTEGER,            -- デジタルモードのボーレート
-    ctcss_tone      REAL,               -- CTCSS/DCSトーン周波数 (Hz)
+    invert          INTEGER DEFAULT 0,  -- Inverting transponder (0/1)
+    baud            INTEGER,            -- Baud rate for digital modes
+    ctcss_tone      REAL,               -- CTCSS/DCS tone frequency (Hz)
     ctcss_tone_type TEXT DEFAULT NULL
                     CHECK(ctcss_tone_type IN ('CTCSS','DCS',NULL)),
     alive           INTEGER DEFAULT 1,
     source          TEXT DEFAULT 'satnogs'
                     CHECK(source IN ('satnogs','manual')),
-    manual_override INTEGER DEFAULT 0,  -- 1ならSATNOGS同期で上書きしない
-    notes           TEXT DEFAULT '',    -- ユーザーメモ
+    manual_override INTEGER DEFAULT 0,  -- If 1, will not be overwritten by SATNOGS sync
+    notes           TEXT DEFAULT '',    -- User notes
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- TLE最新データ
+-- Latest TLE data
 CREATE TABLE IF NOT EXISTS tle_data (
     norad_cat_id    INTEGER PRIMARY KEY REFERENCES satellites(norad_cat_id)
                     ON DELETE CASCADE,
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS tle_data (
                     CHECK(quality_score IN ('excellent','good','fair','poor','unknown'))
 );
 
--- TLE履歴（過去のTLEを保持・品質トレンド分析用）
+-- TLE history (retains past TLEs for quality trend analysis)
 CREATE TABLE IF NOT EXISTS tle_history (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     norad_cat_id    INTEGER NOT NULL,
@@ -79,14 +79,14 @@ CREATE TABLE IF NOT EXISTS tle_history (
     fetched_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- アプリ設定・状態
+-- Application settings and state
 CREATE TABLE IF NOT EXISTS app_settings (
     key             TEXT PRIMARY KEY,
     value           TEXT,
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 同期ログ
+-- Sync log
 CREATE TABLE IF NOT EXISTS sync_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     sync_type       TEXT NOT NULL,  -- 'satnogs','celestrak','space-track'
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS sync_log (
     error_message   TEXT
 );
 
--- インデックス
+-- Indexes
 CREATE INDEX IF NOT EXISTS idx_transmitters_norad
     ON transmitters(norad_cat_id);
 CREATE INDEX IF NOT EXISTS idx_tle_history_norad
@@ -108,7 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_tle_history_epoch
 
 
 def get_db_path() -> Path:
-    """プラットフォーム別のデータベースファイルパスを返す"""
+    """Return the platform-specific database file path"""
     from platformdirs import user_data_dir
 
     data_dir = Path(user_data_dir("gpredict-improved", "gpredict-improved"))
@@ -117,7 +117,7 @@ def get_db_path() -> Path:
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:
-    """既存DBに不足カラムを追加するマイグレーションを適用する。"""
+    """Apply migrations to add missing columns to an existing DB."""
     migrations = [
         "ALTER TABLE satellites ADD COLUMN is_favorite INTEGER DEFAULT 0",
         "ALTER TABLE satellites ADD COLUMN is_hidden INTEGER DEFAULT 0",
@@ -128,7 +128,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             conn.execute(stmt)
     conn.commit()
 
-    # transmitters.type CHECK制約に'Transceiver'を追加（テーブル再作成）
+    # Add 'Transceiver' to the transmitters.type CHECK constraint (requires table recreation)
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='transmitters'"
     ).fetchone()
@@ -171,8 +171,8 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
 
 def init_database(db_path: Path | None = None) -> sqlite3.Connection:
     """
-    データベースを初期化して接続を返す。
-    既存DBの場合はスキーマを検証して不足テーブルのみ作成する。
+    Initialize the database and return the connection.
+    For an existing DB, validates the schema and creates only missing tables.
     """
     path = db_path or get_db_path()
     conn = sqlite3.connect(str(path), check_same_thread=False)

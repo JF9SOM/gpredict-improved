@@ -1,1 +1,1 @@
-"""GPredict-Improved コアエンジン"""
+"""GPredict-Improved core engine"""

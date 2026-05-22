@@ -1,8 +1,8 @@
 """
-TLE（Two-Line Element）自動更新マネージャー
+TLE (Two-Line Element) automatic update manager
 
-複数ソース（CelesTrak・Space-Track・AMSAT）からTLEを取得し、
-品質スコアリングを行ってSQLiteに保存する。
+Fetches TLEs from multiple sources (CelesTrak, Space-Track, AMSAT),
+applies quality scoring, and saves them to SQLite.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 from skyfield.api import EarthSatellite, load
 
-# TLEソース定義 (優先度順)
+# TLE source definitions (in priority order)
 # CelesTrak GP API: https://celestrak.org/NORAD/documentation/gp-data-formats.php
 TLE_SOURCES: list[dict[str, Any]] = [
     {
@@ -80,12 +80,12 @@ _SOURCE_DB_VALUE: dict[str, str] = {
 
 
 def _to_db_source(source_name: str) -> str:
-    """ソース名をDBのCHECK制約に合った値に変換する"""
+    """Convert a source name to a value that satisfies the DB CHECK constraint"""
     return _SOURCE_DB_VALUE.get(source_name, source_name)
 
 
 def _calc_quality(epoch_dt: datetime) -> str:
-    """TLEエポックからの経過時間で品質スコアを返す"""
+    """Return the quality score based on elapsed time since the TLE epoch"""
     age = (
         datetime.now(UTC) - epoch_dt.replace(tzinfo=UTC)
         if epoch_dt.tzinfo is None
@@ -103,8 +103,8 @@ def _calc_quality(epoch_dt: datetime) -> str:
 
 class TLEManager:
     """
-    TLEの取得・保存・品質管理を担当するクラス。
-    オフライン時はキャッシュで継続動作する。
+    Class responsible for fetching, saving, and quality-managing TLEs.
+    Falls back to the cache when offline.
     """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
@@ -112,11 +112,11 @@ class TLEManager:
         self._ts = load.timescale()
 
     # ------------------------------------------------------------------ #
-    # 取得
+    # Retrieval
     # ------------------------------------------------------------------ #
 
     def get_tle(self, norad_cat_id: int) -> dict[str, Any] | None:
-        """衛星のTLEデータをDBから取得する"""
+        """Retrieve TLE data for a satellite from the DB"""
         row = self._conn.execute(
             "SELECT * FROM tle_data WHERE norad_cat_id = ?",
             (norad_cat_id,),
@@ -124,14 +124,14 @@ class TLEManager:
         return dict(row) if row else None
 
     def get_earth_satellite(self, norad_cat_id: int) -> EarthSatellite | None:
-        """Skyfieldで使えるEarthSatelliteオブジェクトを返す"""
+        """Return an EarthSatellite object usable with Skyfield"""
         tle = self.get_tle(norad_cat_id)
         if not tle:
             return None
         return EarthSatellite(tle["line1"], tle["line2"], tle["name"], self._ts)
 
     def get_all_quality_status(self) -> list[dict[str, Any]]:
-        """全衛星のTLE品質状況一覧を返す"""
+        """Return the TLE quality status list for all satellites"""
         rows = self._conn.execute("""
             SELECT s.norad_cat_id, s.name, t.quality_score,
                    t.fetched_at, t.epoch, t.source
@@ -142,7 +142,7 @@ class TLEManager:
         return [dict(r) for r in rows]
 
     def needs_update(self, norad_cat_id: int, max_age_hours: float = 4.0) -> bool:
-        """TLEの更新が必要かどうかを判定する"""
+        """Determine whether the TLE needs to be updated"""
         row = self._conn.execute(
             "SELECT fetched_at FROM tle_data WHERE norad_cat_id = ?",
             (norad_cat_id,),
@@ -153,7 +153,7 @@ class TLEManager:
         return datetime.now(UTC) - fetched > timedelta(hours=max_age_hours)
 
     # ------------------------------------------------------------------ #
-    # 更新
+    # Update
     # ------------------------------------------------------------------ #
 
     async def fetch_and_update(
@@ -162,7 +162,7 @@ class TLEManager:
         progress_callback: Any = None,
     ) -> dict[str, int]:
         """
-        指定ソースからTLEを取得してDBを更新する。
+        Fetch TLEs from the specified source and update the DB.
         Returns: {"inserted": N, "updated": N, "errors": N}
         """
         source = next((s for s in TLE_SOURCES if s["name"] == source_name), TLE_SOURCES[0])
@@ -179,7 +179,7 @@ class TLEManager:
             stats["errors"] = 1
             return stats
 
-        # TLEテキスト形式をパース（3行1組）
+        # Parse TLE text format (3-line groups)
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         tle_triples = []
         i = 0
@@ -202,7 +202,7 @@ class TLEManager:
                 epoch_dt = sat.epoch.utc_datetime()
                 quality = _calc_quality(epoch_dt)
 
-                # 衛星レコード確保
+                # Ensure the satellite record exists
                 self._conn.execute(
                     """
                     INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)
@@ -216,7 +216,7 @@ class TLEManager:
                     (norad,),
                 ).fetchone()
 
-                # 履歴に追加
+                # Append to history
                 self._conn.execute(
                     """
                     INSERT INTO tle_history (norad_cat_id, name, line1, line2, epoch, source)
@@ -277,10 +277,10 @@ class TLEManager:
         return stats
 
     async def fetch_single(self, norad_cat_id: int) -> bool:
-        """1衛星のTLEをCelesTrakから取得してDBに追加する。
+        """Fetch the TLE for a single satellite from CelesTrak and add it to the DB.
 
-        グループ取得に含まれない衛星（例: ORIGAMI-2 / NORAD 57168）を
-        個別に追加したい場合に使用する。
+        Use this when a satellite is not included in a group fetch
+        (e.g. ORIGAMI-2 / NORAD 57168) and needs to be added individually.
         """
         url = "https://celestrak.org/NORAD/elements/gp.php"
         params = {"CATNR": str(norad_cat_id), "FORMAT": "TLE"}
@@ -303,7 +303,7 @@ class TLEManager:
         line1: str,
         line2: str,
     ) -> bool:
-        """手動でTLEを追加・更新する（GUIから入力した場合など）"""
+        """Manually add or update a TLE (e.g. when entered via the GUI)"""
         try:
             sat = EarthSatellite(line1, line2, name, self._ts)
             epoch_dt = sat.epoch.utc_datetime()

@@ -1,8 +1,9 @@
 """
-QTH手動設定ダイアログ
+QTH manual setup dialog.
 
-緯度・経度・標高の直接入力、Maidenheadグリッドロケーター入力、コールサイン入力をサポート。
-標高は Open Elevation API で自動取得できる（オフライン時は 0 m のまま）。
+Supports direct entry of latitude/longitude/elevation, Maidenhead grid locator
+input, and callsign input.  Elevation can be fetched automatically via the
+Open Elevation API (falls back to 0 m when offline).
 """
 
 from __future__ import annotations
@@ -40,21 +41,21 @@ _ELEVATION_TIMEOUT = 10.0
 
 
 class _ElevationBridge(QObject):
-    """ワーカースレッドからメインスレッドへ標高結果を渡すシグナルブリッジ。"""
+    """Signal bridge that passes elevation results from a worker thread to the main thread."""
 
     done: Signal = Signal(object)  # float | None
 
 
 def _fetch_elevation_sync(lat: float, lon: float) -> float | None:
     """
-    標高を取得する（同期・ブロッキング）。
+    Fetch elevation synchronously (blocking).
 
-    優先順位:
+    Priority:
         1. opentopodata.org (GET)
         2. open-elevation.com (POST)
 
     Returns:
-        標高（m）。両方失敗の場合は None。
+        Elevation in metres, or None when both services fail.
     """
     # 1st: opentopodata
     try:
@@ -92,7 +93,7 @@ def _fetch_elevation_sync(lat: float, lon: float) -> float | None:
 
 
 class QTHDialog(QDialog):
-    """QTH（自局位置）設定ダイアログ。"""
+    """QTH (observer location) setup dialog."""
 
     def __init__(
         self,
@@ -101,15 +102,15 @@ class QTHDialog(QDialog):
     ) -> None:
         """
         Args:
-            location_manager: 位置情報マネージャー
-            parent:           親ウィジェット
+            location_manager: Location manager instance
+            parent:           Parent widget
         """
         super().__init__(parent)
         self._location_manager = location_manager
         self.setWindowTitle(_("Set QTH"))
         self.setMinimumWidth(440)
 
-        # Grid Locator タブ用デバウンスタイマー（1秒後に自動取得）
+        # Debounce timer for the Grid Locator tab (auto-fetches elevation after 1 second)
         self._grid_debounce = QTimer(self)
         self._grid_debounce.setSingleShot(True)
         self._grid_debounce.setInterval(1000)
@@ -119,7 +120,7 @@ class QTHDialog(QDialog):
         self._load_current()
 
     # ------------------------------------------------------------------ #
-    # UI構築
+    # UI construction
     # ------------------------------------------------------------------ #
 
     def _build_ui(self) -> None:
@@ -127,7 +128,7 @@ class QTHDialog(QDialog):
 
         self._tabs = QTabWidget()
 
-        # Tab 0: 座標直接入力
+        # Tab 0: Direct coordinate entry
         coord_tab = QWidget()
         coord_form = QFormLayout(coord_tab)
 
@@ -143,7 +144,7 @@ class QTHDialog(QDialog):
         self._lon_spin.setSuffix("°")
         coord_form.addRow(_("Longitude (°E):"), self._lon_spin)
 
-        # 標高 + Get Elevation ボタン
+        # Elevation + Get Elevation button
         elev_row = QWidget()
         elev_h = QHBoxLayout(elev_row)
         elev_h.setContentsMargins(0, 0, 0, 0)
@@ -160,7 +161,7 @@ class QTHDialog(QDialog):
 
         self._tabs.addTab(coord_tab, _("Coordinates"))
 
-        # Tab 1: グリッドロケーター入力
+        # Tab 1: Grid locator entry
         grid_tab = QWidget()
         grid_form = QFormLayout(grid_tab)
 
@@ -187,7 +188,7 @@ class QTHDialog(QDialog):
 
         layout.addWidget(self._tabs)
 
-        # コールサイン
+        # Callsign
         call_group = QGroupBox(_("Station"))
         call_form = QFormLayout(call_group)
         self._call_edit = QLineEdit()
@@ -196,7 +197,7 @@ class QTHDialog(QDialog):
         call_form.addRow(_("Callsign:"), self._call_edit)
         layout.addWidget(call_group)
 
-        # OK / Cancel ボタン
+        # OK / Cancel buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -205,7 +206,7 @@ class QTHDialog(QDialog):
         layout.addWidget(buttons)
 
     def _load_current(self) -> None:
-        """現在の設定を入力欄にロードする。"""
+        """Load the current settings into the input fields."""
         loc = self._location_manager.current
         if loc:
             self._lat_spin.setValue(loc.latitude_deg)
@@ -218,7 +219,7 @@ class QTHDialog(QDialog):
             self._call_edit.setText(callsign)
 
     # ------------------------------------------------------------------ #
-    # 標高自動取得
+    # Automatic elevation fetch
     # ------------------------------------------------------------------ #
 
     def _fetch_elevation_async(
@@ -227,11 +228,11 @@ class QTHDialog(QDialog):
         lon: float,
         on_done: Callable[[float | None], None],
     ) -> None:
-        """バックグラウンドスレッドで標高を取得してメインスレッドのコールバックを呼ぶ。
+        """Fetch elevation in a background thread and invoke the callback on the main thread.
 
-        threading.Thread から QTimer.singleShot を呼んでも非Qtスレッドには
-        イベントループがないため発火しない。Signal を介してメインスレッドに
-        キューイングすることで安全にUIを更新する。
+        QTimer.singleShot called from threading.Thread does not fire because
+        non-Qt threads have no event loop.  A Signal is used to queue the
+        result back to the main thread so the UI can be updated safely.
         """
         bridge = _ElevationBridge(self)
         bridge.done.connect(on_done)
@@ -243,7 +244,7 @@ class QTHDialog(QDialog):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_get_coord_elevation(self) -> None:
-        """Coordinates タブの "Get Elevation" ボタン押下時の処理。"""
+        """Handle the "Get Elevation" button press on the Coordinates tab."""
         lat = self._lat_spin.value()
         lon = self._lon_spin.value()
         self._get_elev_btn.setText(_("Getting..."))
@@ -261,7 +262,7 @@ class QTHDialog(QDialog):
         self._fetch_elevation_async(lat, lon, on_done)
 
     def _auto_fetch_grid_elevation(self) -> None:
-        """Grid Locator タブ: デバウンス後に自動で標高を取得する。"""
+        """Grid Locator tab: auto-fetch elevation after the debounce delay."""
         g = self._grid_edit.text().strip()
         if len(g) not in (4, 6):
             return
@@ -282,11 +283,11 @@ class QTHDialog(QDialog):
         self._fetch_elevation_async(lat, lon, on_done)
 
     # ------------------------------------------------------------------ #
-    # シグナルハンドラー
+    # Signal handlers
     # ------------------------------------------------------------------ #
 
     def _on_grid_changed(self, text: str) -> None:
-        """グリッドロケーター入力時にデコードプレビューを更新し標高取得を予約する。"""
+        """Update the decode preview and schedule an elevation fetch on grid locator input."""
         g = text.strip()
         if len(g) in (4, 6):
             try:
@@ -306,7 +307,7 @@ class QTHDialog(QDialog):
             self._grid_elev_status.setText("")
 
     def _on_accept(self) -> None:
-        """OKボタン時の処理。"""
+        """Handle the OK button press."""
         tab = self._tabs.currentIndex()
         try:
             if tab == 0:

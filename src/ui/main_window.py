@@ -1,9 +1,9 @@
 """
-メインウィンドウ
+Main window
 
-MainWindow     — Qt6 アプリケーションのメインウィンドウ (QMainWindow)
-SatDetailPanel — 選択衛星の詳細情報パネル
-PassListPanel  — パス予測一覧パネル
+MainWindow     — Qt6 application main window (QMainWindow)
+SatDetailPanel — selected satellite detail info panel
+PassListPanel  — pass prediction list panel
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 
 class _SatData(TypedDict):
-    """衛星リスト表示用データ（フィルタリングに使用）。"""
+    """Satellite list display data (used for filtering)."""
 
     norad: int
     name: str
@@ -77,21 +77,21 @@ class _SatData(TypedDict):
     amsat_status: str | None
 
 
-# AO-91, FO-29, CAS-4A などの AMSAT 識別子を抽出する正規表現
-# 2〜4 文字のプレフィックス + 任意の区切り + 1〜3 桁数字 + 任意の末尾文字
+# Regular expression to extract AMSAT designators like AO-91, FO-29, CAS-4A
+# 2-4 character prefix + optional separator + 1-3 digit number + optional trailing character
 _DESIG_RE = re.compile(r"\b([A-Za-z]{2,4})[-\s]?(\d{1,3}[A-Za-z]?)\b")
 
 
 def _extract_designators(name: str) -> set[str]:
-    """衛星名から AMSAT 識別子を正規化して返す（例: 'AO-91' → {'ao91'}）。"""
+    """Extract and normalize AMSAT designators from a satellite name (e.g. 'AO-91' -> {'ao91'})."""
     return {(m.group(1) + m.group(2)).lower() for m in _DESIG_RE.finditer(name)}
 
 
 def _amsat_key_in_sat_name(amsat_key: str, sat_name_lower: str) -> bool:
-    """AMSAT キーが衛星名に完全なトークンとして含まれているか判定する。
+    """Check whether an AMSAT key appears as a complete token within a satellite name.
 
-    前後に英数字が連続しない位置でのマッチのみ認める。
-    例: "iss" → "iss (zarya)" ✓  /  "ao-7" → "ao-73" ✗
+    Only matches where the key is not adjacent to alphanumeric characters are accepted.
+    Example: "iss" -> "iss (zarya)" matches; "ao-7" -> "ao-73" does not.
     """
     pattern = r"(?<![a-z0-9])" + re.escape(amsat_key) + r"(?![a-z0-9])"
     return bool(re.search(pattern, sat_name_lower))
@@ -104,8 +104,8 @@ def _amsat_key_in_sat_name(amsat_key: str, sat_name_lower: str) -> bool:
 
 class SatDetailPanel(QWidget):
     """
-    選択衛星の詳細情報（仰角・方位角・距離・視線速度・可視状態）を
-    QFormLayout で表示するパネル。
+    Panel that displays selected satellite details (elevation, azimuth, range,
+    range rate, visibility) using a QFormLayout.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -139,12 +139,12 @@ class SatDetailPanel(QWidget):
         layout.addStretch()
 
     def set_satellite(self, norad: int, name: str) -> None:
-        """選択された衛星の基本情報を設定する。"""
+        """Set basic info for the selected satellite."""
         self._name_label.setText(name)
         self._norad_label.setText(str(norad))
 
     def update_observation(self, obs: Observation | None) -> None:
-        """観測値を更新する。obs が None なら '—' をセットする。"""
+        """Update observation values. Sets '—' for all fields when obs is None."""
         if obs is None:
             self._clear_obs_fields()
             return
@@ -155,7 +155,7 @@ class SatDetailPanel(QWidget):
         self._vis_label.setText(_("Visible") if obs.is_above_horizon else _("Below horizon"))
 
     def clear(self) -> None:
-        """すべてのフィールドをリセットする。"""
+        """Reset all fields."""
         self._name_label.setText("—")
         self._norad_label.setText("—")
         self._clear_obs_fields()
@@ -178,21 +178,21 @@ class SatDetailPanel(QWidget):
 
 class MainWindow(QMainWindow):
     """
-    GPredict-Improved のメインウィンドウ。
+    GPredict-Improved main window.
 
-    レイアウト:
-        左  — 衛星リスト（TLE品質インジケーター付き）
-        中央 — タブ（世界地図 / レーダー / パスチャート）
-        右  — 選択衛星の詳細情報
-        下  — パス予測一覧
+    Layout:
+        Left   — satellite list (with TLE quality indicator)
+        Centre — tabs (World Map / Radar / Pass Chart)
+        Right  — selected satellite detail panel
+        Bottom — pass prediction list
     """
 
-    # バックグラウンドスレッドから _load_satellites を安全に呼ぶためのシグナル。
-    # QTimer.singleShot はイベントループのないスレッドでは動作しないため Signal を使う。
+    # Signal used to safely call _load_satellites from a background thread.
+    # QTimer.singleShot does not fire in threads without an event loop, so a Signal is used.
     _satellite_list_refresh: Signal = Signal()
-    # バックグラウンドのリグ制御スレッドからエラーを UI スレッドに伝えるシグナル。
+    # Signal used to pass rig control errors from a background thread to the UI thread.
     _rig_error: Signal = Signal(str)
-    # バックグラウンドの SATNOGS 同期スレッドから結果をステータスバーに伝えるシグナル。
+    # Signal used to pass SATNOGS sync results from a background thread to the status bar.
     _satnogs_status: Signal = Signal(str)
 
     def __init__(
@@ -207,13 +207,13 @@ class MainWindow(QMainWindow):
     ) -> None:
         """
         Args:
-            conn:             SQLite 接続
-            tle_manager:      TLE マネージャー
-            engine:           衛星エンジン（None なら位置更新なし）
-            pass_predictor:   パス予測器（None ならパス予測なし）
-            location_manager: 位置情報マネージャー（None なら QTH 未設定表示）
-            fastapi_app:      FastAPI アプリ（None なら Web サーバー起動なし）
-            web_port:         Web サーバーポート番号
+            conn:             SQLite connection
+            tle_manager:      TLE manager
+            engine:           satellite engine (no position updates if None)
+            pass_predictor:   pass predictor (no pass prediction if None)
+            location_manager: location manager (QTH shown as unset if None)
+            fastapi_app:      FastAPI app (web server not started if None)
+            web_port:         web server port number
         """
         super().__init__()
         self._conn = conn
@@ -232,14 +232,14 @@ class MainWindow(QMainWindow):
         self._amsat_fetcher = AMSATStatusFetcher(conn)
         self._transmitter_manager = TransmitterManager(conn)
         self._rig_controller: RigController | None = None
-        # リグ制御スレッドが実行中かどうかを示すロック。
-        # acquire(blocking=False) で取得できないときは前のサイクルがまだ実行中。
+        # Lock indicating whether the rig control thread is currently running.
+        # If acquire(blocking=False) fails, the previous cycle is still executing.
         self._rig_busy_lock = threading.Lock()
-        # Tune ボタンで中心周波数にリセットされた場合の強制送信用キャッシュ。
-        # None → ドップラー計算値をそのまま使う。 値がある → その値で次回送信後 None に戻す。
+        # Cache for forced frequency transmission when the Tune button resets to centre frequency.
+        # None -> use the Doppler-corrected value as-is. A value -> transmit it once then reset to None.
         self._tune_dl_override: float | None = None
         self._tune_ul_override: float | None = None
-        # L ボタン: True のときアップリンクをダウンリンクに連動させる。
+        # L button: when True, uplink is slaved to downlink.
         self._trsp_lock: bool = False
 
         self.setWindowTitle("GPredict-Improved")
@@ -248,11 +248,11 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._build_statusbar()
-        # PassPanel シグナル接続
+        # Connect PassPanel signals
         self._pass_list.target_search_requested.connect(self._on_target_search_requested)
         self._pass_list.highlight_satellite.connect(self._on_highlight_satellite)
         self._pass_list.set_pass_predictor(self._pass_predictor)
-        # バックグラウンドスレッドからの衛星リスト更新要求を受け取るシグナルを接続
+        # Connect signal that receives satellite list refresh requests from background threads
         self._satellite_list_refresh.connect(self._load_satellites)
         self._rig_error.connect(self._on_rig_error)
         self._satnogs_status.connect(self._on_satnogs_status)
@@ -274,17 +274,17 @@ class MainWindow(QMainWindow):
         self._load_cycle_setting()
 
     # ------------------------------------------------------------------ #
-    # UI 構築
+    # UI construction
     # ------------------------------------------------------------------ #
 
     def _build_ui(self) -> None:
-        """ウィジェット・レイアウトを構築する。"""
+        """Build widgets and layout."""
         v_splitter = QSplitter(Qt.Orientation.Vertical)
         self.setCentralWidget(v_splitter)
 
         h_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # 左: 衛星リスト
+        # Left: satellite list
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(2, 2, 2, 2)
@@ -324,7 +324,7 @@ class MainWindow(QMainWindow):
         left.setMaximumWidth(240)
         h_splitter.addWidget(left)
 
-        # 中央: タブ（世界地図 / レーダー / パスチャート / Radio Control）
+        # Centre: tabs (World Map / Radar / Pass Chart / Radio Control)
         self._tab_widget = QTabWidget()
         self._world_map = WorldMapView()
         self._radar_view = RadarView()
@@ -337,7 +337,7 @@ class MainWindow(QMainWindow):
         self._tab_widget.addTab(self._radio_control, _("Radio Control"))
         h_splitter.addWidget(self._tab_widget)
 
-        # 右: 衛星詳細パネル
+        # Right: satellite detail panel
         self._detail_panel = SatDetailPanel()
         self._detail_panel.setMinimumWidth(160)
         self._detail_panel.setMaximumWidth(260)
@@ -347,7 +347,7 @@ class MainWindow(QMainWindow):
         h_splitter.setStretchFactor(1, 1)
         h_splitter.setStretchFactor(2, 0)
 
-        # 下: パス予測一覧 (PassPanel)
+        # Bottom: pass prediction list (PassPanel)
         self._pass_list = PassPanel()
         self._pass_list.setMinimumHeight(200)
 
@@ -358,7 +358,7 @@ class MainWindow(QMainWindow):
         v_splitter.setSizes([600, 400])
 
     def _build_menu(self) -> None:
-        """メニューバーを構築する。"""
+        """Build the menu bar."""
         mb = self.menuBar()
 
         # File
@@ -405,10 +405,10 @@ class MainWindow(QMainWindow):
             help_menu.addAction(_("GitHub"), self._on_github)
 
     def _build_statusbar(self) -> None:
-        """ステータスバーを構築する。"""
+        """Build the status bar."""
         sb = self.statusBar()
 
-        self._qth_label = QLabel("QTH: 未設定")
+        self._qth_label = QLabel("QTH: Not set")
         self._tle_label = QLabel("")
         self._filter_label = QLabel("Showing: All")
         self._url_label = QLabel("")
@@ -428,11 +428,11 @@ class MainWindow(QMainWindow):
             sb.addPermanentWidget(self._rig_label)
 
     # ------------------------------------------------------------------ #
-    # データ読み込み
+    # Data loading
     # ------------------------------------------------------------------ #
 
     def _load_satellites(self) -> None:
-        """衛星データをDBから読み込んで内部リストを構築し、フィルターを適用する。"""
+        """Load satellite data from the DB, build the internal list, and apply filters."""
         amsat_map: dict[str, str] = self._amsat_fetcher.load_cached() or {}
 
         designator_status: dict[str, str] = {}
@@ -488,12 +488,12 @@ class MainWindow(QMainWindow):
         self._apply_filter()
 
     def _apply_filter(self) -> None:
-        """フィルターコンボと検索ボックスに従って衛星リストを再描画する。"""
+        """Redraw the satellite list according to the filter combo and search box."""
         filter_text = self._filter_combo.currentText()
         search_query = self._search_box.text().strip().lower()
 
-        # リスト再構築中に currentRowChanged(-1) が発火して選択・表示がクリアされないよう
-        # シグナルを一時停止し、再構築後に選択を復元する
+        # Pause signals to prevent currentRowChanged(-1) from firing during list rebuild
+        # (which would clear the selection and display), then restore the selection afterward
         prev_item = self._sat_list.currentItem()
         current_norad: int | None = (
             prev_item.data(Qt.ItemDataRole.UserRole) if prev_item is not None else None
@@ -506,15 +506,15 @@ class MainWindow(QMainWindow):
         filtered_sats: list[tuple[int, str]] = []
 
         for d in self._all_sat_data:
-            # 非表示フィルター:
-            #   is_hidden=1 (ユーザー手動) → "Hidden" フィルターのみ表示
-            #   is_hidden=2 (システム自動) → すべてのフィルターで非表示
+            # Visibility filter:
+            #   is_hidden=1 (user-hidden)   -> shown only under the "Hidden" filter
+            #   is_hidden=2 (system-hidden) -> hidden from all filters
             if filter_text == "Hidden":
                 if d["is_hidden"] != 1:
                     continue
             elif d["is_hidden"] != 0:
                 continue
-            # カテゴリーフィルター
+            # Category filter
             if filter_text == "★ Favorites" and not d["is_favorite"]:
                 continue
             if filter_text == "Amateur" and d["tle_group"] != "amateur":
@@ -531,7 +531,7 @@ class MainWindow(QMainWindow):
                 continue
             if filter_text == "Operational (AMSAT)" and d["amsat_status"] != "operational":
                 continue
-            # 検索フィルター（大文字小文字を区別しない部分一致）
+            # Search filter (case-insensitive substring match)
             if search_query and search_query not in d["name"].lower():
                 continue
 
@@ -577,20 +577,20 @@ class MainWindow(QMainWindow):
 
         self._pass_list.set_satellites(filtered_sats)
 
-        # World Map をフィルターに連動させる
-        # "All Satellites" かつ検索なし → 全衛星表示 (None)
-        # それ以外 → フィルター後の NORAD セットのみ表示
+        # Sync World Map with current filter:
+        # "All Satellites" with no search -> show all satellites (None)
+        # otherwise -> show only the filtered NORAD set
         if filter_text == "All Satellites" and not search_query:
             self._world_map.set_visible_norads(None)
         else:
             self._world_map.set_visible_norads({n for n, _ in filtered_sats})
 
     # ------------------------------------------------------------------ #
-    # バックグラウンド処理
+    # Background processing
     # ------------------------------------------------------------------ #
 
     def _start_web_server(self, fastapi_app: Any, port: int) -> None:
-        """FastAPI アプリを uvicorn でバックグラウンド起動する。"""
+        """Start the FastAPI app with uvicorn in the background."""
         try:
             from web.server import WebServer
 
@@ -602,7 +602,7 @@ class MainWindow(QMainWindow):
             logger.warning("Web server start failed: %s", exc)
 
     def _start_scheduler(self) -> None:
-        """APScheduler で TLE・AMSAT自動更新ジョブを登録・起動する。"""
+        """Register and start TLE and AMSAT auto-update jobs with APScheduler."""
         try:
             from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -627,20 +627,20 @@ class MainWindow(QMainWindow):
             logger.warning("APScheduler start failed: %s", exc)
             self._scheduler = None
 
-        # 起動時にAMSATステータスが古ければバックグラウンドで更新
+        # On startup, refresh AMSAT status in the background if stale
         if self._amsat_fetcher.is_stale():
             threading.Thread(target=self._refresh_amsat_sync, daemon=True).start()
 
-        # 起動時にトランスポンダが0件なら自動同期
+        # On startup, auto-sync if there are no transmitters yet
         count = self._conn.execute("SELECT COUNT(*) FROM transmitters").fetchone()[0]
         if count == 0:
             threading.Thread(target=self._refresh_satnogs_sync, daemon=True).start()
 
-        # 起動時に常に衛星名・status を SATNOGS からバックグラウンド同期
+        # Always sync satellite names and status from SATNOGS in the background on startup
         threading.Thread(target=self._refresh_satellite_names_sync, daemon=True).start()
 
     def _refresh_tle_sync(self) -> None:
-        """バックグラウンドスレッドから有効な全 TLE ソースを更新する（APScheduler ジョブ）。"""
+        """Update all enabled TLE sources from a background thread (APScheduler job)."""
         from ui.settings_dialog import SettingsDialog
 
         enabled = SettingsDialog.get_enabled_sources(self._conn)
@@ -652,7 +652,7 @@ class MainWindow(QMainWindow):
                 logger.warning("TLE refresh failed: %s — %s", source_name, exc)
 
     def _refresh_amsat_sync(self) -> None:
-        """バックグラウンドスレッドから AMSAT 運用状況を更新する。"""
+        """Update AMSAT operational status from a background thread."""
         try:
             asyncio.run(self._amsat_fetcher.fetch_and_update())
             logger.info("AMSAT status refresh completed")
@@ -661,7 +661,7 @@ class MainWindow(QMainWindow):
             logger.warning("AMSAT status refresh failed: %s", exc)
 
     def _refresh_satellite_names_sync(self) -> None:
-        """バックグラウンドスレッドから SATNOGS の衛星名・status を同期する。"""
+        """Sync satellite names and status from SATNOGS in a background thread."""
         try:
             result = asyncio.run(self._transmitter_manager.sync_satellite_names())
             logger.info("SATNOGS satellite names sync completed: %s", result)
@@ -670,18 +670,18 @@ class MainWindow(QMainWindow):
             logger.warning("SATNOGS satellite names sync failed: %s", exc)
 
     # ------------------------------------------------------------------ #
-    # タイマーコールバック（1 秒ごと）
+    # Timer callback (every 1 second)
     # ------------------------------------------------------------------ #
 
     def _on_tick(self) -> None:
-        """衛星位置更新・ステータスバー更新を行うタイマーコールバック。"""
+        """Timer callback that updates satellite positions and the status bar."""
         self._update_world_map()
         self._update_selected_satellite()
         self._update_statusbar()
 
     def _update_world_map(self) -> None:
-        """全衛星の直下点と自局位置を取得して世界地図を更新する。"""
-        # 自局位置 ★ マーカーを更新（エンジン有無にかかわらず）
+        """Fetch all satellite subpoints and observer position, then update the world map."""
+        # Update the observer location star marker (regardless of whether the engine is set)
         if self._location_manager is not None and self._location_manager.current is not None:
             loc = self._location_manager.current
             self._world_map.set_observer_location(loc.latitude_deg, loc.longitude_deg)
@@ -702,7 +702,7 @@ class MainWindow(QMainWindow):
 
         self._world_map.set_satellites(sat_data)
 
-        # 選択衛星のフットプリントを更新（毎秒動的に移動）
+        # Update the selected satellite's footprint (moves dynamically every second)
         if self._selected_norad is not None:
             swa = self._engine.subpoint_with_alt(self._selected_norad)
             if swa is not None:
@@ -714,7 +714,7 @@ class MainWindow(QMainWindow):
             self._world_map.clear_footprint()
 
     def _update_selected_satellite(self) -> None:
-        """選択中衛星の観測値・レーダービューを更新する。"""
+        """Update the observation values and radar view for the currently selected satellite."""
         if self._engine is None or self._selected_norad is None:
             return
 
@@ -725,7 +725,7 @@ class MainWindow(QMainWindow):
             item = self._sat_list.currentItem()
             name = item.text() if item else str(self._selected_norad)
 
-            # 現在パス中かどうかに応じて次パス情報を選択する
+            # Choose next pass info depending on whether a pass is currently active
             now = datetime.now(UTC)
             next_pass = next(
                 (p for p in self._current_passes if p.los > now),
@@ -736,7 +736,7 @@ class MainWindow(QMainWindow):
             next_max_el = next_pass.max_elevation_deg if next_pass is not None else None
             next_dur = next_pass.duration_s if next_pass is not None else None
 
-            # 次パス（または現パス）のAOS〜LOSを30秒刻みで計算して軌跡を作成
+            # Compute track points from AOS to LOS at ~30-second intervals for the next (or current) pass
             pass_track: list[tuple[float, float]] = []
             if next_pass is not None:
                 n_steps = max(20, min(40, int(next_pass.duration_s / 15)))
@@ -761,8 +761,8 @@ class MainWindow(QMainWindow):
             )
             self._radar_view.set_tracks([track])
 
-        # Radio Control: ドップラー補正をリアルタイム更新
-        # 仰角の正負を問わず、TLEと周波数データが揃っていれば常に計算・送信する
+        # Radio Control: update Doppler correction in real time.
+        # Always compute and transmit as long as TLE and frequency data are available, regardless of elevation.
         if obs is not None and self._current_transmitter is not None:
             rr = obs.range_rate_km_s
             dl_nom = self._current_transmitter.get("downlink_low")
@@ -776,7 +776,7 @@ class MainWindow(QMainWindow):
                 else (None, None)
             )
             if self._trsp_lock and dl_corr is not None:
-                # Lock ON: アップリンクはダウンリンクのオフセットから計算する。
+                # Lock ON: calculate uplink from the downlink offset.
                 ul_low = self._current_transmitter.get("uplink_low")
                 ul_high = self._current_transmitter.get("uplink_high")
                 dl_low_nom = self._current_transmitter.get("downlink_low")
@@ -795,8 +795,8 @@ class MainWindow(QMainWindow):
                     if ul_nom is not None
                     else (None, None)
                 )
-            # Tune ボタンで override がセットされていれば中心周波数を使い、
-            # 使用後に None に戻す（次サイクルからドップラー補正値に戻る）。
+            # If the Tune button has set an override, use the centre frequency,
+            # then reset to None afterward (subsequent cycles return to Doppler-corrected values).
             if self._tune_dl_override is not None:
                 dl_corr = self._tune_dl_override
                 dl_shift = None
@@ -809,11 +809,11 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(
                 dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss
             )
-            # 接続中の無線機にドップラー補正済み周波数を送信（仰角の正負を問わない）。
-            # set_vfo_frequencies() は内部で recv() を伴う TCP 通信を行うため、
-            # UIスレッドで直接呼ぶとブロッキングで画面が固まる。
-            # _rig_busy_lock を使い、前のサイクルが完了していればバックグラウンド
-            # スレッドで送信する。前のサイクルがまだ実行中なら今回はスキップする。
+            # Transmit Doppler-corrected frequencies to the connected rig (regardless of elevation).
+            # set_vfo_frequencies() involves TCP communication with recv(), so calling it on the
+            # UI thread directly would block and freeze the display.
+            # Use _rig_busy_lock: if the previous cycle has finished, transmit on a background
+            # thread; if the previous cycle is still running, skip this tick.
             if self._rig_controller is not None and self._rig_controller.is_connected:
                 if self._rig_busy_lock.acquire(blocking=False):
                     rig = self._rig_controller
@@ -838,14 +838,14 @@ class MainWindow(QMainWindow):
         self._update_rig_label()
 
     def _on_rig_error(self, msg: str) -> None:
-        """バックグラウンドリグスレッドからのエラーをステータスバーに表示する（UIスレッド）。"""
+        """Display an error from the background rig thread in the status bar (UI thread)."""
         logger.warning("RigControlError: %s", msg)
         sb = self.statusBar()
         if sb:
             sb.showMessage(f"RIG: {msg}", 3000)
 
     def _update_statusbar(self) -> None:
-        """ステータスバーの QTH テキストと TLE 最終更新日時を更新する。"""
+        """Update the QTH text and TLE last-updated timestamp in the status bar."""
         if self._location_manager is not None:
             self._qth_label.setText(self._location_manager.status_text)
 
@@ -854,19 +854,19 @@ class MainWindow(QMainWindow):
             self._tle_label.setText(f"TLE: {str(row['last_fetch'])[:16]}")
 
     # ------------------------------------------------------------------ #
-    # 衛星選択コールバック
+    # Satellite selection callbacks
     # ------------------------------------------------------------------ #
 
     def _on_filter_changed(self, _: str) -> None:
-        """フィルターコンボ変更時に衛星リストを再描画する。"""
+        """Redraw the satellite list when the filter combo changes."""
         self._apply_filter()
 
     def _on_search_changed(self, _text: str) -> None:
-        """検索ボックスのテキスト変更時に衛星リストを再フィルタリングする。"""
+        """Re-filter the satellite list when the search box text changes."""
         self._apply_filter()
 
     def _on_sat_context_menu(self, pos: QPoint) -> None:
-        """衛星リストの右クリックコンテキストメニューを表示する。"""
+        """Show the right-click context menu for the satellite list."""
         item = self._sat_list.itemAt(pos)
         if item is None:
             return
@@ -899,7 +899,7 @@ class MainWindow(QMainWindow):
             self._show_sat_info(norad, name)
 
     def _toggle_favorite(self, norad: int, favorite: bool) -> None:
-        """お気に入り状態をDBに保存して衛星リストを再読み込みする。"""
+        """Save the favorite state to the DB and reload the satellite list."""
         self._conn.execute(
             "UPDATE satellites SET is_favorite = ? WHERE norad_cat_id = ?",
             (1 if favorite else 0, norad),
@@ -908,7 +908,7 @@ class MainWindow(QMainWindow):
         self._load_satellites()
 
     def _set_hidden(self, norad: int, hidden: bool) -> None:
-        """衛星の非表示状態をDBに保存して衛星リストを再読み込みする。"""
+        """Save the satellite hidden state to the DB and reload the satellite list."""
         self._conn.execute(
             "UPDATE satellites SET is_hidden = ? WHERE norad_cat_id = ?",
             (1 if hidden else 0, norad),
@@ -917,7 +917,7 @@ class MainWindow(QMainWindow):
         self._load_satellites()
 
     def _on_hide_satellite(self) -> None:
-        """Satellite > Hide Satellite ハンドラー。"""
+        """Satellite > Hide Satellite handler."""
         current = self._sat_list.currentItem()
         if current is None:
             QMessageBox.warning(self, _("Hide Satellite"), _("No satellite selected."))
@@ -934,7 +934,7 @@ class MainWindow(QMainWindow):
             self._set_hidden(norad, True)
 
     def _show_sat_info(self, norad: int, name: str) -> None:
-        """衛星情報ダイアログを表示する（NORAD番号・TLE epoch・品質）。"""
+        """Display a satellite info dialog (NORAD number, TLE epoch, quality)."""
         tle_row = self._conn.execute(
             "SELECT epoch, quality_score, source, tle_group FROM tle_data WHERE norad_cat_id = ?",
             (norad,),
@@ -955,7 +955,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, f"Satellite Info — {name}", "\n".join(info_parts))
 
     def _on_sat_selected(self, row: int) -> None:
-        """衛星リストで選択が変わったときのコールバック。"""
+        """Callback invoked when the satellite list selection changes."""
         if row < 0:
             self._selected_norad = None
             self._current_transmitter = None
@@ -974,13 +974,13 @@ class MainWindow(QMainWindow):
         self._refresh_radio_control(norad)
 
     def _refresh_radio_control(self, norad: int) -> None:
-        """選択衛星のトランスミッター一覧を取得してRadio Controlパネルを更新する。
+        """Fetch the transmitter list for the selected satellite and update the Radio Control panel.
 
-        優先ORDER BY:
-          1. Transponder かつ双方向 かつ1GHz未満
-          2. Transceiver かつ1GHz未満
-          3. 1GHz未満のもの
-          4. downlink_low ASC（低い周波数が先）
+        Priority ORDER BY:
+          1. Transponder with bidirectional links below 1 GHz
+          2. Transceiver below 1 GHz
+          3. Any entry below 1 GHz
+          4. downlink_low ASC (lower frequency first)
         """
         rows = self._conn.execute(
             """
@@ -999,12 +999,12 @@ class MainWindow(QMainWindow):
             (norad,),
         ).fetchall()
         transmitters = [dict(r) for r in rows]
-        # set_transmitters が transmitter_changed を emit し _on_transmitter_changed が
-        # _current_transmitter を更新する
+        # set_transmitters emits transmitter_changed, which causes _on_transmitter_changed
+        # to update _current_transmitter
         self._radio_control.set_transmitters(transmitters)
 
     def _on_transmitter_changed(self, xpdr: Any) -> None:
-        """トランスポンダ選択変更時に _current_transmitter を更新して表示を即時反映する。"""
+        """Update _current_transmitter and immediately refresh the display when the transponder selection changes."""
         self._current_transmitter = xpdr if isinstance(xpdr, dict) else None
         if self._current_transmitter:
             dl = self._current_transmitter.get("downlink_low")
@@ -1016,7 +1016,7 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(None, None, None, None, None, None)
 
     def _refresh_passes(self) -> None:
-        """選択衛星のパス予測を取得してパスリストとチャートを更新する。"""
+        """Fetch pass predictions for the selected satellite and update the pass list and chart."""
         if self._selected_norad is None or self._pass_predictor is None:
             self._pass_list.clear()
             return
@@ -1034,7 +1034,7 @@ class MainWindow(QMainWindow):
         self._pass_chart.set_passes(passes, sat_name=name)
 
     def _on_chart_range_changed(self, hours: float) -> None:
-        """パスチャートの時間範囲変更時に PassPredictor を即時呼び出す。"""
+        """Immediately call PassPredictor when the pass chart time range changes."""
         if self._selected_norad is None or self._pass_predictor is None:
             return
         now = datetime.now(UTC)
@@ -1050,7 +1050,7 @@ class MainWindow(QMainWindow):
         self._pass_chart.set_passes(passes, sat_name=name)
 
     def _on_target_search_requested(self, start: Any, end: Any) -> None:
-        """Target タブの Search ボタンが押されたときに呼ばれる。"""
+        """Called when the Search button on the Target tab is pressed."""
         if self._selected_norad is None or self._pass_predictor is None:
             return
         start_dt: datetime = start
@@ -1063,7 +1063,7 @@ class MainWindow(QMainWindow):
         self._pass_chart.set_passes(passes, sat_name=name)
 
     def _on_highlight_satellite(self, norad: int) -> None:
-        """Group タブの Satellite 列クリック時に左リストの該当衛星をハイライトする。"""
+        """Highlight the corresponding satellite in the left list when the Satellite column is clicked on the Group tab."""
         for i in range(self._sat_list.count()):
             item = self._sat_list.item(i)
             if item is not None and int(item.data(Qt.ItemDataRole.UserRole)) == norad:
@@ -1071,11 +1071,11 @@ class MainWindow(QMainWindow):
                 break
 
     # ------------------------------------------------------------------ #
-    # メニューハンドラー
+    # Menu handlers
     # ------------------------------------------------------------------ #
 
     def _on_set_qth(self) -> None:
-        """File > Set QTH... ハンドラー。"""
+        """File > Set QTH... handler."""
         if self._location_manager is None:
             QMessageBox.warning(self, _("Set QTH"), _("Location manager not initialized."))
             return
@@ -1111,7 +1111,7 @@ class MainWindow(QMainWindow):
             self._on_settings_accepted()
 
     def _on_settings_accepted(self) -> None:
-        """Settings OK後に有効なTLEソースを同期して衛星リストを再描画する。"""
+        """After Settings OK, sync the enabled TLE sources and redraw the satellite list."""
         from ui.settings_dialog import SettingsDialog
 
         enabled = SettingsDialog.get_enabled_sources(self._conn)
@@ -1124,13 +1124,13 @@ class MainWindow(QMainWindow):
                     print(f"[TLE] Result: {result}")
                 except Exception as exc:  # noqa: BLE001
                     print(f"[TLE] Error fetching {source_name}: {exc}")
-            # Signal emit はスレッドセーフ。Qt がメインスレッドへ自動キューイングする。
+            # Signal emit is thread-safe; Qt automatically queues it to the main thread.
             self._satellite_list_refresh.emit()
 
         threading.Thread(target=_fetch_all, daemon=True).start()
 
     def _on_add_transmitter(self) -> None:
-        """Satellite > Add Transmitter... ハンドラー。"""
+        """Satellite > Add Transmitter... handler."""
         from ui.transmitter_dialog import TransmitterDialog
 
         norad = self._selected_norad
@@ -1143,7 +1143,7 @@ class MainWindow(QMainWindow):
             )
 
     def _on_edit_transmitter(self) -> None:
-        """Satellite > Edit Transmitter... ハンドラー。"""
+        """Satellite > Edit Transmitter... handler."""
         from ui.transmitter_dialog import TransmitterDialog
 
         current = self._sat_list.currentItem()
@@ -1181,7 +1181,7 @@ class MainWindow(QMainWindow):
             self._refresh_radio_control(self._selected_norad)
 
     def _on_delete_transmitter(self) -> None:
-        """Satellite > Delete Transmitter... ハンドラー。"""
+        """Satellite > Delete Transmitter... handler."""
         current = self._sat_list.currentItem()
         if current is None:
             QMessageBox.warning(self, _("Delete Transmitter"), _("No satellite selected."))
@@ -1226,7 +1226,7 @@ class MainWindow(QMainWindow):
             self._refresh_radio_control(self._selected_norad)
 
     def _on_add_manual_tle(self) -> None:
-        """Satellite > Add Manual TLE... ハンドラー。"""
+        """Satellite > Add Manual TLE... handler."""
         from ui.manual_tle_dialog import ManualTLEDialog
 
         dialog = ManualTLEDialog(self._tle_manager, parent=self)
@@ -1244,10 +1244,10 @@ class MainWindow(QMainWindow):
         )
 
     def _on_sync_satnogs(self) -> None:
-        """Data > Sync Frequencies from SATNOGS ハンドラー。
+        """Data > Sync Frequencies from SATNOGS handler.
 
-        バックグラウンドスレッドで sync_from_satnogs() を実行し、
-        完了後にステータスバーに件数を表示する。
+        Runs sync_from_satnogs() in a background thread and displays
+        the result count in the status bar on completion.
         """
         threading.Thread(target=self._refresh_satnogs_sync, daemon=True).start()
         sb = self.statusBar()
@@ -1255,7 +1255,7 @@ class MainWindow(QMainWindow):
             sb.showMessage(_("Syncing transmitter frequencies from SATNOGS..."), 5000)
 
     def _refresh_satnogs_sync(self) -> None:
-        """バックグラウンドスレッドから SATNOGS トランスポンダを同期する。"""
+        """Sync SATNOGS transponders from a background thread."""
         try:
             result = asyncio.run(self._transmitter_manager.sync_from_satnogs())
             msg = _("SATNOGS sync: {ins} inserted, {upd} updated, {skp} skipped").format(
@@ -1270,7 +1270,7 @@ class MainWindow(QMainWindow):
         self._satnogs_status.emit(msg)
 
     def _on_satnogs_status(self, msg: str) -> None:
-        """バックグラウンドSATNOGS同期スレッドからのステータスをステータスバーに表示する（UIスレッド）。"""
+        """Display the status from the background SATNOGS sync thread in the status bar (UI thread)."""
         sb = self.statusBar()
         if sb:
             sb.showMessage(msg, 8000)
@@ -1283,7 +1283,7 @@ class MainWindow(QMainWindow):
             self._load_rig_settings()
 
     def _load_rig_settings(self) -> None:
-        """DB から無線機設定を読み込みコントローラーを生成する。"""
+        """Load rig settings from the DB and instantiate the controller."""
         try:
             row = self._conn.execute(
                 "SELECT value FROM app_settings WHERE key = 'rig_settings'"
@@ -1312,11 +1312,11 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to load rig settings: %s", exc)
 
     def _on_lock_changed(self, locked: bool) -> None:
-        """L ボタントグル時に _trsp_lock フラグを更新する。"""
+        """Update the _trsp_lock flag when the L button is toggled."""
         self._trsp_lock = locked
 
     def _on_tune_requested(self) -> None:
-        """T ボタン押下時: 現在のトランスポンダ帯域中心周波数にリセットする。"""
+        """T button pressed: reset to the centre frequency of the current transponder band."""
         if self._current_transmitter is None:
             return
         dl_low = self._current_transmitter.get("downlink_low")
@@ -1335,7 +1335,7 @@ class MainWindow(QMainWindow):
             self._tune_ul_override = float(ul_low)
 
     def _load_cycle_setting(self) -> None:
-        """DB から rig_cycle_ms を読み込みタイマーと UI に反映する。"""
+        """Load rig_cycle_ms from the DB and apply it to the timer and UI."""
         try:
             row = self._conn.execute(
                 "SELECT value FROM app_settings WHERE key = 'rig_cycle_ms'"
@@ -1349,7 +1349,7 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to load cycle setting: %s", exc)
 
     def _on_cycle_changed(self, ms: int) -> None:
-        """Cycle スピンボックス変更時にタイマー間隔を更新して DB に保存する。"""
+        """Update the timer interval and save to DB when the Cycle spinbox changes."""
         ms = max(10, min(10000, ms))
         self._timer.setInterval(ms)
         try:
@@ -1362,7 +1362,7 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to save cycle setting: %s", exc)
 
     def _update_rig_label(self) -> None:
-        """ステータスバーの RIG ラベルを更新する。"""
+        """Update the RIG label in the status bar."""
         if self._rig_controller is None:
             self._rig_label.setText(_("RIG: 未接続"))
         elif self._rig_controller.is_connected:
@@ -1423,11 +1423,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, _("QR Code"), _("Failed to generate QR code."))
 
     # ------------------------------------------------------------------ #
-    # ウィンドウライフサイクル
+    # Window lifecycle
     # ------------------------------------------------------------------ #
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """ウィンドウクローズ時にタイマー・Webサーバー・スケジューラを停止する。"""
+        """Stop the timer, web server, and scheduler when the window is closed."""
         self._timer.stop()
         if self._web_server is not None:
             with contextlib.suppress(Exception):

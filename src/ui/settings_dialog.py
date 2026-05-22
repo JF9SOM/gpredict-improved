@@ -1,8 +1,8 @@
 """
-設定ダイアログ
+Settings dialog.
 
-SettingsDialog — File > Settings で開くダイアログ。
-TLE ソース選択タブを含む。
+SettingsDialog — Dialog opened from File > Settings.
+Includes a tab for TLE source selection.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ _DEFAULT_ENABLED = {
 
 
 class SettingsDialog(QDialog):
-    """File > Settings ダイアログ。TLE ソース選択タブを含む。"""
+    """File > Settings dialog. Includes a tab for TLE source selection."""
 
     def __init__(self, conn: sqlite3.Connection, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -116,7 +116,7 @@ class SettingsDialog(QDialog):
 
     @staticmethod
     def get_enabled_sources(conn: sqlite3.Connection) -> list[str]:
-        """有効な TLE ソース名リストを返す。設定未保存時はデフォルトを返す。"""
+        """Return the list of enabled TLE source names. Returns defaults when not yet saved."""
         row = conn.execute(
             "SELECT value FROM app_settings WHERE key = 'tle_enabled_sources'"
         ).fetchone()
