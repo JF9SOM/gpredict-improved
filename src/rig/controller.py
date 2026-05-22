@@ -246,7 +246,12 @@ class RigController(ABC):
         self.set_mode(dl_mode)
 
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
-        """Set mode on both VFOs without affecting split state. No-op by default."""
+        """Set mode on both VFOs without affecting split state.
+
+        Default implementation calls set_mode() for the downlink mode.
+        Override in subclasses that support independent per-VFO mode setting.
+        """
+        self.set_mode(dl_mode)
 
     # -- Utilities --
 
