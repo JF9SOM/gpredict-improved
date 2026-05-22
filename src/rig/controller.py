@@ -50,12 +50,18 @@ except ModuleNotFoundError:
 
 
 def _build_mode_map() -> dict[str, int]:
-    """Map real constants when Hamlib is available, or dummy integers in mock mode."""
+    """Map real constants when Hamlib is available, or dummy integers in mock mode.
+
+    "USB" is listed before "SSB" so that the reverse map (_hamlib_to_mode) still
+    resolves RIG_MODE_USB back to "SSB" (the canonical SatNOGS name), while
+    "USB" is still accepted as an input key for SatNOGS entries that use it directly.
+    """
     if HAMLIB_AVAILABLE:
         return {
             "DIGITALVOICE": _hamlib_mod.RIG_MODE_FM,
             "FM": _hamlib_mod.RIG_MODE_FM,
-            "SSB": _hamlib_mod.RIG_MODE_USB,
+            "USB": _hamlib_mod.RIG_MODE_USB,  # some SatNOGS entries use rigctld name directly
+            "SSB": _hamlib_mod.RIG_MODE_USB,  # canonical SatNOGS name; wins in reverse map
             "LSB": _hamlib_mod.RIG_MODE_LSB,
             "CW": _hamlib_mod.RIG_MODE_CW,
             "CW-R": _hamlib_mod.RIG_MODE_CWR,
@@ -66,7 +72,8 @@ def _build_mode_map() -> dict[str, int]:
     return {
         "DIGITALVOICE": 1,
         "FM": 1,
-        "SSB": 2,
+        "USB": 2,  # rigctld-style name; placed first so SSB wins in reverse
+        "SSB": 2,  # canonical SatNOGS name; wins in reverse map
         "LSB": 3,
         "CW": 4,
         "CW-R": 5,
@@ -236,6 +243,15 @@ class RigController(ABC):
         if vfob_hz is not None:
             ok = self.set_frequency(vfob_hz, "VFOB") and ok
         return ok
+
+    def queue_mode(self, mode: str) -> None:
+        """Request a mode change on transponder switch or rig connect.
+
+        Default: calls set_mode() immediately. Subclasses that share a socket
+        with set_vfo_frequencies() (e.g. HamlibNetController) should defer the
+        send to the next frequency update cycle to avoid VFO state disruption.
+        """
+        self.set_mode(mode)
 
     # -- Utilities --
 
@@ -539,6 +555,9 @@ class HamlibNetController(RigController):
         self._cached_model_name: str = ""  # fetched once on connect and cached
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
+        # Mode to send before the next set_vfo_frequencies() call.
+        # Deferred so that M and F/I share the same thread; avoids split-state disruption.
+        self._pending_mode: str | None = None
 
     # -- Connection management --
 
@@ -602,6 +621,7 @@ class HamlibNetController(RigController):
             self._sock = None
             self._last_dl_hz = None
             self._last_ul_hz = None
+            self._pending_mode = None
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -790,6 +810,20 @@ class HamlibNetController(RigController):
         if not self.is_connected:
             return False
 
+        # Flush pending mode before frequency updates.
+        # Sending M in the same thread/lock-sequence as F/I prevents split-state disruption
+        # that occurs when M is sent from a concurrent background thread.
+        if self._pending_mode is not None:
+            pending = self._pending_mode
+            self._pending_mode = None
+            hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(pending)
+            if hamlib_mode:
+                resp = self._cmd(f"M {hamlib_mode} 0")
+                if "RPRT 0" not in resp:
+                    raise RigControlError(f"set_mode({pending!r}) failed: {resp!r}")
+                with self._lock:
+                    self._freq_state.mode = pending
+
         send_rx = self._radio_type != "tx_only"
         send_tx = self._radio_type != "rx_only"
 
@@ -820,6 +854,16 @@ class HamlibNetController(RigController):
                 self._last_ul_hz = vfob_hz
 
         return True
+
+    def queue_mode(self, mode: str) -> None:
+        """Store mode to be sent at the start of the next set_vfo_frequencies() call.
+
+        Defers M command until the Doppler cycle thread runs so that M and F/I are
+        serialised without a separate background thread or extra _cmd_lock contention.
+        Only modes present in _SATNOGS_TO_RIGCTLD_MODE are accepted.
+        """
+        if mode in _SATNOGS_TO_RIGCTLD_MODE:
+            self._pending_mode = mode
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
         resp = self._cmd("f")
@@ -871,11 +915,14 @@ class HamlibNetController(RigController):
         )
 
 
-# rigctld mode name mapping
+# rigctld mode name mapping.
+# "USB" is listed before "SSB" so the reverse map (_RIGCTLD_MODE_TO_SATNOGS) returns
+# "SSB" for the rigctld "USB" mode (canonical SatNOGS name wins because it is last).
 _SATNOGS_TO_RIGCTLD_MODE: dict[str, str] = {
     "DIGITALVOICE": "FM",
     "FM": "FM",
-    "SSB": "USB",
+    "USB": "USB",  # rigctld-style name used by some SatNOGS entries; placed first
+    "SSB": "USB",  # canonical SatNOGS name; wins in reverse map
     "LSB": "LSB",
     "CW": "CW",
     "CW-R": "CWR",
