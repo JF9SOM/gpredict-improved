@@ -92,15 +92,6 @@ _SEND_MODE_KEYS: frozenset[str] = frozenset(
     {"FM", "USB", "SSB", "LSB", "CW", "CW-R", "BPSK", "AFSK"}
 )
 
-# Uplink mode inversion map for inverting transponders.
-# DB mode field = downlink mode; TX (uplink) uses the paired mode.
-_MODE_INVERT: dict[str, str] = {
-    "USB": "LSB",
-    "LSB": "USB",
-    "CW": "CW-R",
-    "CW-R": "CW",
-    "SSB": "LSB",  # SSB (= USB satellite downlink) inverts to LSB on uplink
-}
 
 # Oscar designator prefixes (e.g. AO-7, FO-29, IO-86, QO-100, RS-44)
 _OSCAR_RE = re.compile(
@@ -1452,11 +1443,11 @@ class MainWindow(QMainWindow):
         self._trsp_lock = locked
 
     def _send_mode_to_rig(self) -> None:
-        """Queue DL/UL modes for the next rig frequency update.
+        """Queue the current transponder DL mode for the next rig frequency update.
 
-        Computes uplink mode from the transponder's invert flag, then calls
-        queue_mode(dl_mode, ul_mode) so V/M commands run inside set_vfo_frequencies()
-        on the Doppler cycle thread, avoiding concurrent socket access.
+        Uses queue_mode() so the M command is sent inside set_vfo_frequencies()
+        on the Doppler cycle thread, avoiding concurrent socket access that can
+        disrupt split VFO state on the FTX-1F and similar rigs.
         """
         if self._rig_controller is None or not self._rig_controller.is_connected:
             return
@@ -1465,10 +1456,7 @@ class MainWindow(QMainWindow):
         mode = str(self._current_transmitter.get("mode") or "")
         if mode not in _SEND_MODE_KEYS:
             return
-        invert = bool(self._current_transmitter.get("invert", False))
-        dl_mode = mode
-        ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
-        self._rig_controller.queue_mode(dl_mode, ul_mode)
+        self._rig_controller.queue_mode(mode)
 
     def _on_rig_connected(self) -> None:
         """Called when the rig successfully connects; sends the current transponder mode."""

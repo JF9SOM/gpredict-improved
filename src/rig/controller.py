@@ -244,16 +244,14 @@ class RigController(ABC):
             ok = self.set_frequency(vfob_hz, "VFOB") and ok
         return ok
 
-    def queue_mode(self, dl_mode: str, ul_mode: str) -> None:
-        """Request DL/UL mode changes on transponder switch or rig connect.
+    def queue_mode(self, dl_mode: str) -> None:
+        """Request a downlink mode change on transponder switch or rig connect.
 
-        dl_mode: downlink mode (RX/Sub VFO)
-        ul_mode: uplink mode (TX/Main VFO); same as dl_mode for non-inverting transponders.
-        Default: calls set_mode() immediately for both VFOs.
+        dl_mode: downlink mode (applied to the current/RX VFO).
+        Default: calls set_mode() immediately.
         Subclasses that share a socket with set_vfo_frequencies() should defer.
         """
-        self.set_mode(dl_mode, vfo="Sub")
-        self.set_mode(ul_mode, vfo="Main")
+        self.set_mode(dl_mode)
 
     # -- Utilities --
 
@@ -557,10 +555,9 @@ class HamlibNetController(RigController):
         self._cached_model_name: str = ""  # fetched once on connect and cached
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
-        # DL/UL modes to send before the next set_vfo_frequencies() call.
-        # Deferred so that V/M and F/I share the same thread; avoids split-state disruption.
+        # DL mode to send before the next set_vfo_frequencies() call.
+        # Deferred so that M and F/I share the same thread; avoids split-state disruption.
         self._pending_dl_mode: str | None = None
-        self._pending_ul_mode: str | None = None
 
     # -- Connection management --
 
@@ -625,7 +622,6 @@ class HamlibNetController(RigController):
             self._last_dl_hz = None
             self._last_ul_hz = None
             self._pending_dl_mode = None
-            self._pending_ul_mode = None
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -814,14 +810,12 @@ class HamlibNetController(RigController):
         if not self.is_connected:
             return False
 
-        # Flush pending DL/UL modes before frequency updates.
-        # V/M in the same thread/lock-sequence as F/I prevents split-state disruption.
-        if self._pending_dl_mode is not None or self._pending_ul_mode is not None:
+        # Flush pending DL mode before frequency updates.
+        # M in the same thread/lock-sequence as F/I prevents split-state disruption.
+        if self._pending_dl_mode is not None:
             dl_mode = self._pending_dl_mode
-            ul_mode = self._pending_ul_mode
             self._pending_dl_mode = None
-            self._pending_ul_mode = None
-            self._flush_pending_mode(dl_mode, ul_mode)
+            self._flush_pending_mode(dl_mode)
 
         send_rx = self._radio_type != "tx_only"
         send_tx = self._radio_type != "rx_only"
@@ -854,43 +848,32 @@ class HamlibNetController(RigController):
 
         return True
 
-    def queue_mode(self, dl_mode: str, ul_mode: str) -> None:
-        """Store DL/UL modes to send at the start of the next set_vfo_frequencies() call.
+    def queue_mode(self, dl_mode: str) -> None:
+        """Store DL mode to send at the start of the next set_vfo_frequencies() call.
 
-        Defers V/M commands until the Doppler cycle thread runs so they are serialised
+        Defers M command until the Doppler cycle thread runs so it is serialised
         with F/I without a separate background thread or extra _cmd_lock contention.
         Only modes present in _SATNOGS_TO_RIGCTLD_MODE are accepted.
+        V commands are intentionally avoided: they disrupt the active VFO state and
+        cause subsequent F commands to target the wrong VFO on the FTX-1F and similar rigs.
         """
         if dl_mode in _SATNOGS_TO_RIGCTLD_MODE:
             self._pending_dl_mode = dl_mode
-        if ul_mode in _SATNOGS_TO_RIGCTLD_MODE:
-            self._pending_ul_mode = ul_mode
 
-    def _flush_pending_mode(self, dl_mode: str | None, ul_mode: str | None) -> None:
-        """Send mode commands for both VFOs before the frequency update cycle.
+    def _flush_pending_mode(self, dl_mode: str) -> None:
+        """Send M {dl_mode} to the current active VFO (Sub/RX) without any V command.
 
-        Sequence: V Main → M ul_mode, then V Sub → M dl_mode.
-        Ending with Sub as the active VFO ensures subsequent F commands target the RX VFO.
+        No V command is sent: switching the active VFO disrupts split state on the FTX-1F,
+        causing subsequent F commands to target the wrong VFO.
         Raises RigControlError on command failure.
         """
-        if ul_mode is not None:
-            hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(ul_mode)
-            if hamlib_mode:
-                resp = self._cmd("V Main")
-                if "RPRT 0" not in resp:
-                    raise RigControlError(f"set_vfo(Main) failed: {resp!r}")
-                resp = self._cmd(f"M {hamlib_mode} 0")
-                if "RPRT 0" not in resp:
-                    raise RigControlError(f"set_mode({ul_mode!r}) on Main failed: {resp!r}")
-        if dl_mode is not None:
-            hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
-            if hamlib_mode:
-                resp = self._cmd("V Sub")
-                if "RPRT 0" not in resp:
-                    raise RigControlError(f"set_vfo(Sub) failed: {resp!r}")
-                resp = self._cmd(f"M {hamlib_mode} 0")
-                if "RPRT 0" not in resp:
-                    raise RigControlError(f"set_mode({dl_mode!r}) on Sub failed: {resp!r}")
+        hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
+        if hamlib_mode:
+            resp = self._cmd(f"M {hamlib_mode} 0")
+            if "RPRT 0" not in resp:
+                raise RigControlError(f"set_mode({dl_mode!r}) failed: {resp!r}")
+            with self._lock:
+                self._freq_state.mode = dl_mode
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
         resp = self._cmd("f")
