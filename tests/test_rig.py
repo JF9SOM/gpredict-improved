@@ -695,8 +695,8 @@ class TestHamlibNetController:
 
     # -- send_mode_only --
 
-    def test_send_mode_only_sends_v_main_ul_v_sub_dl(self) -> None:
-        """send_mode_only は V Main → M {ul} 0 → V Sub → M {dl} 0 の順で送信する。"""
+    def test_send_mode_only_sends_v_sub_dl_v_main_ul(self) -> None:
+        """send_mode_only は V Sub → M {dl} 0 → V Main → M {ul} 0 の順で送信する。"""
         ctrl = self._make_ctrl()
         sent: list[bytes] = []
         mock_sock = MagicMock(spec=socket.socket)
@@ -705,10 +705,10 @@ class TestHamlibNetController:
         with patch("rig.controller.socket.socket", return_value=mock_sock):
             ctrl.send_mode_only("FM", "FM")
         data = b"".join(sent)
-        assert b"V Main\n" in data
-        assert b"M FM 0\n" in data
         assert b"V Sub\n" in data
-        assert data.index(b"V Main\n") < data.index(b"V Sub\n")
+        assert b"M FM 0\n" in data
+        assert b"V Main\n" in data
+        assert data.index(b"V Sub\n") < data.index(b"V Main\n")
 
     def test_send_mode_only_invert_usb_dl_lsb_ul(self) -> None:
         """invert=True の場合: dl=USB (Sub) / ul=LSB (Main) が正しく送られる。"""
@@ -720,18 +720,19 @@ class TestHamlibNetController:
         with patch("rig.controller.socket.socket", return_value=mock_sock):
             ctrl.send_mode_only("USB", "LSB")  # dl=USB, ul=LSB (RS-44 style)
         data = b"".join(sent)
-        # V Main must precede M LSB 0 (uplink)
-        assert b"V Main\n" in data
-        assert b"M LSB 0\n" in data
-        idx_vmain = data.index(b"V Main\n")
-        idx_lsb = data.index(b"M LSB 0\n")
-        assert idx_vmain < idx_lsb
         # V Sub must precede M USB 0 (downlink)
         assert b"V Sub\n" in data
         assert b"M USB 0\n" in data
         idx_vsub = data.index(b"V Sub\n")
         idx_usb = data.index(b"M USB 0\n")
         assert idx_vsub < idx_usb
+        # V Main must precede M LSB 0 (uplink) and come after V Sub
+        assert b"V Main\n" in data
+        assert b"M LSB 0\n" in data
+        idx_vmain = data.index(b"V Main\n")
+        idx_lsb = data.index(b"M LSB 0\n")
+        assert idx_vmain < idx_lsb
+        assert idx_vsub < idx_vmain
 
     def test_send_mode_only_does_not_send_s1main(self) -> None:
         """send_mode_only は S 1 Main を送信しない（split状態を壊さない）。"""

@@ -922,10 +922,12 @@ class HamlibNetController(RigController):
         """Set mode on both VFOs via an independent TCP connection.
 
         Opens a new socket to rigctld (separate from the main tracking
-        connection), sends V Main → M {ul_mode} 0 → V Sub → M {dl_mode} 0,
+        connection), sends V Sub → M {dl_mode} 0 → V Main → M {ul_mode} 0,
         then closes. Main VFO = TX (uplink); Sub VFO = RX (downlink).
-        Does not send S 1 Main so the split state of any concurrent session
-        is undisturbed. Silently ignores all errors (best-effort).
+        Ending on V Main keeps the active VFO consistent with the S 1 Main
+        set during connect(). Does not send S 1 Main itself so the split
+        state of any concurrent session is undisturbed.
+        Silently ignores all errors (best-effort).
         """
         rigctld_ul = _SATNOGS_TO_RIGCTLD_MODE.get(ul_mode)
         rigctld_dl = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
@@ -935,15 +937,15 @@ class HamlibNetController(RigController):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
             sock.connect((self._host, self._port))
-            if rigctld_ul:
-                sock.sendall(b"V Main\n")
-                sock.recv(64)
-                sock.sendall(f"M {rigctld_ul} 0\n".encode())
-                sock.recv(64)
             if rigctld_dl:
                 sock.sendall(b"V Sub\n")
                 sock.recv(64)
                 sock.sendall(f"M {rigctld_dl} 0\n".encode())
+                sock.recv(64)
+            if rigctld_ul:
+                sock.sendall(b"V Main\n")
+                sock.recv(64)
+                sock.sendall(f"M {rigctld_ul} 0\n".encode())
                 sock.recv(64)
             sock.close()
         except Exception:
