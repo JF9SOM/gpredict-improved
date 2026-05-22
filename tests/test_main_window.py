@@ -1731,7 +1731,7 @@ class TestRadioType:
             sent.append(c)
             return "RPRT 0"
 
-        ctrl._cmd = fake_cmd  # type: ignore[method-assign]
+        ctrl._cmd_raw = fake_cmd  # type: ignore[method-assign]
         ctrl._last_dl_hz = None
         ctrl._last_ul_hz = None
         ctrl.set_vfo_frequencies(145_800_000, 435_000_000)
@@ -1754,7 +1754,7 @@ class TestRadioType:
             sent.append(c)
             return "RPRT 0"
 
-        ctrl._cmd = fake_cmd  # type: ignore[method-assign]
+        ctrl._cmd_raw = fake_cmd  # type: ignore[method-assign]
         ctrl._last_dl_hz = None
         ctrl._last_ul_hz = None
         ctrl.set_vfo_frequencies(145_800_000, 435_000_000)
@@ -1777,7 +1777,7 @@ class TestRadioType:
             sent.append(c)
             return "RPRT 0"
 
-        ctrl._cmd = fake_cmd  # type: ignore[method-assign]
+        ctrl._cmd_raw = fake_cmd  # type: ignore[method-assign]
         ctrl._last_dl_hz = None
         ctrl._last_ul_hz = None
         ctrl.set_vfo_frequencies(145_800_000, 435_000_000)
