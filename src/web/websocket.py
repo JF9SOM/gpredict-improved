@@ -50,7 +50,10 @@ class ConnectionManager:
     # ------------------------------------------------------------------ #
 
     async def broadcast_json(self, data: dict[str, Any]) -> None:
-        """Send JSON data to all connected clients. Failed connections are treated as disconnected."""
+        """Send JSON data to all connected clients.
+
+        Failed connections are removed and treated as disconnected.
+        """
         async with self._lock:
             targets = set(self._active)
 

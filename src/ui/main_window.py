@@ -236,7 +236,8 @@ class MainWindow(QMainWindow):
         # If acquire(blocking=False) fails, the previous cycle is still executing.
         self._rig_busy_lock = threading.Lock()
         # Cache for forced frequency transmission when the Tune button resets to centre frequency.
-        # None -> use the Doppler-corrected value as-is. A value -> transmit it once then reset to None.
+        # None -> use the Doppler-corrected value as-is.
+        # A value -> transmit it once then reset to None.
         self._tune_dl_override: float | None = None
         self._tune_ul_override: float | None = None
         # L button: when True, uplink is slaved to downlink.
@@ -736,7 +737,8 @@ class MainWindow(QMainWindow):
             next_max_el = next_pass.max_elevation_deg if next_pass is not None else None
             next_dur = next_pass.duration_s if next_pass is not None else None
 
-            # Compute track points from AOS to LOS at ~30-second intervals for the next (or current) pass
+            # Compute track points from AOS to LOS at ~30-second intervals
+            # for the next (or current) pass.
             pass_track: list[tuple[float, float]] = []
             if next_pass is not None:
                 n_steps = max(20, min(40, int(next_pass.duration_s / 15)))
@@ -762,7 +764,8 @@ class MainWindow(QMainWindow):
             self._radar_view.set_tracks([track])
 
         # Radio Control: update Doppler correction in real time.
-        # Always compute and transmit as long as TLE and frequency data are available, regardless of elevation.
+        # Always compute and transmit as long as TLE and frequency data are
+        # available, regardless of elevation.
         if obs is not None and self._current_transmitter is not None:
             rr = obs.range_rate_km_s
             dl_nom = self._current_transmitter.get("downlink_low")
@@ -1004,7 +1007,7 @@ class MainWindow(QMainWindow):
         self._radio_control.set_transmitters(transmitters)
 
     def _on_transmitter_changed(self, xpdr: Any) -> None:
-        """Update _current_transmitter and immediately refresh the display when the transponder selection changes."""
+        """Update _current_transmitter and refresh the display on transponder selection change."""
         self._current_transmitter = xpdr if isinstance(xpdr, dict) else None
         if self._current_transmitter:
             dl = self._current_transmitter.get("downlink_low")
@@ -1063,7 +1066,7 @@ class MainWindow(QMainWindow):
         self._pass_chart.set_passes(passes, sat_name=name)
 
     def _on_highlight_satellite(self, norad: int) -> None:
-        """Highlight the corresponding satellite in the left list when the Satellite column is clicked on the Group tab."""
+        """Highlight the satellite in the left list when its row is clicked on the Group tab."""
         for i in range(self._sat_list.count()):
             item = self._sat_list.item(i)
             if item is not None and int(item.data(Qt.ItemDataRole.UserRole)) == norad:
@@ -1270,7 +1273,7 @@ class MainWindow(QMainWindow):
         self._satnogs_status.emit(msg)
 
     def _on_satnogs_status(self, msg: str) -> None:
-        """Display the status from the background SATNOGS sync thread in the status bar (UI thread)."""
+        """Show the SATNOGS sync thread status in the status bar (called on UI thread)."""
         sb = self.statusBar()
         if sb:
             sb.showMessage(msg, 8000)

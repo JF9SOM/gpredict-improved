@@ -154,7 +154,8 @@ class TransmitterManager:
     ) -> None:
         """
         Update a transponder.
-        If manual_override is explicitly passed, that value is used; otherwise the current value is preserved.
+        If manual_override is explicitly passed, that value is used;
+        otherwise the current value is preserved.
         """
         allowed = {
             "description",
@@ -250,7 +251,8 @@ class TransmitterManager:
                 continue
 
             # If norad_follow_id (official NORAD) exists, use it as the storage destination.
-            # This automatically links provisional NORAD (e.g. 98325) data to the official NORAD (e.g. 68795).
+            # This automatically links provisional NORAD (e.g. 98325) data
+            # to the official NORAD (e.g. 68795).
             auto_storage = (
                 xpdr.get("norad_follow_id") or xpdr.get("satellite__norad_cat_id") or sat_id
             )
@@ -266,8 +268,10 @@ class TransmitterManager:
                 (storage_id, xpdr.get("description", f"#{storage_id}"), now),
             )
 
-            # Provisional NORAD differs from official NORAD → auto-hide provisional NORAD satellite (is_hidden=2)
-            # Not applicable when target_norad_cat_id is externally specified (backward compatibility)
+            # Provisional NORAD differs from official NORAD → auto-hide the
+            # provisional-NORAD satellite (is_hidden=2).
+            # Not applicable when target_norad_cat_id is externally specified
+            # (backward compatibility).
             if target_norad_cat_id is None and int(auto_storage) != int(sat_id):
                 self._conn.execute(
                     "UPDATE satellites SET is_hidden = 2 WHERE norad_cat_id = ? AND is_hidden = 0",
@@ -321,7 +325,8 @@ class TransmitterManager:
                 )
                 stats["inserted"] += 1
 
-        # Auto-hide orphan satellites with 0 transmitters and not registered in SatNOGS (status='unknown').
+        # Auto-hide orphan satellites with 0 transmitters and not registered
+        # in SatNOGS (status='unknown').
         # This is determined from the final state after sync_from_satnogs() completes,
         # so it runs only once after all transmitters have been processed.
         self._conn.execute(
@@ -341,7 +346,7 @@ class TransmitterManager:
         self,
         progress_callback: Any = None,
     ) -> dict[str, int]:
-        """Fetch all satellite names from SATNOGS and update the name column in the satellites table.
+        """Fetch all satellite names from SATNOGS and update the satellites table.
 
         CelesTrak sometimes uses provisional names (e.g. OBJECT C), so the official name
         is fetched from SATNOGS and used to overwrite it.
@@ -382,7 +387,8 @@ class TransmitterManager:
                     raw_status = str(sat.get("status", "unknown")).lower()
                     status = _SATNOGS_STATUS_MAP.get(raw_status, "unknown")
 
-                    # norad_follow_id differs from its own NORAD → provisional NORAD remnant satellite
+                    # norad_follow_id differs from its own NORAD →
+                    # this is a provisional-NORAD remnant satellite.
                     follow_raw = sat.get("norad_follow_id")
                     norad_follow = int(follow_raw) if follow_raw else None
                     is_remnant = bool(norad_follow and norad_follow != norad)

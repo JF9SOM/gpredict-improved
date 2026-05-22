@@ -209,7 +209,10 @@ class SatelliteEngine:
         norad_cat_ids: list[int],
         at: datetime | None = None,
     ) -> dict[int, tuple[float, float]]:
-        """Fetch sub-satellite points for multiple satellites at once. Satellites without TLE are skipped."""
+        """Fetch sub-satellite points for multiple satellites at once.
+
+        Satellites without TLE are skipped.
+        """
         result: dict[int, tuple[float, float]] = {}
         for norad in norad_cat_ids:
             sp = self.subpoint(norad, at)
@@ -357,7 +360,8 @@ class PassPredictor:
         """Group a sequence of AOS(0)/TCA(1)/LOS(2) events into individual passes."""
         passes: list[PassInfo] = []
         # Skyfield guarantees events are ordered AOS→TCA→LOS
-        # However the sequence may start with TCA/LOS if the satellite is already visible at search start
+        # However the sequence may start with TCA/LOS if the satellite is already
+        # visible at the start of the search window.
         pending: dict[str, object] = {}
 
         times_list = list(times)  # type: ignore[call-overload]

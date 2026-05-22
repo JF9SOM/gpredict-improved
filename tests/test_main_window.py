@@ -1716,8 +1716,8 @@ class TestRadioType:
         assert "tx_only" in data_values
 
     def test_net_controller_rx_only_skips_tx(self) -> None:
-        """rx_only モードでは I コマンドを送信しない。"""
-        from unittest.mock import MagicMock, patch
+        """rx_only mode must not send the I command."""
+        from unittest.mock import MagicMock
 
         from rig.controller import HamlibNetController
 

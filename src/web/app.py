@@ -359,7 +359,7 @@ def create_app(
     async def get_amsat_status(
         db: sqlite3.Connection = Depends(get_conn),
     ) -> dict[str, str]:
-        """Return the AMSAT operational status map as {"lowercase_name": "operational|non_operational"}."""
+        """Return the AMSAT status map as {"lowercase_name": "operational|non_operational"}."""
         row = db.execute(
             "SELECT value FROM app_settings WHERE key = 'amsat_status_data'"
         ).fetchone()
@@ -462,7 +462,7 @@ def create_app(
         norad: int,
         db: sqlite3.Connection = Depends(get_conn),
     ) -> None:
-        """Remove the specified satellite from favorites (is_favorite=0). Returns 404 if not found."""
+        """Remove the satellite from favorites (is_favorite=0). Returns 404 when not found."""
         if (
             db.execute("SELECT 1 FROM satellites WHERE norad_cat_id = ?", (norad,)).fetchone()
             is None
@@ -586,7 +586,10 @@ def create_app(
         min_el: float = Query(default=5.0, ge=0, le=90, description="Minimum elevation (degrees)"),
         db: sqlite3.Connection = Depends(get_conn),
     ) -> list[GroupPassOut]:
-        """Return pass predictions for all satellites in the group sorted by AOS. Empty list when pass_predictor is None."""
+        """Return pass predictions for all group satellites sorted by AOS.
+
+        Returns an empty list when pass_predictor is None.
+        """
         now = datetime.now(UTC)
         try:
             start = _parse_dt_utc(from_dt) if from_dt is not None else now
