@@ -230,15 +230,16 @@ def _scan_serial_ports() -> list[str]:
             return []
     else:
         patterns = [
+            "/dev/FTX*",
             "/dev/ttyUSB*",
             "/dev/ttyACM*",
-            "/dev/ttyS[0-9]*",
+            "/dev/ttyS*",
             "/dev/cu.*",
         ]
         found: list[str] = []
         for pattern in patterns:
-            found.extend(sorted(glob.glob(pattern)))
-        return found
+            found.extend(glob.glob(pattern))
+        return sorted(set(found))
 
 
 class RigSettingsDialog(QDialog):
@@ -384,6 +385,8 @@ class RigSettingsDialog(QDialog):
                 if query in mfg.lower() or query in name.lower() or query in str(mid)
             ]
             self._populate_model_combo(filtered)
+            if len(filtered) == 1:
+                self._model_combo.setCurrentIndex(0)
             self._status_label.setText(
                 _("Showing {n} / {total} models").format(
                     n=len(filtered), total=len(self._all_models)
