@@ -444,6 +444,29 @@ class TransmitterManager:
                                     " WHERE norad_cat_id = ? AND status = 'unknown'",
                                     (status, now, norad_follow),
                                 )
+                            # Merge remnant's names into the official NORAD's alt_names.
+                            # SatNOGS stores aliases (e.g. "FO-126") only on the remnant
+                            # record, so the official NORAD would otherwise never get them.
+                            if norad_follow is not None and names_raw:
+                                official_row = self._conn.execute(
+                                    "SELECT alt_names FROM satellites WHERE norad_cat_id = ?",
+                                    (norad_follow,),
+                                ).fetchone()
+                                if official_row is not None:
+                                    existing_alt: list[str] = json.loads(
+                                        official_row["alt_names"] or "[]"
+                                    )
+                                    new_names = [
+                                        n.strip()
+                                        for n in names_raw.split(",")
+                                        if n.strip()
+                                    ]
+                                    merged = list(dict.fromkeys(existing_alt + new_names))
+                                    self._conn.execute(
+                                        "UPDATE satellites SET alt_names = ?, updated_at = ?"
+                                        " WHERE norad_cat_id = ?",
+                                        (json.dumps(merged, ensure_ascii=False), now, norad_follow),
+                                    )
                         else:
                             self._conn.execute(
                                 "UPDATE satellites SET name = ?, status = ?,"
