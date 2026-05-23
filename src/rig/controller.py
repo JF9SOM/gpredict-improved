@@ -535,23 +535,35 @@ class HamlibDirectController(RigController):
             return False
 
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
-        """Set mode on VFOA (downlink/RX) and VFOB (uplink/TX) without VFO swap.
+        """Set mode on VFOA (downlink/RX) and VFOB (uplink/TX).
 
-        Calls set_mode(vfo, mode, 0) directly for each VFO so no V command
-        is needed and the active VFO is not disturbed.
-        Silently ignores all errors (best-effort, same as NetController).
+        Opens a dedicated short-lived serial connection so that the mode can be
+        set even when the main tracking connection has already been disconnected
+        — mirroring HamlibNetController which opens a fresh TCP socket per call.
+        Silently ignores all errors (best-effort).
         """
-        if not self.is_connected or self._rig is None:
+        logger.info("RigDirect: send_mode_only dl=%s ul=%s", dl_mode, ul_mode)
+        if not HAMLIB_AVAILABLE:
             return
+        dl_hamlib = self._mode_to_hamlib(dl_mode)
+        ul_hamlib = self._mode_to_hamlib(ul_mode)
+        rig: Any = None
         try:
-            rx_vfo = self._vfo_str_to_const("VFOA")
-            tx_vfo = self._vfo_str_to_const("VFOB")
-            dl_hamlib = self._mode_to_hamlib(dl_mode)
-            ul_hamlib = self._mode_to_hamlib(ul_mode)
-            self._rig.set_mode(rx_vfo, dl_hamlib, 0)
-            self._rig.set_mode(tx_vfo, ul_hamlib, 0)
+            import Hamlib as _H  # lazy — avoids Qt TLS collision at startup
+
+            rig = _H.Rig(self._model_id)
+            rig.set_conf("rig_pathname", self._port)
+            rig.set_conf("serial_speed", str(self._baud_rate))
+            rig.open()
+            rig.set_mode(_H.RIG_VFO_A, dl_hamlib, 0)
+            rig.set_mode(_H.RIG_VFO_B, ul_hamlib, 0)
+            logger.info("RigDirect: send_mode_only done")
         except Exception as exc:
             logger.error("RigDirect.send_mode_only: %s", exc)
+        finally:
+            if rig is not None:
+                with contextlib.suppress(Exception):
+                    rig.close()
 
     def get_rig_info(self) -> RigInfo | None:
         """Return info about the connected rig."""
