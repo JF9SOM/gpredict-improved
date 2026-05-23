@@ -568,8 +568,8 @@ class TestHamlibNetController:
         assert b"F " not in b"".join(calls)
         assert b"I " not in b"".join(calls)
 
-    def test_connect_sends_split_main(self) -> None:
-        """connect() 時に S 1 Main（split ON）を送信する。"""
+    def test_connect_sends_split_sub(self) -> None:
+        """connect() 時に S 1 Sub（split ON, Sub=TX）を送信する。"""
         ctrl = self._make_ctrl()
         with patch("rig.controller.socket.socket") as mock_cls:
             mock_sock = MagicMock()
@@ -578,7 +578,7 @@ class TestHamlibNetController:
             result = ctrl.connect()
         assert result is True
         sent = b"".join(call.args[0] for call in mock_sock.sendall.call_args_list)
-        assert b"S 1 Main\n" in sent
+        assert b"S 1 Sub\n" in sent
 
     def test_fetch_model_name_timeout_keeps_connection(self) -> None:
         """_ がタイムアウトしても接続を維持し host:port を返す。"""
@@ -590,7 +590,7 @@ class TestHamlibNetController:
         assert ctrl.state == RigState.CONNECTED
 
     def test_init_vfo_timeout_disconnects(self) -> None:
-        """S 1 Main がタイムアウトすると _cmd() がソケットを閉じて DISCONNECTED になる。
+        """S 1 Sub がタイムアウトすると _cmd() がソケットを閉じて DISCONNECTED になる。
 
         raw socket 直接アクセスではなく _cmd() 経由にしたことで、
         タイムアウト後の応答データがバッファに残留してコマンド応答がずれる
@@ -602,8 +602,8 @@ class TestHamlibNetController:
         assert ctrl._sock is None
         assert ctrl.state == RigState.DISCONNECTED
 
-    def test_connect_returns_false_when_S1Main_fails(self) -> None:
-        """S 1 Main がタイムアウトした場合 connect() は False を返し ERROR 状態になる。
+    def test_connect_returns_false_when_S1Sub_fails(self) -> None:
+        """S 1 Sub がタイムアウトした場合 connect() は False を返し ERROR 状態になる。
 
         以前は _init_vfo() 失敗を無視して True を返していたため、
         接続ボタンが「接続済み」のまま固まる問題があった。
@@ -611,7 +611,7 @@ class TestHamlibNetController:
         ctrl = self._make_ctrl()
         with patch("rig.controller.socket.socket") as mock_cls:
             mock_sock = MagicMock()
-            # TCP 接続自体は成功、S 1 Main の recv でタイムアウト
+            # TCP 接続自体は成功、S 1 Sub の recv でタイムアウト
             mock_sock.connect.return_value = None
             mock_sock.recv.side_effect = TimeoutError("timed out")
             mock_cls.return_value = mock_sock
@@ -641,25 +641,21 @@ class TestHamlibNetController:
         ctrl.disconnect()
         assert ctrl._pending_dl_mode is None
 
-    # -- _init_vfo: split ON → mode --
+    # -- _init_vfo: split ON (S 1 Sub only) --
 
-    def test_init_vfo_sends_pending_mode_after_split(self) -> None:
-        """_init_vfo() は S 1 Main の後に pending mode を送信してクリアする。"""
+    def test_init_vfo_sends_s1sub(self) -> None:
+        """_init_vfo() は S 1 Sub を送信する（Sub=TX, Main=RX）。"""
         ctrl = self._make_connected_ctrl()
-        ctrl._pending_dl_mode = "USB"
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl._init_vfo()
         sent = b"".join(calls)
-        assert b"S 1 Main\n" in sent
-        assert b"M USB 0\n" in sent
-        assert sent.index(b"S 1 Main\n") < sent.index(b"M USB 0\n")
-        assert ctrl._pending_dl_mode is None
+        assert b"S 1 Sub\n" in sent
 
-    def test_init_vfo_no_mode_if_not_pending(self) -> None:
-        """pending mode がなければ M コマンドを送らない。"""
+    def test_init_vfo_sends_no_mode_command(self) -> None:
+        """_init_vfo() は pending mode の有無に関わらず M コマンドを送らない。"""
         ctrl = self._make_connected_ctrl()
-        assert ctrl._pending_dl_mode is None
+        ctrl._pending_dl_mode = "USB"
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl._init_vfo()
@@ -695,8 +691,8 @@ class TestHamlibNetController:
 
     # -- send_mode_only --
 
-    def test_send_mode_only_sends_v_sub_dl_v_main_ul(self) -> None:
-        """send_mode_only は V Sub → M {dl} 0 → V Main → M {ul} 0 の順で送信する。"""
+    def test_send_mode_only_sends_v_main_dl_v_sub_ul(self) -> None:
+        """send_mode_only は V Main → M {dl} 0 → V Sub → M {ul} 0 の順で送信する。"""
         ctrl = self._make_ctrl()
         sent: list[bytes] = []
         mock_sock = MagicMock(spec=socket.socket)
@@ -705,13 +701,13 @@ class TestHamlibNetController:
         with patch("rig.controller.socket.socket", return_value=mock_sock):
             ctrl.send_mode_only("FM", "FM")
         data = b"".join(sent)
-        assert b"V Sub\n" in data
-        assert b"M FM 0\n" in data
         assert b"V Main\n" in data
-        assert data.index(b"V Sub\n") < data.index(b"V Main\n")
+        assert b"M FM 0\n" in data
+        assert b"V Sub\n" in data
+        assert data.index(b"V Main\n") < data.index(b"V Sub\n")
 
     def test_send_mode_only_invert_usb_dl_lsb_ul(self) -> None:
-        """invert=True の場合: dl=USB (Sub) / ul=LSB (Main) が正しく送られる。"""
+        """invert=True の場合: dl=USB (Main/RX) / ul=LSB (Sub/TX) が正しく送られる。"""
         ctrl = self._make_ctrl()
         sent: list[bytes] = []
         mock_sock = MagicMock(spec=socket.socket)
@@ -720,19 +716,19 @@ class TestHamlibNetController:
         with patch("rig.controller.socket.socket", return_value=mock_sock):
             ctrl.send_mode_only("USB", "LSB")  # dl=USB, ul=LSB (RS-44 style)
         data = b"".join(sent)
-        # V Sub must precede M USB 0 (downlink)
-        assert b"V Sub\n" in data
-        assert b"M USB 0\n" in data
-        idx_vsub = data.index(b"V Sub\n")
-        idx_usb = data.index(b"M USB 0\n")
-        assert idx_vsub < idx_usb
-        # V Main must precede M LSB 0 (uplink) and come after V Sub
+        # V Main must precede M USB 0 (downlink/RX)
         assert b"V Main\n" in data
-        assert b"M LSB 0\n" in data
+        assert b"M USB 0\n" in data
         idx_vmain = data.index(b"V Main\n")
+        idx_usb = data.index(b"M USB 0\n")
+        assert idx_vmain < idx_usb
+        # V Sub must precede M LSB 0 (uplink/TX) and come after V Main
+        assert b"V Sub\n" in data
+        assert b"M LSB 0\n" in data
+        idx_vsub = data.index(b"V Sub\n")
         idx_lsb = data.index(b"M LSB 0\n")
-        assert idx_vmain < idx_lsb
-        assert idx_vsub < idx_vmain
+        assert idx_vsub < idx_lsb
+        assert idx_vmain < idx_vsub
 
     def test_send_mode_only_does_not_send_s1main(self) -> None:
         """send_mode_only は S 1 Main を送信しない（split状態を壊さない）。"""

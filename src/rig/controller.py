@@ -696,26 +696,16 @@ class HamlibNetController(RigController):
                     self._sock.settimeout(prev_timeout)
 
     def _init_vfo(self) -> None:
-        """Enable split and apply any pending DL mode (called once at connect time).
+        """Enable split with Sub as TX VFO (called once at connect time).
 
-        Sequence: S 1 Main → (optional) M {mode} 0 if a DL mode is pending.
+        Sends S 1 Sub: Sub=TX (uplink), Main=RX (downlink).
+        No M command is sent here; mode is set exclusively via send_mode_only().
         Sent through _cmd() so _cmd_lock serialises it and prevents buffer
         residue from an independent recv loop on the raw socket.
         """
-        resp = self._cmd("S 1 Main")
+        resp = self._cmd("S 1 Sub")
         if "RPRT 0" not in resp:
             logger.warning("RigNet: split setup returned %r", resp)
-        if self._pending_dl_mode is not None:
-            dl_mode = self._pending_dl_mode
-            self._pending_dl_mode = None
-            hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
-            if hamlib_mode:
-                resp = self._cmd(f"M {hamlib_mode} 0")
-                if "RPRT 0" not in resp:
-                    logger.warning("RigNet: mode setup returned %r", resp)
-                else:
-                    with self._lock:
-                        self._freq_state.mode = dl_mode
 
     # -- Internal utilities --
 
@@ -922,10 +912,10 @@ class HamlibNetController(RigController):
         """Set mode on both VFOs via an independent TCP connection.
 
         Opens a new socket to rigctld (separate from the main tracking
-        connection), sends V Sub → M {dl_mode} 0 → V Main → M {ul_mode} 0,
-        then closes. Main VFO = TX (uplink); Sub VFO = RX (downlink).
-        Ending on V Main keeps the active VFO consistent with the S 1 Main
-        set during connect(). Does not send S 1 Main itself so the split
+        connection), sends V Main → M {dl_mode} 0 → V Sub → M {ul_mode} 0,
+        then closes. Main VFO = RX (downlink); Sub VFO = TX (uplink).
+        Ending on V Sub keeps the active VFO consistent with the S 1 Sub
+        set during connect(). Does not send S 1 Sub itself so the split
         state of any concurrent session is undisturbed.
         Silently ignores all errors (best-effort).
         """
@@ -938,12 +928,12 @@ class HamlibNetController(RigController):
             sock.settimeout(self._TIMEOUT)
             sock.connect((self._host, self._port))
             if rigctld_dl:
-                sock.sendall(b"V Sub\n")
+                sock.sendall(b"V Main\n")
                 sock.recv(64)
                 sock.sendall(f"M {rigctld_dl} 0\n".encode())
                 sock.recv(64)
             if rigctld_ul:
-                sock.sendall(b"V Main\n")
+                sock.sendall(b"V Sub\n")
                 sock.recv(64)
                 sock.sendall(f"M {rigctld_ul} 0\n".encode())
                 sock.recv(64)
