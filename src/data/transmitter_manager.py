@@ -457,9 +457,7 @@ class TransmitterManager:
                                         official_row["alt_names"] or "[]"
                                     )
                                     new_names = [
-                                        n.strip()
-                                        for n in names_raw.split(",")
-                                        if n.strip()
+                                        n.strip() for n in names_raw.split(",") if n.strip()
                                     ]
                                     merged = list(dict.fromkeys(existing_alt + new_names))
                                     self._conn.execute(
