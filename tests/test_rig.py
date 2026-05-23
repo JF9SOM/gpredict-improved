@@ -1,8 +1,8 @@
 """
-rig/controller.py のユニットテスト
+Unit tests for rig/controller.py.
 
-Hamlib 未インストール環境（CI）でもすべてパスする。
-ネットワーク接続不要（httpx をモック）。
+All tests pass even when Hamlib is not installed (CI).
+No network connection required (httpx is mocked).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from rig.controller import (
 )
 
 # ---------------------------------------------------------------------------
-# モードマップ
+# Mode map
 # ---------------------------------------------------------------------------
 
 
@@ -54,7 +54,7 @@ class TestModeMap:
 
 
 # ---------------------------------------------------------------------------
-# データクラス
+# Data classes
 # ---------------------------------------------------------------------------
 
 
@@ -129,7 +129,7 @@ class TestMockRig:
 
 
 # ---------------------------------------------------------------------------
-# HamlibDirectController — モック環境
+# HamlibDirectController — mock environment
 # ---------------------------------------------------------------------------
 
 
@@ -148,7 +148,7 @@ class TestHamlibDirectController:
 
     def test_connect_succeeds_in_mock_mode(self) -> None:
         ctrl = self._make_ctrl()
-        # Hamlib なし環境では _MockRig にフォールバックするので connect() は True
+        # Without Hamlib, falls back to _MockRig so connect() returns True
         if not HAMLIB_AVAILABLE:
             assert ctrl.connect() is True
             assert ctrl.is_connected
@@ -206,7 +206,7 @@ class TestHamlibDirectController:
     def test_connect_twice_is_idempotent(self) -> None:
         ctrl = self._make_ctrl()
         assert ctrl.connect()
-        assert ctrl.connect()  # 2回目も True
+        assert ctrl.connect()  # second call also returns True
         ctrl.disconnect()
 
     def test_mode_to_hamlib_unknown_falls_back_to_fm(self) -> None:
@@ -222,7 +222,7 @@ class TestHamlibDirectController:
 
 
 # ---------------------------------------------------------------------------
-# HamlibNetController — socket をモック
+# HamlibNetController — socket mocked
 # ---------------------------------------------------------------------------
 
 
@@ -236,7 +236,7 @@ class TestHamlibNetController:
 
     def test_connect_fails_when_no_server(self) -> None:
         ctrl = self._make_ctrl()
-        # ソケット接続をモックして環境依存を排除する
+        # Mock socket to avoid environment dependency
         with patch("rig.controller.socket.socket") as mock_cls:
             mock_sock = MagicMock()
             mock_sock.connect.side_effect = ConnectionRefusedError("connection refused")
@@ -261,7 +261,7 @@ class TestHamlibNetController:
         ctrl.disconnect()
 
     def _make_connected_ctrl(self) -> HamlibNetController:
-        """モックソケットを注入した接続済みコントローラーを返す。"""
+        """Returns a connected controller with a mock socket injected."""
         ctrl = self._make_ctrl()
         mock_sock = MagicMock(spec=socket.socket)
         mock_sock.recv.return_value = b"RPRT 0\n"
@@ -305,7 +305,7 @@ class TestHamlibNetController:
         assert ctrl.get_mode() == "SSB"
 
     def test_get_rig_info_returns_cached_model_name(self) -> None:
-        """get_rig_info はキャッシュ済みモデル名を返しソケット I/O を行わない。"""
+        """get_rig_info returns the cached model name without performing socket I/O."""
         ctrl = self._make_connected_ctrl()
         ctrl._cached_model_name = "IC-9700"
         ctrl._sock.reset_mock()  # type: ignore[union-attr]
@@ -322,10 +322,10 @@ class TestHamlibNetController:
         sock.close.assert_called()  # type: ignore[union-attr]
         assert ctrl.state == RigState.DISCONNECTED
 
-    # -- VFO 制御 --
+    # -- VFO control --
 
     def test_is_connected_false_when_sock_none(self) -> None:
-        """ソケットが None のとき is_connected は False（状態が CONNECTED でも）。"""
+        """is_connected is False when _sock is None, even if state is CONNECTED."""
         ctrl = self._make_ctrl()
         with ctrl._lock:
             ctrl._state = RigState.CONNECTED
@@ -333,14 +333,14 @@ class TestHamlibNetController:
         assert ctrl.is_connected is False
 
     def test_normalize_vfo_known_names(self) -> None:
-        """_normalize_vfo は既知の VFO 文字列をそのまま返す。"""
+        """_normalize_vfo returns known VFO strings unchanged."""
         assert HamlibNetController._normalize_vfo("VFOA") == "VFOA"
         assert HamlibNetController._normalize_vfo("VFOB") == "VFOB"
         assert HamlibNetController._normalize_vfo("Main") == "Main"
         assert HamlibNetController._normalize_vfo("Sub") == "Sub"
 
     def test_vfo_mode_false_sends_v_then_f(self) -> None:
-        """vfo_mode=False のとき V {vfo}\\nF {freq} の順でコマンドを送信する。"""
+        """When vfo_mode=False, sends V {vfo}\\nF {freq} in that order."""
         ctrl = self._make_connected_ctrl()
         ctrl._vfo_mode = False
         calls: list[bytes] = []
@@ -352,14 +352,14 @@ class TestHamlibNetController:
         assert sent.index(b"V VFOA\n") < sent.index(b"F 144800000\n")
 
     def test_vfo_mode_true_sends_set_freq(self) -> None:
-        """vfo_mode=True のとき \\\\set_freq {vfo} {freq} を送信する。"""
+        """When vfo_mode=True, sends \\\\set_freq {vfo} {freq}."""
         ctrl = self._make_connected_ctrl()
         ctrl._vfo_mode = True
         ctrl.set_frequency(144_800_000.0, "VFOA")
         ctrl._sock.sendall.assert_called_with(b"\\set_freq VFOA 144800000\n")  # type: ignore[union-attr]
 
     def test_set_frequency_raises_rig_control_error_on_failure(self) -> None:
-        """接続中に RPRT != 0 が返ったとき RigControlError を送出する。"""
+        """Raises RigControlError when RPRT != 0 is returned while connected."""
         ctrl = self._make_connected_ctrl()
         ctrl._vfo_mode = True
         ctrl._sock.recv.return_value = b"RPRT -1\n"  # type: ignore[union-attr]
@@ -367,41 +367,41 @@ class TestHamlibNetController:
             ctrl.set_frequency(144_800_000.0, "VFOA")
 
     def test_detect_vfo_mode_true(self) -> None:
-        """rigctld が "1\\nRPRT 0" を返すとき _detect_vfo_mode() は True を返す。"""
+        """_detect_vfo_mode() returns True when rigctld responds with "1\\nRPRT 0"."""
         ctrl = self._make_connected_ctrl()
         ctrl._sock.recv.return_value = b"1\nRPRT 0\n"  # type: ignore[union-attr]
         assert ctrl._detect_vfo_mode() is True
 
     def test_detect_vfo_mode_false(self) -> None:
-        """rigctld が "0\\nRPRT 0" を返すとき _detect_vfo_mode() は False を返す。"""
+        """_detect_vfo_mode() returns False when rigctld responds with "0\\nRPRT 0"."""
         ctrl = self._make_connected_ctrl()
         ctrl._sock.recv.return_value = b"0\nRPRT 0\n"  # type: ignore[union-attr]
         assert ctrl._detect_vfo_mode() is False
 
     def test_detect_vfo_mode_unsupported(self) -> None:
-        """rigctld が RPRT -1（非対応）を返すとき _detect_vfo_mode() は False を返す。"""
+        """_detect_vfo_mode() returns False when rigctld responds with RPRT -1 (unsupported)."""
         ctrl = self._make_connected_ctrl()
         ctrl._sock.recv.return_value = b"RPRT -1\n"  # type: ignore[union-attr]
         assert ctrl._detect_vfo_mode() is False
 
     def test_detect_vfo_mode_timeout_keeps_connection(self) -> None:
-        """タイムアウト時に接続を破壊せず False を返す。"""
+        """Returns False on timeout without disrupting the connection."""
         ctrl = self._make_connected_ctrl()
         ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
         result = ctrl._detect_vfo_mode()
         assert result is False
-        # ソケットは閉じられていない
+        # socket is not closed
         assert ctrl._sock is not None
-        # 接続状態は CONNECTED のまま
+        # connection state remains CONNECTED
         assert ctrl.state == RigState.CONNECTED
 
     def test_set_frequency_disconnected_returns_false(self) -> None:
-        """未接続のとき set_frequency は False を返す（例外なし）。"""
+        """set_frequency returns False when disconnected (no exception)."""
         ctrl = self._make_ctrl()
         assert ctrl.set_frequency(144_800_000.0, "VFOA") is False
 
     def test_set_frequency_vfob(self) -> None:
-        """VFOB 指定で V VFOB と F コマンドが送信される。"""
+        """Sends V VFOB and F commands when VFOB is specified."""
         ctrl = self._make_connected_ctrl()
         ctrl._vfo_mode = False
         calls: list[bytes] = []
@@ -414,13 +414,13 @@ class TestHamlibNetController:
     # -- set_vfo_frequencies --
 
     def test_set_vfo_frequencies_disconnected_returns_false(self) -> None:
-        """未接続のとき False を返す（例外なし）。"""
+        """Returns False when disconnected (no exception)."""
         ctrl = self._make_ctrl()
         assert ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0) is False
 
     def test_set_vfo_frequencies_first_cycle_sends_F_I_only(self) -> None:
-        """初回（_last=None）は F/I のみ送信し f/i は一切送らない。
-        readback 廃止 + 先頭ダイアルチェックなし → シーケンス: F → I
+        """On first call (_last=None), sends only F/I and never sends f/i.
+        No readback, no leading dial check — sequence: F → I
         """
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
@@ -436,8 +436,8 @@ class TestHamlibNetController:
         assert b"\\set_split_vfo" not in sent
 
     def test_set_vfo_frequencies_dl_only_no_tx(self) -> None:
-        """ul_hz=None のとき RX サイクル（F のみ）を送信し TX サイクルを省略する。
-        初回（_last=None）は readback も先頭チェックもなし → F のみ送信。
+        """When ul_hz=None, sends only the RX cycle (F only) and skips the TX cycle.
+        On first call (_last=None), no readback or leading check — sends F only.
         """
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
@@ -450,15 +450,15 @@ class TestHamlibNetController:
         assert b"i\n" not in sent
 
     def test_set_vfo_frequencies_raises_on_rprt_error(self) -> None:
-        """RPRT != 0 のとき RigControlError を送出する。"""
+        """Raises RigControlError when RPRT != 0."""
         ctrl = self._make_connected_ctrl()
         ctrl._sock.recv.return_value = b"RPRT -1\n"  # type: ignore[union-attr]
         with pytest.raises(RigControlError):
             ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
 
     def test_set_vfo_frequencies_first_cycle_no_f_i(self) -> None:
-        """初回（_last=None）は f/i を一切送らない（先頭チェックなし・readback なし）。
-        S 1 Main 直後の CAT 遅延回避のため。初回シーケンス: F → I のみ。
+        """On first call (_last=None), never sends f/i (no leading check, no readback).
+        Avoids CAT delay immediately after S 1 Main. First-cycle sequence: F → I only.
         """
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
@@ -471,18 +471,18 @@ class TestHamlibNetController:
         assert b"i\n" not in sent
 
     def test_set_vfo_frequencies_sends_nothing_when_freq_unchanged(self) -> None:
-        """前回と同じ周波数（変化 < 1 Hz）のとき F も I も f も i も一切送らない。"""
+        """Sends nothing (no F, I, f, or i) when frequency is unchanged (diff < 1 Hz)."""
         ctrl = self._make_connected_ctrl()
         ctrl._last_dl_hz = 145_000_000.0
         ctrl._last_ul_hz = 144_000_000.0
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         result = ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
-        assert calls == []  # 何も送信しない
+        assert calls == []  # nothing sent
         assert result is True
 
     def test_set_vfo_frequencies_sends_F_when_freq_changes_by_1hz(self) -> None:
-        """1 Hz 以上変化したとき F を送る（境界値テスト）。"""
+        """Sends F when frequency changes by 1 Hz or more (boundary test)."""
         ctrl = self._make_connected_ctrl()
         ctrl._last_dl_hz = 145_000_000.0
         calls: list[bytes] = []
@@ -492,7 +492,7 @@ class TestHamlibNetController:
         assert b"F 145000001\n" in sent
 
     def test_set_vfo_frequencies_skips_F_when_change_less_than_1hz(self) -> None:
-        """0.9 Hz の変化では F を送らない（境界値テスト）。"""
+        """Does not send F when change is 0.9 Hz (boundary test)."""
         ctrl = self._make_connected_ctrl()
         ctrl._last_dl_hz = 145_000_000.9
         calls: list[bytes] = []
@@ -502,7 +502,7 @@ class TestHamlibNetController:
         assert b"F " not in sent
 
     def test_disconnect_resets_last_frequencies(self) -> None:
-        """disconnect() で _last_dl_hz と _last_ul_hz が None にリセットされる。"""
+        """disconnect() resets _last_dl_hz and _last_ul_hz to None."""
         ctrl = self._make_connected_ctrl()
         ctrl._last_dl_hz = 145_000_000.0
         ctrl._last_ul_hz = 144_000_000.0
@@ -623,7 +623,7 @@ class TestHamlibNetController:
     # -- _init_vfo: split ON (S 1 Main) --
 
     def test_init_vfo_sends_s1main(self) -> None:
-        """_init_vfo() は S 1 Main を送信する。"""
+        """_init_vfo() sends S 1 Main."""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
@@ -634,7 +634,7 @@ class TestHamlibNetController:
     # -- set_vfo_frequencies: F/I only, no M --
 
     def test_set_vfo_frequencies_sends_no_mode_command(self) -> None:
-        """set_vfo_frequencies() は M コマンドを送らない。"""
+        """set_vfo_frequencies() sends no M command."""
         ctrl = self._make_connected_ctrl()
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
@@ -647,7 +647,7 @@ class TestHamlibNetController:
     # -- send_mode_only --
 
     def test_send_mode_only_sends_v_sub_ul_v_main_dl(self) -> None:
-        """send_mode_only は V Sub → M {ul} 0 → V Main → M {dl} 0 の順で送信する。"""
+        """send_mode_only sends V Sub → M {ul} 0 → V Main → M {dl} 0 in that order."""
         ctrl = self._make_ctrl()
         sent: list[bytes] = []
         mock_sock = MagicMock(spec=socket.socket)
@@ -662,7 +662,7 @@ class TestHamlibNetController:
         assert data.index(b"V Sub\n") < data.index(b"V Main\n")
 
     def test_send_mode_only_invert_usb_dl_lsb_ul(self) -> None:
-        """invert=True の場合: ul=LSB (Sub/TX) → dl=USB (Main/RX) の順で送られる。"""
+        """invert=True case: ul=LSB (Sub/TX) is sent before dl=USB (Main/RX)."""
         ctrl = self._make_ctrl()
         sent: list[bytes] = []
         mock_sock = MagicMock(spec=socket.socket)
@@ -686,7 +686,7 @@ class TestHamlibNetController:
         assert idx_vsub < idx_vmain
 
     def test_send_mode_only_does_not_send_s1main(self) -> None:
-        """send_mode_only は S 1 Main を送信しない（split状態を壊さない）。"""
+        """send_mode_only does not send S 1 Main (preserves split state)."""
         ctrl = self._make_ctrl()
         sent: list[bytes] = []
         mock_sock = MagicMock(spec=socket.socket)
