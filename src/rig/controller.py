@@ -686,14 +686,15 @@ class HamlibNetController(RigController):
                     self._sock.settimeout(prev_timeout)
 
     def _init_vfo(self) -> None:
-        """Enable split with Sub as TX VFO (called once at connect time).
+        """Enable split (called once at connect time).
 
-        Sends S 1 Sub: Sub=TX (uplink), Main=RX (downlink).
+        Sends S 1 Main. On the FTX-1F backend this results in Sub=TX (uplink)
+        and Main=RX (downlink) — the opposite of the literal VFO name.
         No M command is sent here; mode is set exclusively via send_mode_only().
         Sent through _cmd() so _cmd_lock serialises it and prevents buffer
         residue from an independent recv loop on the raw socket.
         """
-        resp = self._cmd("S 1 Sub")
+        resp = self._cmd("S 1 Main")
         if "RPRT 0" not in resp:
             logger.warning("RigNet: split setup returned %r", resp)
 
@@ -876,10 +877,10 @@ class HamlibNetController(RigController):
         """Set mode on both VFOs via an independent TCP connection.
 
         Opens a new socket to rigctld (separate from the main tracking
-        connection), sends V Main → M {dl_mode} 0 → V Sub → M {ul_mode} 0,
-        then closes. Main VFO = RX (downlink); Sub VFO = TX (uplink).
-        Ending on V Sub keeps the active VFO consistent with the S 1 Sub
-        set during connect(). Does not send S 1 Sub itself so the split
+        connection), sends V Sub → M {ul_mode} 0 → V Main → M {dl_mode} 0,
+        then closes. On the FTX-1F backend (S 1 Main): Sub=TX (uplink),
+        Main=RX (downlink). Ending on V Main is consistent with the S 1 Main
+        sent during connect(). Does not send S 1 Main itself so the split
         state of any concurrent session is undisturbed.
         Silently ignores all errors (best-effort).
         """
@@ -891,15 +892,15 @@ class HamlibNetController(RigController):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
             sock.connect((self._host, self._port))
-            if rigctld_dl:
-                sock.sendall(b"V Main\n")
-                sock.recv(64)
-                sock.sendall(f"M {rigctld_dl} 0\n".encode())
-                sock.recv(64)
             if rigctld_ul:
                 sock.sendall(b"V Sub\n")
                 sock.recv(64)
                 sock.sendall(f"M {rigctld_ul} 0\n".encode())
+                sock.recv(64)
+            if rigctld_dl:
+                sock.sendall(b"V Main\n")
+                sock.recv(64)
+                sock.sendall(f"M {rigctld_dl} 0\n".encode())
                 sock.recv(64)
             sock.close()
         except Exception:
