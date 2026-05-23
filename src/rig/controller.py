@@ -326,10 +326,12 @@ class HamlibDirectController(RigController):
 
                 self._hamlib = _H
                 rig = _H.Rig(self._model_id)
-                rig.state.rigport.pathname = self._port
-                rig.state.rigport.parm.serial.rate = self._baud_rate
-                rig.state.rigport.parm.serial.data_bits = self._data_bits
-                rig.state.rigport.parm.serial.stop_bits = self._stop_bits
+                # Hamlib 4.x: rigport is a SwigPyObject with no Python attributes;
+                # use set_conf() instead of the old rig.state.rigport.pathname API.
+                rig.set_conf("rig_pathname", self._port)
+                rig.set_conf("serial_speed", str(self._baud_rate))
+                rig.set_conf("data_bits", str(self._data_bits))
+                rig.set_conf("stop_bits", str(self._stop_bits))
                 rig.open()
                 self._rig = rig
             else:
@@ -1112,8 +1114,8 @@ class HamlibRotatorController(RotatorController):
 
                 self._hamlib = _H
                 rot = _H.Rot(self._model_id)
-                rot.state.rotport.pathname = self._port
-                rot.state.rotport.parm.serial.rate = self._baud_rate
+                rot.set_conf("rig_pathname", self._port)
+                rot.set_conf("serial_speed", str(self._baud_rate))
                 rot.open()
                 self._rot = rot
             else:
