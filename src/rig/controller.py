@@ -54,8 +54,9 @@ def _build_mode_map() -> dict[str, int]:
     if HAMLIB_AVAILABLE:
         return {
             "DIGITALVOICE": _hamlib_mod.RIG_MODE_FM,
+            "USB": _hamlib_mod.RIG_MODE_USB,  # alias; SSB below takes priority in reverse map
             "FM": _hamlib_mod.RIG_MODE_FM,
-            "SSB": _hamlib_mod.RIG_MODE_USB,
+            "SSB": _hamlib_mod.RIG_MODE_USB,  # canonical SATNOGS name — wins in reverse map
             "LSB": _hamlib_mod.RIG_MODE_LSB,
             "CW": _hamlib_mod.RIG_MODE_CW,
             "CW-R": _hamlib_mod.RIG_MODE_CWR,
@@ -65,8 +66,9 @@ def _build_mode_map() -> dict[str, int]:
         }
     return {
         "DIGITALVOICE": 1,
+        "USB": 2,  # alias; SSB below takes priority in reverse map
         "FM": 1,
-        "SSB": 2,
+        "SSB": 2,  # canonical SATNOGS name — wins in reverse map
         "LSB": 3,
         "CW": 4,
         "CW-R": 5,
@@ -299,6 +301,8 @@ class HamlibDirectController(RigController):
         self._stop_bits = stop_bits
         self._handshake = handshake
         self._rig: Any = None  # Hamlib.Rig instance or mock
+        self._last_dl_hz: float | None = None
+        self._last_ul_hz: float | None = None
 
     # -- Connection management --
 
@@ -320,6 +324,10 @@ class HamlibDirectController(RigController):
                 self._rig = rig
             else:
                 self._rig = _MockRig(self._model_id)
+
+            self._last_dl_hz = None
+            self._last_ul_hz = None
+            self._init_split()
 
             with self._lock:
                 self._state = RigState.CONNECTED
@@ -344,6 +352,8 @@ class HamlibDirectController(RigController):
             logger.warning("RigDirect: disconnect error — %s", exc)
         finally:
             self._rig = None
+            self._last_dl_hz = None
+            self._last_ul_hz = None
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -381,7 +391,7 @@ class HamlibDirectController(RigController):
         try:
             hamlib_mode = self._mode_to_hamlib(mode)
             hamlib_vfo = self._vfo_str_to_const(vfo)
-            self._rig.set_mode(hamlib_mode, passband_hz, hamlib_vfo)
+            self._rig.set_mode(hamlib_vfo, hamlib_mode, passband_hz)
             with self._lock:
                 self._freq_state.mode = mode
                 self._freq_state.passband_hz = passband_hz
@@ -481,6 +491,55 @@ class HamlibDirectController(RigController):
             logger.error("RigDirect.set_vfo: %s", exc)
             return False
 
+    def set_vfo_frequencies(
+        self,
+        vfoa_hz: float | None,
+        vfob_hz: float | None,
+    ) -> bool:
+        """Set DL (VFOA) and UL (VFOB/split) frequencies with 1 Hz delta suppression.
+
+        Uses set_freq for the RX VFO and set_split_freq for the TX VFO.
+        Skips the command when the frequency has not changed by 1 Hz or more,
+        or when the argument is None.
+        """
+        if not self.is_connected or self._rig is None:
+            return False
+        try:
+            rx_vfo = self._vfo_str_to_const("VFOA")
+            if vfoa_hz is not None:
+                last_dl = self._last_dl_hz
+                if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
+                    self._rig.set_freq(rx_vfo, int(vfoa_hz))
+                    self._last_dl_hz = vfoa_hz
+            if vfob_hz is not None:
+                last_ul = self._last_ul_hz
+                if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
+                    self._rig.set_split_freq(rx_vfo, int(vfob_hz))
+                    self._last_ul_hz = vfob_hz
+            return True
+        except Exception as exc:
+            logger.error("RigDirect.set_vfo_frequencies: %s", exc)
+            return False
+
+    def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
+        """Set mode on VFOA (downlink/RX) and VFOB (uplink/TX) without VFO swap.
+
+        Calls set_mode(vfo, mode, 0) directly for each VFO so no V command
+        is needed and the active VFO is not disturbed.
+        Silently ignores all errors (best-effort, same as NetController).
+        """
+        if not self.is_connected or self._rig is None:
+            return
+        try:
+            rx_vfo = self._vfo_str_to_const("VFOA")
+            tx_vfo = self._vfo_str_to_const("VFOB")
+            dl_hamlib = self._mode_to_hamlib(dl_mode)
+            ul_hamlib = self._mode_to_hamlib(ul_mode)
+            self._rig.set_mode(rx_vfo, dl_hamlib, 0)
+            self._rig.set_mode(tx_vfo, ul_hamlib, 0)
+        except Exception as exc:
+            logger.error("RigDirect.send_mode_only: %s", exc)
+
     def get_rig_info(self) -> RigInfo | None:
         """Return info about the connected rig."""
         if not self.is_connected:
@@ -498,6 +557,18 @@ class HamlibDirectController(RigController):
         )
 
     # -- Internal utilities --
+
+    def _init_split(self) -> None:
+        """Enable split mode: RX=VFOA (downlink), TX=VFOB (uplink). Called once at connect."""
+        if self._rig is None:
+            return
+        try:
+            rx_vfo = self._vfo_str_to_const("VFOA")
+            tx_vfo = self._vfo_str_to_const("VFOB")
+            self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
+            logger.info("RigDirect: split enabled (RX=VFOA, TX=VFOB)")
+        except Exception as exc:
+            logger.warning("RigDirect: set_split_vfo failed — %s", exc)
 
     def _vfo_str_to_const(self, vfo: str) -> int:
         """Convert a VFO string to the corresponding Hamlib constant (or integer in mock mode)."""
@@ -1234,12 +1305,18 @@ class _MockRig:
     def get_freq(self, vfo: int) -> float:
         return self._freq
 
-    def set_mode(self, mode: int, passband: int, vfo: int) -> None:
+    def set_mode(self, vfo: int, mode: int, passband: int) -> None:
         self._mode = mode
         self._passband = passband
 
     def get_mode(self, vfo: int) -> tuple[int, int]:
         return self._mode, self._passband
+
+    def set_split_vfo(self, vfo: int, split: int, tx_vfo: int) -> None:
+        pass
+
+    def set_split_freq(self, vfo: int, freq: float) -> None:
+        pass
 
     def set_func(self, vfo: int, func: int, status: int) -> None:
         pass

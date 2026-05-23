@@ -14,8 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from datetime import UTC, datetime
+
+# Prepend custom Hamlib build path so python-hamlib is found when not system-installed.
+# Has no effect if Hamlib is already on sys.path or LD_LIBRARY_PATH is set externally.
+_HAMLIB_SITE = "/opt/hamlib/4.7/lib/python3.12/site-packages"
+if _HAMLIB_SITE not in sys.path:
+    sys.path.insert(0, _HAMLIB_SITE)
+os.environ.setdefault("LD_LIBRARY_PATH", "/opt/hamlib/4.7/lib")
 
 from PySide6.QtWidgets import QApplication
 

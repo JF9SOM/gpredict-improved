@@ -49,7 +49,7 @@ class TestModeMap:
 
     def test_known_modes_present(self) -> None:
         m = _build_mode_map()
-        for mode in ("FM", "SSB", "LSB", "CW", "CW-R", "DIGITALVOICE", "BPSK", "AFSK", "AM"):
+        for mode in ("FM", "SSB", "USB", "LSB", "CW", "CW-R", "DIGITALVOICE", "BPSK", "AFSK", "AM"):
             assert mode in m
 
 
@@ -115,10 +115,16 @@ class TestMockRig:
         assert self.rig.get_freq(0) == 145_800_000.0
 
     def test_set_get_mode(self) -> None:
-        self.rig.set_mode(2, 3000, 0)
+        self.rig.set_mode(0, 2, 3000)  # (vfo, mode, passband)
         mode, pb = self.rig.get_mode(0)
         assert mode == 2
         assert pb == 3000
+
+    def test_set_split_vfo_no_error(self) -> None:
+        self.rig.set_split_vfo(0, 1, 0)
+
+    def test_set_split_freq_no_error(self) -> None:
+        self.rig.set_split_freq(0, 145_800_000.0)
 
     def test_func_and_level_no_error(self) -> None:
         self.rig.set_func(0, 0, 1)
@@ -219,6 +225,118 @@ class TestHamlibDirectController:
         for mode_str in ("FM", "SSB", "CW"):
             code = ctrl._mode_to_hamlib(mode_str)
             assert ctrl._hamlib_to_mode(code) == mode_str
+
+    # -- satellite duplex (mock mode) --
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_connect_calls_init_split(self) -> None:
+        """connect() calls set_split_vfo on the rig to enable split mode."""
+        ctrl = self._make_ctrl()
+        assert ctrl.connect()
+        assert ctrl.is_connected  # split init failure is non-fatal
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_last_freqs_none_after_connect(self) -> None:
+        """_last_dl_hz and _last_ul_hz are None right after connect()."""
+        ctrl = self._make_ctrl()
+        ctrl.connect()
+        assert ctrl._last_dl_hz is None
+        assert ctrl._last_ul_hz is None
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_last_freqs_reset_on_disconnect(self) -> None:
+        """disconnect() resets _last_dl_hz and _last_ul_hz to None."""
+        ctrl = self._make_ctrl()
+        ctrl.connect()
+        ctrl._last_dl_hz = 435_000_000.0
+        ctrl._last_ul_hz = 145_000_000.0
+        ctrl.disconnect()
+        assert ctrl._last_dl_hz is None
+        assert ctrl._last_ul_hz is None
+
+    def test_set_vfo_frequencies_disconnected_returns_false(self) -> None:
+        """set_vfo_frequencies returns False when not connected."""
+        ctrl = self._make_ctrl()
+        assert ctrl.set_vfo_frequencies(435_000_000.0, 145_000_000.0) is False
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_set_vfo_frequencies_sets_dl_and_ul(self) -> None:
+        """On first call, sets DL via set_freq and UL via set_split_freq."""
+        ctrl = self._make_ctrl()
+        ctrl.connect()
+        mock_rig = MagicMock()
+        ctrl._rig = mock_rig
+        result = ctrl.set_vfo_frequencies(435_000_000.0, 145_000_000.0)
+        assert result is True
+        assert ctrl._last_dl_hz == 435_000_000.0
+        assert ctrl._last_ul_hz == 145_000_000.0
+        mock_rig.set_freq.assert_called_once_with(0, 435_000_000)
+        mock_rig.set_split_freq.assert_called_once_with(0, 145_000_000)
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_set_vfo_frequencies_delta_suppression_below_1hz(self) -> None:
+        """Does not send when frequency change is less than 1 Hz."""
+        ctrl = self._make_ctrl()
+        ctrl.connect()
+        ctrl._last_dl_hz = 435_000_000.0
+        mock_rig = MagicMock()
+        ctrl._rig = mock_rig
+        ctrl.set_vfo_frequencies(435_000_000.5, None)
+        mock_rig.set_freq.assert_not_called()
+        assert ctrl._last_dl_hz == 435_000_000.0  # not updated
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_set_vfo_frequencies_sends_at_1hz_boundary(self) -> None:
+        """Sends when frequency change is exactly 1 Hz."""
+        ctrl = self._make_ctrl()
+        ctrl.connect()
+        ctrl._last_dl_hz = 435_000_000.0
+        mock_rig = MagicMock()
+        ctrl._rig = mock_rig
+        ctrl.set_vfo_frequencies(435_000_001.0, None)
+        mock_rig.set_freq.assert_called_once()
+        assert ctrl._last_dl_hz == 435_000_001.0
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_set_vfo_frequencies_first_call_always_sends(self) -> None:
+        """When _last_dl_hz is None (just connected), always sends regardless of value."""
+        ctrl = self._make_ctrl()
+        ctrl.connect()
+        assert ctrl._last_dl_hz is None
+        mock_rig = MagicMock()
+        ctrl._rig = mock_rig
+        ctrl.set_vfo_frequencies(435_000_000.0, 145_000_000.0)
+        mock_rig.set_freq.assert_called_once()
+        mock_rig.set_split_freq.assert_called_once()
+
+    def test_send_mode_only_disconnected_does_not_raise(self) -> None:
+        """send_mode_only is a no-op when not connected."""
+        ctrl = self._make_ctrl()
+        ctrl.send_mode_only("FM", "FM")  # must not raise
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_send_mode_only_calls_set_mode_twice(self) -> None:
+        """send_mode_only calls set_mode for VFOA (DL) and VFOB (UL)."""
+        ctrl = self._make_ctrl()
+        ctrl.connect()
+        mock_rig = MagicMock()
+        ctrl._rig = mock_rig
+        ctrl.send_mode_only("USB", "FM")
+        assert mock_rig.set_mode.call_count == 2
+
+    @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
+    def test_send_mode_only_correct_mode_constants(self) -> None:
+        """set_mode receives the correct Hamlib mode constants for DL and UL."""
+        ctrl = self._make_ctrl()
+        ctrl.connect()
+        mock_rig = MagicMock()
+        ctrl._rig = mock_rig
+        ctrl.send_mode_only("USB", "FM")
+        dl_hamlib = ctrl._mode_to_hamlib("USB")  # RIG_MODE_USB = 2 in mock
+        ul_hamlib = ctrl._mode_to_hamlib("FM")  # RIG_MODE_FM  = 1 in mock
+        called_modes = {call.args[1] for call in mock_rig.set_mode.call_args_list}
+        assert dl_hamlib in called_modes
+        assert ul_hamlib in called_modes
 
 
 # ---------------------------------------------------------------------------
