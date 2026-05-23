@@ -18,10 +18,14 @@ import os
 import sys
 from datetime import UTC, datetime
 
-# Prefer Hamlib 4.7.1 from /opt/hamlib/4.7 over the system package.
-# sys.path only: _Hamlib.so has RUNPATH=/opt/hamlib/4.7/lib baked in, so
-# LD_LIBRARY_PATH is not needed and must not be set (conflicts with Qt).
+# Ensure only Hamlib 4.7.1 is loaded — not the system package (4.5.5).
+# Loading both simultaneously causes a "Hash collision" fatal error in Hamlib's
+# internal rig registry. Remove the system dist-packages path first so Python
+# cannot find the old _Hamlib.so, then prepend the 4.7.1 site-packages.
 _HAMLIB_SITE = "/opt/hamlib/4.7/lib/python3.12/site-packages"
+_HAMLIB_SYS = "/usr/lib/python3/dist-packages"
+if _HAMLIB_SYS in sys.path:
+    sys.path.remove(_HAMLIB_SYS)
 if os.path.exists(_HAMLIB_SITE) and _HAMLIB_SITE not in sys.path:
     sys.path.insert(0, _HAMLIB_SITE)
 
