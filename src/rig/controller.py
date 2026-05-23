@@ -15,6 +15,7 @@ so tests pass even in CI environments without python-hamlib.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import logging
 import os
 import socket
@@ -44,16 +45,12 @@ if os.path.exists(_HAMLIB_471_PY) and _HAMLIB_471_PY not in sys.path:
     sys.path.insert(0, _HAMLIB_471_PY)
 
 # ---------------------------------------------------------------------------
-# Hamlib import — falls back to mock when not installed
+# Hamlib availability check — import is deferred to connect() to avoid loading
+# the shared library at startup, which collides with Qt's thread-local storage.
 # ---------------------------------------------------------------------------
 
-try:
-    import Hamlib as _hamlib_mod
-
-    HAMLIB_AVAILABLE = True
-except ModuleNotFoundError:
-    _hamlib_mod = None
-    HAMLIB_AVAILABLE = False
+HAMLIB_AVAILABLE: bool = importlib.util.find_spec("Hamlib") is not None
+if not HAMLIB_AVAILABLE:
     logger.warning(
         "python-hamlib not found — running in mock mode. "
         "Install libhamlib-dev and python3-hamlib to enable real rig control."
@@ -66,31 +63,24 @@ except ModuleNotFoundError:
 
 
 def _build_mode_map() -> dict[str, int]:
-    """Map real constants when Hamlib is available, or dummy integers in mock mode."""
-    if HAMLIB_AVAILABLE:
-        return {
-            "DIGITALVOICE": _hamlib_mod.RIG_MODE_FM,
-            "USB": _hamlib_mod.RIG_MODE_USB,  # alias; SSB below takes priority in reverse map
-            "FM": _hamlib_mod.RIG_MODE_FM,
-            "SSB": _hamlib_mod.RIG_MODE_USB,  # canonical SATNOGS name — wins in reverse map
-            "LSB": _hamlib_mod.RIG_MODE_LSB,
-            "CW": _hamlib_mod.RIG_MODE_CW,
-            "CW-R": _hamlib_mod.RIG_MODE_CWR,
-            "BPSK": _hamlib_mod.RIG_MODE_PKTUSB,
-            "AFSK": _hamlib_mod.RIG_MODE_PKTFM,
-            "AM": _hamlib_mod.RIG_MODE_AM,
-        }
+    """SATNOGS mode string → Hamlib RIG_MODE_* integer constant.
+
+    Values are the stable public Hamlib bitmask constants (unchanged across
+    versions), so no Hamlib import is needed at module load time.
+    USB appears before SSB so SSB wins in the reverse map (last-wins dict
+    comprehension), matching the canonical SATNOGS name.
+    """
     return {
-        "DIGITALVOICE": 1,
-        "USB": 2,  # alias; SSB below takes priority in reverse map
-        "FM": 1,
-        "SSB": 2,  # canonical SATNOGS name — wins in reverse map
-        "LSB": 3,
-        "CW": 4,
-        "CW-R": 5,
-        "BPSK": 6,
-        "AFSK": 7,
-        "AM": 8,
+        "DIGITALVOICE": 32,  # RIG_MODE_FM
+        "USB": 4,  # RIG_MODE_USB  (alias; SSB wins in reverse map)
+        "FM": 32,  # RIG_MODE_FM
+        "SSB": 4,  # RIG_MODE_USB  (canonical SATNOGS name; wins in reverse map)
+        "LSB": 8,  # RIG_MODE_LSB
+        "CW": 2,  # RIG_MODE_CW
+        "CW-R": 128,  # RIG_MODE_CWR
+        "BPSK": 2048,  # RIG_MODE_PKTUSB
+        "AFSK": 4096,  # RIG_MODE_PKTFM
+        "AM": 1,  # RIG_MODE_AM
     }
 
 
@@ -316,7 +306,8 @@ class HamlibDirectController(RigController):
         self._data_bits = data_bits
         self._stop_bits = stop_bits
         self._handshake = handshake
-        self._rig: Any = None  # Hamlib.Rig instance or mock
+        self._rig: Any = None  # Hamlib.Rig instance or _MockRig
+        self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._last_dl_hz: float | None = None
         self._last_ul_hz: float | None = None
 
@@ -331,7 +322,10 @@ class HamlibDirectController(RigController):
 
         try:
             if HAMLIB_AVAILABLE:
-                rig = _hamlib_mod.Rig(self._model_id)
+                import Hamlib as _H  # lazy — avoids Qt TLS collision at startup
+
+                self._hamlib = _H
+                rig = _H.Rig(self._model_id)
                 rig.state.rigport.pathname = self._port
                 rig.state.rigport.parm.serial.rate = self._baud_rate
                 rig.state.rigport.parm.serial.data_bits = self._data_bits
@@ -362,12 +356,13 @@ class HamlibDirectController(RigController):
             if self._state == RigState.DISCONNECTED:
                 return
         try:
-            if HAMLIB_AVAILABLE and self._rig is not None:
+            if self._rig is not None:
                 self._rig.close()
         except Exception as exc:
             logger.warning("RigDirect: disconnect error — %s", exc)
         finally:
             self._rig = None
+            self._hamlib = None
             self._last_dl_hz = None
             self._last_ul_hz = None
             with self._lock:
@@ -432,7 +427,7 @@ class HamlibDirectController(RigController):
         """Set the CTCSS tone. Pass tone_hz=0.0 to disable."""
         if not self.is_connected or self._rig is None:
             return False
-        if not HAMLIB_AVAILABLE:
+        if self._hamlib is None:
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
@@ -441,19 +436,19 @@ class HamlibDirectController(RigController):
             tone_int = int(round(tone_hz * 10))
             if tone_hz > 0:
                 self._rig.set_func(
-                    _hamlib_mod.RIG_VFO_CURR,
-                    _hamlib_mod.RIG_FUNC_TONE,
+                    self._hamlib.RIG_VFO_CURR,
+                    self._hamlib.RIG_FUNC_TONE,
                     1,
                 )
                 self._rig.set_level(
-                    _hamlib_mod.RIG_VFO_CURR,
-                    _hamlib_mod.RIG_LEVEL_CTCSS_TONE,
+                    self._hamlib.RIG_VFO_CURR,
+                    self._hamlib.RIG_LEVEL_CTCSS_TONE,
                     tone_int,
                 )
             else:
                 self._rig.set_func(
-                    _hamlib_mod.RIG_VFO_CURR,
-                    _hamlib_mod.RIG_FUNC_TONE,
+                    self._hamlib.RIG_VFO_CURR,
+                    self._hamlib.RIG_FUNC_TONE,
                     0,
                 )
             with self._lock:
@@ -467,26 +462,26 @@ class HamlibDirectController(RigController):
         """Set the DCS code. Pass code=0 to disable."""
         if not self.is_connected or self._rig is None:
             return False
-        if not HAMLIB_AVAILABLE:
+        if self._hamlib is None:
             with self._lock:
                 self._freq_state.dcs_code = code
             return True
         try:
             if code > 0:
                 self._rig.set_func(
-                    _hamlib_mod.RIG_VFO_CURR,
-                    _hamlib_mod.RIG_FUNC_TSQL,
+                    self._hamlib.RIG_VFO_CURR,
+                    self._hamlib.RIG_FUNC_TSQL,
                     1,
                 )
                 self._rig.set_level(
-                    _hamlib_mod.RIG_VFO_CURR,
-                    _hamlib_mod.RIG_LEVEL_CTCSS_SQL,
+                    self._hamlib.RIG_VFO_CURR,
+                    self._hamlib.RIG_LEVEL_CTCSS_SQL,
                     code,
                 )
             else:
                 self._rig.set_func(
-                    _hamlib_mod.RIG_VFO_CURR,
-                    _hamlib_mod.RIG_FUNC_TSQL,
+                    self._hamlib.RIG_VFO_CURR,
+                    self._hamlib.RIG_FUNC_TSQL,
                     0,
                 )
             with self._lock:
@@ -561,7 +556,7 @@ class HamlibDirectController(RigController):
         if not self.is_connected:
             return None
         model_name = f"Model {self._model_id}"
-        if HAMLIB_AVAILABLE and self._rig is not None:
+        if self._hamlib is not None and self._rig is not None:
             with contextlib.suppress(Exception):
                 model_name = self._rig.caps.model_name
         return RigInfo(
@@ -587,16 +582,16 @@ class HamlibDirectController(RigController):
             logger.warning("RigDirect: set_split_vfo failed — %s", exc)
 
     def _vfo_str_to_const(self, vfo: str) -> int:
-        """Convert a VFO string to the corresponding Hamlib constant (or integer in mock mode)."""
-        if not HAMLIB_AVAILABLE:
+        """Convert a VFO string to the corresponding Hamlib constant (or 0 in mock mode)."""
+        if self._hamlib is None:
             return 0
         vfo_map = {
-            "VFOA": _hamlib_mod.RIG_VFO_A,
-            "VFOB": _hamlib_mod.RIG_VFO_B,
-            "Main": _hamlib_mod.RIG_VFO_MAIN,
-            "Sub": _hamlib_mod.RIG_VFO_SUB,
+            "VFOA": self._hamlib.RIG_VFO_A,
+            "VFOB": self._hamlib.RIG_VFO_B,
+            "Main": self._hamlib.RIG_VFO_MAIN,
+            "Sub": self._hamlib.RIG_VFO_SUB,
         }
-        return int(vfo_map.get(vfo, _hamlib_mod.RIG_VFO_CURR))
+        return int(vfo_map.get(vfo, self._hamlib.RIG_VFO_CURR))
 
 
 # ---------------------------------------------------------------------------
@@ -1096,6 +1091,7 @@ class HamlibRotatorController(RotatorController):
         self._net_host = net_host
         self._net_port = net_port
         self._rot: Any = None
+        self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._sock: socket.socket | None = None
 
     def connect(self) -> bool:
@@ -1112,7 +1108,10 @@ class HamlibRotatorController(RotatorController):
                 sock.connect((self._net_host, self._net_port))
                 self._sock = sock
             elif HAMLIB_AVAILABLE:
-                rot = _hamlib_mod.Rot(self._model_id)
+                import Hamlib as _H  # lazy — avoids Qt TLS collision at startup
+
+                self._hamlib = _H
+                rot = _H.Rot(self._model_id)
                 rot.state.rotport.pathname = self._port
                 rot.state.rotport.parm.serial.rate = self._baud_rate
                 rot.open()
@@ -1135,7 +1134,7 @@ class HamlibRotatorController(RotatorController):
         try:
             if self._net_mode and self._sock:
                 self._sock.close()
-            elif self._rot is not None and HAMLIB_AVAILABLE:
+            elif self._rot is not None and self._hamlib is not None:
                 self._rot.close()
         except Exception:
             pass
@@ -1243,7 +1242,9 @@ class HamlibVersionChecker:
         """Return the installed Hamlib version string, or "not installed" when absent."""
         if HAMLIB_AVAILABLE:
             try:
-                return str(_hamlib_mod.cvar.hamlib_version)
+                import Hamlib as _H
+
+                return str(_H.cvar.hamlib_version)
             except Exception:
                 return "unknown"
         return "not installed"
@@ -1309,7 +1310,7 @@ class _MockRig:
     def __init__(self, model_id: int) -> None:
         self._model_id = model_id
         self._freq: float = 145_800_000.0
-        self._mode: int = 1  # FM
+        self._mode: int = 32  # RIG_MODE_FM
         self._passband: int = 15000
 
     class caps:  # noqa: N801

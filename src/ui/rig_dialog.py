@@ -37,13 +37,8 @@ from i18n import _
 # Hamlib Python binding (imported only when available)
 # ---------------------------------------------------------------------------
 
-try:
-    import Hamlib as _hamlib_mod
-
-    _HAMLIB_OK: bool = True
-except ModuleNotFoundError:
-    _hamlib_mod = None
-    _HAMLIB_OK = False
+# Hamlib is imported lazily inside _load_from_hamlib_api() to avoid loading the
+# shared library at startup, which collides with Qt's thread-local storage.
 
 # ---------------------------------------------------------------------------
 # Fallback model list (for environments without the Hamlib Python binding).
@@ -174,7 +169,9 @@ def _load_from_hamlib_api() -> list[tuple[int, str, str]]:
     Returns:
         List of (model_id, manufacturer, model_name). Empty on failure.
     """
-    if not _HAMLIB_OK or _hamlib_mod is None:
+    try:
+        import Hamlib as _hamlib_mod  # lazy — avoids Qt TLS collision at startup
+    except ModuleNotFoundError:
         return []
 
     # Hamlib 3.x API: riglist dict
