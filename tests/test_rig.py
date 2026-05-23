@@ -620,27 +620,6 @@ class TestHamlibNetController:
         assert ctrl.state == RigState.ERROR
         assert ctrl._sock is None
 
-    # -- queue_mode --
-
-    def test_queue_mode_stores_dl_pending(self) -> None:
-        """queue_mode(dl) は _pending_dl_mode に保存する。"""
-        ctrl = self._make_connected_ctrl()
-        ctrl.queue_mode("USB")
-        assert ctrl._pending_dl_mode == "USB"
-
-    def test_queue_mode_unknown_mode_not_stored(self) -> None:
-        """未知のモードは _pending_dl_mode に保存されない。"""
-        ctrl = self._make_connected_ctrl()
-        ctrl.queue_mode("UNKNOWN")
-        assert ctrl._pending_dl_mode is None
-
-    def test_disconnect_clears_pending_mode(self) -> None:
-        """disconnect() で _pending_dl_mode がクリアされる。"""
-        ctrl = self._make_connected_ctrl()
-        ctrl._pending_dl_mode = "FM"
-        ctrl.disconnect()
-        assert ctrl._pending_dl_mode is None
-
     # -- _init_vfo: split ON (S 1 Sub only) --
 
     def test_init_vfo_sends_s1sub(self) -> None:
@@ -652,42 +631,18 @@ class TestHamlibNetController:
         sent = b"".join(calls)
         assert b"S 1 Sub\n" in sent
 
-    def test_init_vfo_sends_no_mode_command(self) -> None:
-        """_init_vfo() は pending mode の有無に関わらず M コマンドを送らない。"""
-        ctrl = self._make_connected_ctrl()
-        ctrl._pending_dl_mode = "USB"
-        calls: list[bytes] = []
-        ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
-        ctrl._init_vfo()
-        sent = b"".join(calls)
-        assert b"M " not in sent
+    # -- set_vfo_frequencies: F/I only, no M --
 
-    # -- set_vfo_frequencies: mode after F/I --
-
-    def test_set_vfo_frequencies_sends_mode_after_freq(self) -> None:
-        """pending mode がある場合、M コマンドを F/I より後に送る（V コマンドなし）。"""
+    def test_set_vfo_frequencies_sends_no_mode_command(self) -> None:
+        """set_vfo_frequencies() は M コマンドを送らない。"""
         ctrl = self._make_connected_ctrl()
-        ctrl.queue_mode("USB")
         calls: list[bytes] = []
         ctrl._sock.sendall.side_effect = lambda data: calls.append(data)  # type: ignore[union-attr]
         ctrl.set_vfo_frequencies(145_000_000.0, 144_000_000.0)
         sent = b"".join(calls)
-        assert b"M USB 0\n" in sent
-        assert b"V " not in sent
+        assert b"M " not in sent
         assert b"F 145000000\n" in sent
         assert b"I 144000000\n" in sent
-        idx_f = sent.index(b"F 145000000\n")
-        idx_i = sent.index(b"I 144000000\n")
-        idx_m = sent.index(b"M USB 0\n")
-        assert idx_f < idx_m
-        assert idx_i < idx_m
-
-    def test_pending_mode_cleared_after_vfo_frequencies(self) -> None:
-        """set_vfo_frequencies() 後は _pending_dl_mode が None になる。"""
-        ctrl = self._make_connected_ctrl()
-        ctrl.queue_mode("FM")
-        ctrl.set_vfo_frequencies(145_000_000.0, None)
-        assert ctrl._pending_dl_mode is None
 
     # -- send_mode_only --
 

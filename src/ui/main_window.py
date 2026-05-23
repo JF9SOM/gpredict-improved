@@ -86,12 +86,6 @@ class _SatData(TypedDict):
 # 2-4 character prefix + optional separator + 1-3 digit number + optional trailing character
 _DESIG_RE = re.compile(r"\b([A-Za-z]{2,4})[-\s]?(\d{1,3}[A-Za-z]?)\b")
 
-# SATNOGS mode strings for which set_mode() is sent to the rig.
-# Excludes digital/beacon modes unlikely to need CAT mode switching (e.g. DIGITALVOICE, QPSK).
-_SEND_MODE_KEYS: frozenset[str] = frozenset(
-    {"FM", "USB", "SSB", "LSB", "CW", "CW-R", "BPSK", "AFSK"}
-)
-
 # Mode inversion table for inverting transponders (invert=True).
 # Downlink and uplink use opposite sidebands so that when the operator
 # tunes up on one VFO the other VFO moves in the opposite direction.
@@ -297,7 +291,6 @@ class MainWindow(QMainWindow):
         self._radio_control.cycle_changed.connect(self._on_cycle_changed)
         self._radio_control.tune_requested.connect(self._on_tune_requested)
         self._radio_control.lock_changed.connect(self._on_lock_changed)
-        self._radio_control.rig_connected.connect(self._on_rig_connected)
         self._radio_control.ctcss_send_requested.connect(self._on_ctcss_send)
         self._load_satellites()
         self._load_rig_settings()
@@ -1150,7 +1143,6 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(dl, dl, None, ul, ul, None, mode, ctcss)
         else:
             self._radio_control.update_doppler(None, None, None, None, None, None)
-        self._send_mode_to_rig()
         self._send_mode_only_to_rig()
 
     def _disconnect_rig(self) -> None:
@@ -1482,26 +1474,6 @@ class MainWindow(QMainWindow):
     def _on_lock_changed(self, locked: bool) -> None:
         """Update the _trsp_lock flag when the L button is toggled."""
         self._trsp_lock = locked
-
-    def _send_mode_to_rig(self) -> None:
-        """Queue the current transponder DL mode for the next rig frequency update.
-
-        Uses queue_mode() so the M command is sent inside set_vfo_frequencies()
-        on the Doppler cycle thread, avoiding concurrent socket access that can
-        disrupt split VFO state on the FTX-1F and similar rigs.
-        """
-        if self._rig_controller is None or not self._rig_controller.is_connected:
-            return
-        if self._current_transmitter is None:
-            return
-        mode = str(self._current_transmitter.get("mode") or "")
-        if mode not in _SEND_MODE_KEYS:
-            return
-        self._rig_controller.queue_mode(mode)
-
-    def _on_rig_connected(self) -> None:
-        """Called when the rig successfully connects; sends the current transponder mode."""
-        self._send_mode_to_rig()
 
     def _on_ctcss_send(self, tone_hz: float) -> None:
         """Send a CTCSS tone to the rig (background thread); errors shown in status bar."""

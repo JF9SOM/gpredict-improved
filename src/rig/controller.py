@@ -237,14 +237,6 @@ class RigController(ABC):
             ok = self.set_frequency(vfob_hz, "VFOB") and ok
         return ok
 
-    def queue_mode(self, dl_mode: str) -> None:
-        """Queue a DL mode to be sent at the next safe opportunity.
-
-        Default implementation calls set_mode() immediately; override in
-        subclasses that need deferred dispatch (e.g. HamlibNetController).
-        """
-        self.set_mode(dl_mode)
-
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
         """Set mode on both VFOs without affecting split state.
 
@@ -555,7 +547,6 @@ class HamlibNetController(RigController):
         self._cached_model_name: str = ""  # fetched once on connect and cached
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
-        self._pending_dl_mode: str | None = None  # queued mode, dispatched at next safe point
 
     # -- Connection management --
 
@@ -619,7 +610,6 @@ class HamlibNetController(RigController):
             self._sock = None
             self._last_dl_hz = None
             self._last_ul_hz = None
-            self._pending_dl_mode = None
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -804,9 +794,9 @@ class HamlibNetController(RigController):
                          only when changed by 1 Hz or more, or on the first call
                          (_last_ul_hz is None).
 
-        connect() calls _init_vfo() which sends S 1 Main (split ON, TX VFO=Main):
-          F → Sub (RX/downlink)
-          I → Main (TX/uplink)
+        connect() calls _init_vfo() which sends S 1 Sub (split ON, TX VFO=Sub):
+          F → Main (RX/downlink)
+          I → Sub (TX/uplink)
         The TX cycle is skipped when vfob_hz is None.
         """
         if not self.is_connected:
@@ -841,19 +831,6 @@ class HamlibNetController(RigController):
                     if "RPRT 0" not in resp:
                         raise RigControlError(f"set TX freq failed: {resp!r}")
                     self._last_ul_hz = vfob_hz
-
-            # Send pending DL mode AFTER F/I within the same lock (no V commands).
-            # Sending M before F/I disrupts split state on the FTX-1F.
-            if self._pending_dl_mode is not None:
-                dl_mode = self._pending_dl_mode
-                self._pending_dl_mode = None
-                hamlib_mode = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
-                if hamlib_mode:
-                    resp = self._cmd_raw(f"M {hamlib_mode} 0")
-                    if "RPRT 0" not in resp:
-                        raise RigControlError(f"set_mode({dl_mode!r}) failed: {resp!r}")
-                    with self._lock:
-                        self._freq_state.mode = dl_mode
 
         return True
 
@@ -894,19 +871,6 @@ class HamlibNetController(RigController):
     def set_vfo(self, vfo: str) -> bool:
         resp = self._cmd(f"V {vfo}")
         return "RPRT 0" in resp
-
-    def queue_mode(self, dl_mode: str) -> None:
-        """Store DL mode for dispatch at the next safe opportunity.
-
-        When disconnected: stored until connect() → _init_vfo() sends it
-        immediately after S 1 Main.
-        When connected: sent after the next F/I cycle in set_vfo_frequencies()
-        under a single _cmd_lock acquisition, ensuring M never precedes F/I.
-        No V command is used to avoid disrupting the split VFO state on the FTX-1F.
-        Only modes present in _SATNOGS_TO_RIGCTLD_MODE are accepted.
-        """
-        if dl_mode in _SATNOGS_TO_RIGCTLD_MODE:
-            self._pending_dl_mode = dl_mode
 
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
         """Set mode on both VFOs via an independent TCP connection.
