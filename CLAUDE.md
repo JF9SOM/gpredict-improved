@@ -513,6 +513,18 @@ sudo usermod -aG dialout $USER
 - f/iダイアルフィードバックは実装しない（FTX-1非対応）
 - S 1 Mainは接続時1回のみ（毎サイクル送らない）
 
+### send_mode_only() VFO順序の根拠
+
+FTX-1Fバックエンドの実動作: Sub=TX(UL), Main=RX(DL)
+
+send_mode_only()の正しい順序:
+```
+V Sub  → M {ul_mode} 0  （Sub=TX=アップリンク）
+V Main → M {dl_mode} 0  （Main=RX=ダウンリンク）
+```
+
+S 1 Mainはrigctld標準プロトコル。全機種共通。
+
 ### 動作確認環境
 - リグ: Yaesu FTX-1F
 - PC: GPD MicroPC2 (Ubuntu)
