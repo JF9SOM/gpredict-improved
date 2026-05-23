@@ -31,14 +31,13 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Prefer Hamlib 4.7.1 from /opt/hamlib/4.7 — system package may be older.
-# Must run before `import Hamlib` so the dynamic linker finds the right .so.
+# sys.path only: _Hamlib.so already has RUNPATH=/opt/hamlib/4.7/lib baked in
+# by the build, so LD_LIBRARY_PATH manipulation is not needed and would
+# conflict with Qt's shared-library namespace.
 # ---------------------------------------------------------------------------
-_HAMLIB_471_LIB = "/opt/hamlib/4.7/lib"
 _HAMLIB_471_PY = "/opt/hamlib/4.7/lib/python3.12/site-packages"
-if os.path.exists(_HAMLIB_471_PY):
-    os.environ["LD_LIBRARY_PATH"] = _HAMLIB_471_LIB + ":" + os.environ.get("LD_LIBRARY_PATH", "")
-    if _HAMLIB_471_PY not in sys.path:
-        sys.path.insert(0, _HAMLIB_471_PY)
+if os.path.exists(_HAMLIB_471_PY) and _HAMLIB_471_PY not in sys.path:
+    sys.path.insert(0, _HAMLIB_471_PY)
 
 # ---------------------------------------------------------------------------
 # Hamlib import — falls back to mock when not installed
