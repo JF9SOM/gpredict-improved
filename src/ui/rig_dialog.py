@@ -79,6 +79,7 @@ _FALLBACK_MODELS: list[tuple[int, str, str]] = [
     (1047, "Yaesu", "FTDX-10"),
     (1048, "Yaesu", "FTDX-101MP"),
     (1049, "Yaesu", "FTDX-101D"),
+    (1051, "Yaesu", "FTX-1"),
     # Kenwood
     (2001, "Kenwood", "TS-50S"),
     (2002, "Kenwood", "TS-440S"),
@@ -164,25 +165,57 @@ _FALLBACK_MODELS: list[tuple[int, str, str]] = [
 
 
 def _load_from_hamlib_api() -> list[tuple[int, str, str]]:
-    """Fetch all supported models from the ``Hamlib.riglist`` dictionary.
+    """Fetch all supported models from the Hamlib Python binding.
 
-    ``Hamlib.riglist`` is a ``{model_id: RigCaps}`` dict whose values expose
-    ``.mfg_name`` and ``.model_name`` attributes for the manufacturer and model.
+    Tries the ``Hamlib.riglist`` dict (Hamlib 3.x API) first; falls back to
+    enumerating ``RIG_MODEL_*`` module constants and querying ``Rig.caps``
+    (Hamlib 4.x API, which removed ``riglist``).
 
     Returns:
         List of (model_id, manufacturer, model_name). Empty on failure.
     """
     if not _HAMLIB_OK or _hamlib_mod is None:
         return []
-    models: list[tuple[int, str, str]] = []
-    try:
-        for model_id, info in _hamlib_mod.riglist.items():
-            name = str(getattr(info, "model_name", "") or "").strip()
-            mfg = str(getattr(info, "mfg_name", "") or "").strip()
+
+    # Hamlib 3.x API: riglist dict
+    if hasattr(_hamlib_mod, "riglist"):
+        models: list[tuple[int, str, str]] = []
+        try:
+            for model_id, info in _hamlib_mod.riglist.items():
+                name = str(getattr(info, "model_name", "") or "").strip()
+                mfg = str(getattr(info, "mfg_name", "") or "").strip()
+                if name:
+                    models.append((int(model_id), mfg, name))
+        except (AttributeError, TypeError):
+            pass
+        if models:
+            return models
+
+    # Hamlib 4.x API: enumerate RIG_MODEL_* constants and query Rig.caps.
+    # Suppress debug output during enumeration to keep the log clean.
+    prev_debug = _hamlib_mod.rig_get_debug()
+    _hamlib_mod.rig_set_debug(_hamlib_mod.RIG_DEBUG_NONE)
+    models = []
+    seen_ids: set[int] = set()
+    for attr_name in dir(_hamlib_mod):
+        if not attr_name.startswith("RIG_MODEL_"):
+            continue
+        try:
+            model_id = int(getattr(_hamlib_mod, attr_name))
+        except (TypeError, ValueError):
+            continue
+        if model_id <= 0 or model_id in seen_ids:
+            continue
+        seen_ids.add(model_id)
+        try:
+            rig = _hamlib_mod.Rig(model_id)
+            name = str(getattr(rig.caps, "model_name", "") or "").strip()
+            mfg = str(getattr(rig.caps, "mfg_name", "") or "").strip()
             if name:
-                models.append((int(model_id), mfg, name))
-    except (AttributeError, TypeError):
-        pass
+                models.append((model_id, mfg, name))
+        except Exception:
+            pass
+    _hamlib_mod.rig_set_debug(prev_debug)
     return models
 
 

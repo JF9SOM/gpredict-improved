@@ -18,12 +18,14 @@ import os
 import sys
 from datetime import UTC, datetime
 
-# Prepend custom Hamlib build path so python-hamlib is found when not system-installed.
-# Has no effect if Hamlib is already on sys.path or LD_LIBRARY_PATH is set externally.
+# Prepend Hamlib 4.7.1 paths so the right version is used even when the system
+# has an older python-hamlib installed. Prepend (not setdefault) so this wins
+# even when LD_LIBRARY_PATH is already set by the shell environment.
 _HAMLIB_SITE = "/opt/hamlib/4.7/lib/python3.12/site-packages"
+_HAMLIB_LIB = "/opt/hamlib/4.7/lib"
 if _HAMLIB_SITE not in sys.path:
     sys.path.insert(0, _HAMLIB_SITE)
-os.environ.setdefault("LD_LIBRARY_PATH", "/opt/hamlib/4.7/lib")
+os.environ["LD_LIBRARY_PATH"] = _HAMLIB_LIB + ":" + os.environ.get("LD_LIBRARY_PATH", "")
 
 from PySide6.QtWidgets import QApplication
 
