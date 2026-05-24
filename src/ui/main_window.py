@@ -1207,9 +1207,7 @@ class MainWindow(QMainWindow):
         if self._rig_controller is None:
             return
         if tone_hz is None:
-            tone_hz = float(
-                (self._current_transmitter or {}).get("ctcss_tone") or 0.0
-            )
+            tone_hz = float((self._current_transmitter or {}).get("ctcss_tone") or 0.0)
         rig = self._rig_controller
         cat_on = self._ctcss_cat_on
         cat_off = self._ctcss_cat_off
@@ -1518,15 +1516,11 @@ class MainWindow(QMainWindow):
             # CTCSS_PRESET_TEMPLATES rather than the DB value, which may be stale
             # (e.g. saved before a preset command format correction).
             if self._ctcss_method in CTCSS_PRESET_TEMPLATES:
-                self._ctcss_cat_on, self._ctcss_cat_off = CTCSS_PRESET_TEMPLATES[
-                    self._ctcss_method
-                ]
+                self._ctcss_cat_on, self._ctcss_cat_off = CTCSS_PRESET_TEMPLATES[self._ctcss_method]
             else:
                 self._ctcss_cat_on = str(settings.get("ctcss_cat_on", ""))
                 self._ctcss_cat_off = str(settings.get("ctcss_cat_off", ""))
-            logger.info(
-                "RigSettings: method=%s cat_on=%r", self._ctcss_method, self._ctcss_cat_on
-            )
+            logger.info("RigSettings: method=%s cat_on=%r", self._ctcss_method, self._ctcss_cat_on)
             self._radio_control.set_rig(self._rig_controller)
             self._update_rig_label()
         except Exception as exc:
