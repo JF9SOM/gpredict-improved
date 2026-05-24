@@ -404,7 +404,8 @@ class HamlibDirectController(RigController):
         try:
             hamlib_mode = self._mode_to_hamlib(mode)
             hamlib_vfo = self._vfo_str_to_const(vfo)
-            self._rig.set_mode(hamlib_vfo, hamlib_mode, passband_hz)
+            # Python Hamlib binding: set_mode(mode, passband[, vfo]) — vfo is last
+            self._rig.set_mode(hamlib_mode, passband_hz, hamlib_vfo)
             with self._lock:
                 self._freq_state.mode = mode
                 self._freq_state.passband_hz = passband_hz
@@ -545,18 +546,32 @@ class HamlibDirectController(RigController):
         logger.info("RigDirect: send_mode_only dl=%s ul=%s", dl_mode, ul_mode)
         if not HAMLIB_AVAILABLE:
             return
-        dl_hamlib = self._mode_to_hamlib(dl_mode)
-        ul_hamlib = self._mode_to_hamlib(ul_mode)
         rig: Any = None
         try:
             import Hamlib as _H  # lazy — avoids Qt TLS collision at startup
 
+            # Build mode map from real Hamlib constants (available after import).
+            # Python binding: set_mode(mode, passband[, vfo]) — vfo is the last arg.
+            hamlib_mode: dict[str, int] = {
+                "FM": _H.RIG_MODE_FM,
+                "DIGITALVOICE": _H.RIG_MODE_FM,
+                "USB": _H.RIG_MODE_USB,
+                "SSB": _H.RIG_MODE_USB,
+                "LSB": _H.RIG_MODE_LSB,
+                "CW": _H.RIG_MODE_CW,
+                "CW-R": _H.RIG_MODE_CWR,
+                "AM": _H.RIG_MODE_AM,
+                "AFSK": _H.RIG_MODE_PKTFM,
+                "BPSK": _H.RIG_MODE_PKTUSB,
+            }
+            dl_hamlib = hamlib_mode.get(dl_mode, _H.RIG_MODE_FM)
+            ul_hamlib = hamlib_mode.get(ul_mode, _H.RIG_MODE_FM)
             rig = _H.Rig(self._model_id)
             rig.set_conf("rig_pathname", self._port)
             rig.set_conf("serial_speed", str(self._baud_rate))
             rig.open()
-            rig.set_mode(_H.RIG_VFO_A, dl_hamlib, 0)
-            rig.set_mode(_H.RIG_VFO_B, ul_hamlib, 0)
+            rig.set_mode(dl_hamlib, 0, _H.RIG_VFO_A)
+            rig.set_mode(ul_hamlib, 0, _H.RIG_VFO_B)
             logger.info("RigDirect: send_mode_only done")
         except Exception as exc:
             logger.error("RigDirect.send_mode_only: %s", exc)
