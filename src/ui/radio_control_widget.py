@@ -104,10 +104,10 @@ class RadioControlWidget(QWidget):
         ctcss_row_layout = QHBoxLayout(ctcss_row)
         ctcss_row_layout.setContentsMargins(0, 0, 0, 0)
         ctcss_row_layout.setSpacing(4)
-        self._ctcss_send_btn = QPushButton(_("Send"))
+        self._ctcss_send_btn = QPushButton("—")
         self._ctcss_send_btn.setToolTip(_("Send current CTCSS tone to rig"))
         self._ctcss_send_btn.clicked.connect(self._on_ctcss_send)
-        self._ctcss_activate_btn = QPushButton(_("Activate (74.4 Hz)"))
+        self._ctcss_activate_btn = QPushButton(_("74.4 Hz (Activation)"))
         self._ctcss_activate_btn.setToolTip(_("SO-50: activate 10-minute timer with 74.4 Hz tone"))
         self._ctcss_activate_btn.clicked.connect(self._on_ctcss_activate)
         ctcss_row_layout.addWidget(self._ctcss_label)
@@ -251,8 +251,10 @@ class RadioControlWidget(QWidget):
         self._mode_label.setText(mode if mode else "—")
         if self._current_ctcss_hz:
             self._ctcss_label.setText(f"{self._current_ctcss_hz:.1f} Hz")
+            self._ctcss_send_btn.setText(f"{self._current_ctcss_hz:.1f}Hz")
         else:
             self._ctcss_label.setText("—")
+            self._ctcss_send_btn.setText("—")
 
     def update_rotator(self, state: RotatorState | None) -> None:
         """Update the current rotator position."""
@@ -301,6 +303,7 @@ class RadioControlWidget(QWidget):
             self._ctcss_label,
         ):
             label.setText("—")
+        self._ctcss_send_btn.setText("—")
 
     @staticmethod
     def _xpdr_label(xpdr: dict[str, Any]) -> str:
@@ -371,10 +374,12 @@ class RadioControlWidget(QWidget):
 
     def _on_ctcss_send(self) -> None:
         if self._current_ctcss_hz is not None:
+            self._ctcss_label.setText(f"{self._current_ctcss_hz:.1f} Hz")
             self.ctcss_send_requested.emit(self._current_ctcss_hz)
 
     def _on_ctcss_activate(self) -> None:
         """SO-50: transmit 74.4 Hz activation tone to start the 10-minute timer."""
+        self._ctcss_label.setText("74.4 Hz")
         self.ctcss_send_requested.emit(74.4)
 
     def _on_connect_rotator(self) -> None:

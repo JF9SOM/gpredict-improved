@@ -296,6 +296,7 @@ class MainWindow(QMainWindow):
         self._radio_control.tune_requested.connect(self._on_tune_requested)
         self._radio_control.lock_changed.connect(self._on_lock_changed)
         self._radio_control.ctcss_send_requested.connect(self._on_ctcss_send)
+        self._restore_satellite_filter()
         self._load_satellites()
         self._load_rig_settings()
 
@@ -466,6 +467,21 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Data loading
     # ------------------------------------------------------------------ #
+
+    def _restore_satellite_filter(self) -> None:
+        """Restore the satellite filter combo to the last saved selection."""
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'satellite_filter'"
+            ).fetchone()
+            if row:
+                idx = self._filter_combo.findText(row[0])
+                if idx >= 0:
+                    self._filter_combo.blockSignals(True)
+                    self._filter_combo.setCurrentIndex(idx)
+                    self._filter_combo.blockSignals(False)
+        except Exception:
+            pass
 
     def _load_satellites(self) -> None:
         """Load satellite data from the DB, build the internal list, and apply filters."""
@@ -1664,6 +1680,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Stop the timer, web server, and scheduler when the window is closed."""
+        with contextlib.suppress(Exception):
+            self._conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('satellite_filter', ?)",
+                (self._filter_combo.currentText(),),
+            )
+            self._conn.commit()
         self._timer.stop()
         if self._web_server is not None:
             with contextlib.suppress(Exception):
