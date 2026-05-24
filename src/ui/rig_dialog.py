@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from i18n import _
+from rig.controller import CTCSS_PRESET_TEMPLATES
 
 # ---------------------------------------------------------------------------
 # Hamlib Python binding (imported only when available)
@@ -416,21 +417,11 @@ class RigSettingsDialog(QDialog):
     # Port scan / mode toggle
     # ------------------------------------------------------------------ #
 
-    # Preset CAT command templates for known rigs.
-    # {tone:03d} is replaced at runtime with the 3-digit CTCSS tone code index.
-    _CTCSS_PRESETS: dict[str, tuple[str, str]] = {
-        # FTX-1: CN10<code>; sets CTCSS tone on Sub VFO (P1=1 Sub, P2=0 CTCSS, P3=tone index)
-        # CN P1 P2 P3P3P3 ; → CN10000; for tone index 000
-        "ftx1": ("CN10{tone:03d};CT11;", "CT10;"),
-        # FT-991/FT-991A: CN0<code>; sets CTCSS code on VFO-A; CT1; enables encode
-        "ft991": ("CN0{tone:03d};CT1;", "CT0;"),
-    }
-
     def _on_ctcss_method_changed(self) -> None:
         """Enable/disable CAT command fields based on the selected CTCSS method."""
         method = self._ctcss_method_combo.currentData()
-        if method in self._CTCSS_PRESETS:
-            on_cmd, off_cmd = self._CTCSS_PRESETS[method]
+        if method in CTCSS_PRESET_TEMPLATES:
+            on_cmd, off_cmd = CTCSS_PRESET_TEMPLATES[method]
             self._ctcss_cat_on_edit.setText(on_cmd)
             self._ctcss_cat_off_edit.setText(off_cmd)
             self._ctcss_cat_on_edit.setEnabled(False)

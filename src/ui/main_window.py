@@ -55,6 +55,7 @@ from data.tle_manager import TLEManager
 from data.transmitter_manager import TransmitterManager
 from i18n import _
 from rig.controller import (
+    CTCSS_PRESET_TEMPLATES,
     HamlibDirectController,
     HamlibNetController,
     RigControlError,
@@ -1505,8 +1506,19 @@ class MainWindow(QMainWindow):
                     model_id=model_id, port=serial_port, baud_rate=baud
                 )
             self._ctcss_method = str(settings.get("ctcss_method", "hamlib"))
-            self._ctcss_cat_on = str(settings.get("ctcss_cat_on", ""))
-            self._ctcss_cat_off = str(settings.get("ctcss_cat_off", ""))
+            # For preset methods, always use the current authoritative template from
+            # CTCSS_PRESET_TEMPLATES rather than the DB value, which may be stale
+            # (e.g. saved before a preset command format correction).
+            if self._ctcss_method in CTCSS_PRESET_TEMPLATES:
+                self._ctcss_cat_on, self._ctcss_cat_off = CTCSS_PRESET_TEMPLATES[
+                    self._ctcss_method
+                ]
+            else:
+                self._ctcss_cat_on = str(settings.get("ctcss_cat_on", ""))
+                self._ctcss_cat_off = str(settings.get("ctcss_cat_off", ""))
+            logger.info(
+                "RigSettings: method=%s cat_on=%r", self._ctcss_method, self._ctcss_cat_on
+            )
             self._radio_control.set_rig(self._rig_controller)
             self._update_rig_label()
         except Exception as exc:
@@ -1518,6 +1530,10 @@ class MainWindow(QMainWindow):
 
     def _on_ctcss_send(self, tone_hz: float) -> None:
         """Send a CTCSS tone to the rig (background thread); errors shown in status bar."""
+        # Custom CAT methods bypass Hamlib CTCSS; re-send the CAT command instead.
+        if self._ctcss_method in self._CAT_CTCSS_METHODS:
+            self._send_ctcss_cat_to_rig()
+            return
         if self._rig_controller is None or not self._rig_controller.is_connected:
             return
         rig = self._rig_controller

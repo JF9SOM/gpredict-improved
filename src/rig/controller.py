@@ -86,6 +86,19 @@ def _build_mode_map() -> dict[str, int]:
 
 MODE_MAP: dict[str, int] = _build_mode_map()
 
+# Preset CAT command templates for known rigs that need custom CTCSS commands.
+# Keyed by ctcss_method value; value is (cat_on_template, cat_off_template).
+# {tone:03d} is replaced at send time with the 3-digit CTCSS_TABLE index.
+# Defined here so both the dialog (rig_dialog.py) and the loader
+# (_load_rig_settings in main_window.py) always use the same authoritative values,
+# avoiding stale DB entries after a preset correction.
+CTCSS_PRESET_TEMPLATES: dict[str, tuple[str, str]] = {
+    # FTX-1: CN P1 P2 P3P3P3; — P1=1 (Sub), P2=0 (CTCSS), P3=tone index 000-049
+    "ftx1": ("CN10{tone:03d};CT11;", "CT10;"),
+    # FT-991/FT-991A: CN0<code>; sets CTCSS code on VFO-A; CT1; enables encode
+    "ft991": ("CN0{tone:03d};CT1;", "CT0;"),
+}
+
 # CTCSS tone frequency (Hz) → rig index used in custom CAT commands.
 # Covers the standard 50-tone table; gaps are intentional (some tone numbers
 # are omitted from the FTX-1F documentation).
