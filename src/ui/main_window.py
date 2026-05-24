@@ -899,7 +899,15 @@ class MainWindow(QMainWindow):
                 self._current_ctcss_tone if self._current_ctcss_tone is not None else ctcss
             )
             self._radio_control.update_doppler(
-                dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss_display
+                dl_nom,
+                dl_corr,
+                dl_shift,
+                ul_nom,
+                ul_corr,
+                ul_shift,
+                mode,
+                ctcss_display,
+                ctcss,
             )
             # Transmit Doppler-corrected frequencies to the connected rig (regardless of elevation).
             # set_vfo_frequencies() involves TCP communication with recv(), so calling it on the

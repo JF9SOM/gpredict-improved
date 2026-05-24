@@ -223,8 +223,14 @@ class RadioControlWidget(QWidget):
         uplink_shift_hz: float | None,
         mode: str | None = None,
         ctcss_hz: float | None = None,
+        ctcss_btn_hz: float | None = None,
     ) -> None:
-        """Update the Doppler-corrected frequency and related parameters."""
+        """Update the Doppler-corrected frequency and related parameters.
+
+        ctcss_hz:     tone shown in the status label (may be a button-press override).
+        ctcss_btn_hz: tone shown on the Send button and emitted on press (always the
+                      transponder's actual tone); falls back to ctcss_hz when not given.
+        """
         if downlink_corrected_hz is not None:
             self._downlink_label.setText(f"{downlink_corrected_hz / 1e6:.6f} MHz")
             if downlink_shift_hz is not None:
@@ -247,14 +253,14 @@ class RadioControlWidget(QWidget):
             self._uplink_label.setText("—")
             self._uplink_doppler_label.setText("—")
 
-        self._current_ctcss_hz = ctcss_hz if (ctcss_hz and ctcss_hz > 0) else None
+        btn_hz = ctcss_btn_hz if ctcss_btn_hz is not None else ctcss_hz
+        self._current_ctcss_hz = btn_hz if (btn_hz and btn_hz > 0) else None
         self._mode_label.setText(mode if mode else "—")
-        if self._current_ctcss_hz:
-            self._ctcss_label.setText(f"{self._current_ctcss_hz:.1f} Hz")
-            self._ctcss_send_btn.setText(f"{self._current_ctcss_hz:.1f}Hz")
-        else:
-            self._ctcss_label.setText("—")
-            self._ctcss_send_btn.setText("—")
+        display_hz = ctcss_hz if (ctcss_hz and ctcss_hz > 0) else None
+        self._ctcss_label.setText(f"{display_hz:.1f} Hz" if display_hz else "—")
+        self._ctcss_send_btn.setText(
+            f"{self._current_ctcss_hz:.1f}Hz" if self._current_ctcss_hz else "—"
+        )
 
     def update_rotator(self, state: RotatorState | None) -> None:
         """Update the current rotator position."""
