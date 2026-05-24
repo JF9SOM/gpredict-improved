@@ -316,27 +316,57 @@ class TestHamlibDirectController:
 
     @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
     def test_send_mode_only_calls_set_mode_twice(self) -> None:
-        """send_mode_only calls set_mode for VFOA (DL) and VFOB (UL)."""
+        """send_mode_only opens a fresh Rig and calls set_mode for DL and UL."""
         ctrl = self._make_ctrl()
-        ctrl.connect()
-        mock_rig = MagicMock()
-        ctrl._rig = mock_rig
-        ctrl.send_mode_only("USB", "FM")
-        assert mock_rig.set_mode.call_count == 2
+        mock_rig_inst = MagicMock()
+        mock_hamlib = MagicMock()
+        mock_hamlib.Rig.return_value = mock_rig_inst
+        mock_hamlib.RIG_MODE_FM = 32
+        mock_hamlib.RIG_MODE_USB = 4
+        mock_hamlib.RIG_MODE_LSB = 8
+        mock_hamlib.RIG_MODE_CW = 2
+        mock_hamlib.RIG_MODE_CWR = 128
+        mock_hamlib.RIG_MODE_AM = 1
+        mock_hamlib.RIG_MODE_PKTFM = 4096
+        mock_hamlib.RIG_MODE_PKTUSB = 2048
+        mock_hamlib.RIG_VFO_A = 1
+        mock_hamlib.RIG_VFO_B = 2
+        with (
+            patch("rig.controller.HAMLIB_AVAILABLE", True),
+            patch.dict("sys.modules", {"Hamlib": mock_hamlib}),
+        ):
+            ctrl.send_mode_only("USB", "FM")
+        assert mock_rig_inst.set_mode.call_count == 2
 
     @pytest.mark.skipif(HAMLIB_AVAILABLE, reason="mock-only test")
     def test_send_mode_only_correct_mode_constants(self) -> None:
-        """set_mode receives the correct Hamlib mode constants for DL and UL."""
+        """set_mode receives the correct Hamlib mode constants for DL and UL.
+
+        Python binding arg order is set_mode(mode, passband, vfo), so mode is args[0].
+        """
         ctrl = self._make_ctrl()
-        ctrl.connect()
-        mock_rig = MagicMock()
-        ctrl._rig = mock_rig
-        ctrl.send_mode_only("USB", "FM")
-        dl_hamlib = ctrl._mode_to_hamlib("USB")  # RIG_MODE_USB = 2 in mock
-        ul_hamlib = ctrl._mode_to_hamlib("FM")  # RIG_MODE_FM  = 1 in mock
-        called_modes = {call.args[1] for call in mock_rig.set_mode.call_args_list}
-        assert dl_hamlib in called_modes
-        assert ul_hamlib in called_modes
+        mock_rig_inst = MagicMock()
+        mock_hamlib = MagicMock()
+        mock_hamlib.Rig.return_value = mock_rig_inst
+        mock_hamlib.RIG_MODE_FM = 32
+        mock_hamlib.RIG_MODE_USB = 4
+        mock_hamlib.RIG_MODE_LSB = 8
+        mock_hamlib.RIG_MODE_CW = 2
+        mock_hamlib.RIG_MODE_CWR = 128
+        mock_hamlib.RIG_MODE_AM = 1
+        mock_hamlib.RIG_MODE_PKTFM = 4096
+        mock_hamlib.RIG_MODE_PKTUSB = 2048
+        mock_hamlib.RIG_VFO_A = 1
+        mock_hamlib.RIG_VFO_B = 2
+        with (
+            patch("rig.controller.HAMLIB_AVAILABLE", True),
+            patch.dict("sys.modules", {"Hamlib": mock_hamlib}),
+        ):
+            ctrl.send_mode_only("USB", "FM")
+        # mode is args[0] per Python Hamlib binding: set_mode(mode, passband, vfo)
+        called_modes = {call.args[0] for call in mock_rig_inst.set_mode.call_args_list}
+        assert 4 in called_modes   # RIG_MODE_USB = 4
+        assert 32 in called_modes  # RIG_MODE_FM  = 32
 
 
 # ---------------------------------------------------------------------------
