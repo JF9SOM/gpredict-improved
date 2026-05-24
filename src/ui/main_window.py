@@ -272,6 +272,9 @@ class MainWindow(QMainWindow):
         self._tune_ul_override: float | None = None
         # L button: when True, uplink is slaved to downlink.
         self._trsp_lock: bool = False
+        # Override for CTCSS label: set when a button is pressed, reset on transponder change.
+        # None -> show the transmitter's ctcss_tone; float -> persist the last-sent tone.
+        self._current_ctcss_tone: float | None = None
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
@@ -892,8 +895,11 @@ class MainWindow(QMainWindow):
                 ul_shift = None
                 self._tune_ul_override = None
 
+            ctcss_display = (
+                self._current_ctcss_tone if self._current_ctcss_tone is not None else ctcss
+            )
             self._radio_control.update_doppler(
-                dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss
+                dl_nom, dl_corr, dl_shift, ul_nom, ul_corr, ul_shift, mode, ctcss_display
             )
             # Transmit Doppler-corrected frequencies to the connected rig (regardless of elevation).
             # set_vfo_frequencies() involves TCP communication with recv(), so calling it on the
@@ -1155,6 +1161,7 @@ class MainWindow(QMainWindow):
     def _on_transmitter_changed(self, xpdr: Any) -> None:
         """Update _current_transmitter and refresh the display on transponder selection change."""
         self._current_transmitter = xpdr if isinstance(xpdr, dict) else None
+        self._current_ctcss_tone = None  # revert to transponder tone on selection change
         if self._current_transmitter:
             dl = self._current_transmitter.get("downlink_low")
             ul = self._current_transmitter.get("uplink_low")
@@ -1548,6 +1555,7 @@ class MainWindow(QMainWindow):
 
     def _on_ctcss_send(self, tone_hz: float) -> None:
         """Send a CTCSS tone to the rig (background thread); errors shown in status bar."""
+        self._current_ctcss_tone = tone_hz  # persist label until next transponder change
         # Custom CAT methods bypass Hamlib CTCSS; route through send_ctcss_cat().
         # Pass tone_hz explicitly so Activate (74.4 Hz) overrides the transmitter tone.
         if self._ctcss_method in self._CAT_CTCSS_METHODS:
