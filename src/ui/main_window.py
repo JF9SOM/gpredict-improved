@@ -1189,19 +1189,27 @@ class MainWindow(QMainWindow):
     # Methods that use custom CAT commands for CTCSS (not handled by Hamlib itself).
     _CAT_CTCSS_METHODS: frozenset[str] = frozenset({"custom_cat", "ftx1", "ft991"})
 
-    def _send_ctcss_cat_to_rig(self) -> None:
+    def _send_ctcss_cat_to_rig(self, tone_hz: float | None = None) -> None:
         """Send custom CAT CTCSS command for methods that bypass Hamlib CTCSS.
 
         Handles "custom_cat", "ftx1", and "ft991" methods.
         Runs in a background thread so the UI is not blocked.
+
+        Args:
+            tone_hz: Tone to send in Hz.  When None (automatic mode — called on
+                     transponder change), reads ctcss_tone from _current_transmitter.
+                     When explicitly provided (button press), the caller's value
+                     takes precedence so the Activate button can force 74.4 Hz
+                     regardless of what the transmitter record says.
         """
         if self._ctcss_method not in self._CAT_CTCSS_METHODS:
             return
         if self._rig_controller is None:
             return
-        tone_hz: float = 0.0
-        if self._current_transmitter is not None:
-            tone_hz = float(self._current_transmitter.get("ctcss_tone") or 0.0)
+        if tone_hz is None:
+            tone_hz = float(
+                (self._current_transmitter or {}).get("ctcss_tone") or 0.0
+            )
         rig = self._rig_controller
         cat_on = self._ctcss_cat_on
         cat_off = self._ctcss_cat_off
@@ -1530,9 +1538,10 @@ class MainWindow(QMainWindow):
 
     def _on_ctcss_send(self, tone_hz: float) -> None:
         """Send a CTCSS tone to the rig (background thread); errors shown in status bar."""
-        # Custom CAT methods bypass Hamlib CTCSS; re-send the CAT command instead.
+        # Custom CAT methods bypass Hamlib CTCSS; route through send_ctcss_cat().
+        # Pass tone_hz explicitly so Activate (74.4 Hz) overrides the transmitter tone.
         if self._ctcss_method in self._CAT_CTCSS_METHODS:
-            self._send_ctcss_cat_to_rig()
+            self._send_ctcss_cat_to_rig(tone_hz=tone_hz)
             return
         if self._rig_controller is None or not self._rig_controller.is_connected:
             return
