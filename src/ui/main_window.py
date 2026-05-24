@@ -1178,14 +1178,23 @@ class MainWindow(QMainWindow):
         if rig.is_connected:
             self._disconnect_rig()
         rig.send_mode_only(dl_mode, ul_mode)
+        logger.info(
+            "CTCSS: tone=%s method=%s cat_on=%r",
+            self._current_transmitter.get("ctcss_tone") if self._current_transmitter else None,
+            self._ctcss_method,
+            self._ctcss_cat_on,
+        )
+
+    # Methods that use custom CAT commands for CTCSS (not handled by Hamlib itself).
+    _CAT_CTCSS_METHODS: frozenset[str] = frozenset({"custom_cat", "ftx1", "ft991"})
 
     def _send_ctcss_cat_to_rig(self) -> None:
-        """Send custom CAT CTCSS command when ctcss_method='custom_cat'.
+        """Send custom CAT CTCSS command for methods that bypass Hamlib CTCSS.
 
+        Handles "custom_cat", "ftx1", and "ft991" methods.
         Runs in a background thread so the UI is not blocked.
-        Only fires when the current transponder has a CTCSS tone set.
         """
-        if self._ctcss_method != "custom_cat":
+        if self._ctcss_method not in self._CAT_CTCSS_METHODS:
             return
         if self._rig_controller is None:
             return
