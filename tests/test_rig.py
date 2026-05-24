@@ -365,7 +365,7 @@ class TestHamlibDirectController:
             ctrl.send_mode_only("USB", "FM")
         # mode is args[0] per Python Hamlib binding: set_mode(mode, passband, vfo)
         called_modes = {call.args[0] for call in mock_rig_inst.set_mode.call_args_list}
-        assert 4 in called_modes   # RIG_MODE_USB = 4
+        assert 4 in called_modes  # RIG_MODE_USB = 4
         assert 32 in called_modes  # RIG_MODE_FM  = 32
 
 
