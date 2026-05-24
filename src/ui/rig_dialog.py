@@ -419,8 +419,9 @@ class RigSettingsDialog(QDialog):
     # Preset CAT command templates for known rigs.
     # {tone:03d} is replaced at runtime with the 3-digit CTCSS tone code index.
     _CTCSS_PRESETS: dict[str, tuple[str, str]] = {
-        # FTX-1: CN1<code>;CT11; to enable CTCSS encode+decode on Sub VFO; CT10; to disable
-        "ftx1": ("CN1{tone:03d};CT11;", "CT10;"),
+        # FTX-1: CN10<code>; sets CTCSS tone on Sub VFO (P1=1 Sub, P2=0 CTCSS, P3=tone index)
+        # CN P1 P2 P3P3P3 ; → CN10000; for tone index 000
+        "ftx1": ("CN10{tone:03d};CT11;", "CT10;"),
         # FT-991/FT-991A: CN0<code>; sets CTCSS code on VFO-A; CT1; enables encode
         "ft991": ("CN0{tone:03d};CT1;", "CT0;"),
     }

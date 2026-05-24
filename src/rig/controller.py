@@ -1127,11 +1127,16 @@ class HamlibNetController(RigController):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
             sock.connect((self._host, self._port))
+            # Use a short recv timeout: the w command may return "?;" (rig CAT error),
+            # empty string, or RPRT 0. We only care that the bytes were sent, not the
+            # rig's response, so drain the buffer without blocking on slow rigs.
+            sock.settimeout(1.0)
             for part in parts:
                 cmd = f"w {part};"
                 logger.info("RigNet.send_ctcss_cat: sending %r", cmd)
                 sock.sendall((cmd + "\n").encode())
-                sock.recv(64)
+                with contextlib.suppress(OSError):
+                    sock.recv(256)
             sock.close()
         except Exception as exc:
             logger.error("RigNet.send_ctcss_cat: %s", exc)
