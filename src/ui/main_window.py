@@ -99,10 +99,12 @@ _MODE_INVERT: dict[str, str] = {
 }
 
 
-# Oscar designator prefixes (e.g. AO-7, FO-29, IO-86, QO-100, RS-44)
+# Oscar designator prefixes (e.g. AO-7, FO-29, IO-86, QO-100, RS-44, RS95S)
+# Hyphen is optional to handle SatNOGS alt_names stored without it (e.g. "RS95S").
+# Two capturing groups: (prefix, number+suffix) so the display can normalise to "RS-95S".
 _OSCAR_RE = re.compile(
-    r"\b(?:AO|BO|CO|DO|EO|FO|GO|HO|IO|JO|KO|LO|MO|NO|PO|QO|RS|SO|TO|UO|VO|XO|ZO)"
-    r"-\d+[A-Z]?\b",
+    r"\b((?:AO|BO|CO|DO|EO|FO|GO|HO|IO|JO|KO|LO|MO|NO|PO|QO|RS|SO|TO|UO|VO|XO|ZO))"
+    r"-?(\d+[A-Z]?)\b",
     re.IGNORECASE,
 )
 
@@ -626,9 +628,11 @@ class MainWindow(QMainWindow):
             name_upper = d["name"].upper()
             for alt in alt_list:
                 m = _OSCAR_RE.search(alt)
-                if m and m.group(0).upper() not in name_upper:
-                    oscar_suffix = f" ({m.group(0).upper()})"
-                    break
+                if m:
+                    oscar_str = f"{m.group(1)}-{m.group(2)}".upper()
+                    if oscar_str not in name_upper:
+                        oscar_suffix = f" ({oscar_str})"
+                        break
             item = QListWidgetItem(prefix + d["name"] + oscar_suffix)
             item.setData(Qt.ItemDataRole.UserRole, d["norad"])
 
