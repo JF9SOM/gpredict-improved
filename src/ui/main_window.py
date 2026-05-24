@@ -299,6 +299,7 @@ class MainWindow(QMainWindow):
         self._radio_control.tune_requested.connect(self._on_tune_requested)
         self._radio_control.lock_changed.connect(self._on_lock_changed)
         self._radio_control.ctcss_send_requested.connect(self._on_ctcss_send)
+        self._radio_control.ctcss_activate_requested.connect(self._on_ctcss_activate)
         self._restore_satellite_filter()
         self._load_satellites()
         self._load_rig_settings()
@@ -1560,6 +1561,10 @@ class MainWindow(QMainWindow):
     def _on_lock_changed(self, locked: bool) -> None:
         """Update the _trsp_lock flag when the L button is toggled."""
         self._trsp_lock = locked
+
+    def _on_ctcss_activate(self) -> None:
+        """SO-50: send the 74.4 Hz activation tone."""
+        self._on_ctcss_send(74.4)
 
     def _on_ctcss_send(self, tone_hz: float) -> None:
         """Send a CTCSS tone to the rig (background thread); errors shown in status bar."""
