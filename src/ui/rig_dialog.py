@@ -338,6 +338,8 @@ class RigSettingsDialog(QDialog):
         ctcss_form = QFormLayout(ctcss_group)
         self._ctcss_method_combo = QComboBox()
         self._ctcss_method_combo.addItem(_("Hamlib standard"), "hamlib")
+        self._ctcss_method_combo.addItem(_("FTX-1 (Custom CAT)"), "ftx1")
+        self._ctcss_method_combo.addItem(_("FT-991 (Custom CAT)"), "ft991")
         self._ctcss_method_combo.addItem(_("Custom CAT command"), "custom_cat")
         self._ctcss_method_combo.currentIndexChanged.connect(self._on_ctcss_method_changed)
         ctcss_form.addRow(_("CTCSS Method:"), self._ctcss_method_combo)
@@ -414,11 +416,32 @@ class RigSettingsDialog(QDialog):
     # Port scan / mode toggle
     # ------------------------------------------------------------------ #
 
+    # Preset CAT command templates for known rigs.
+    # {tone:03d} is replaced at runtime with the 3-digit CTCSS tone code index.
+    _CTCSS_PRESETS: dict[str, tuple[str, str]] = {
+        # FTX-1: CN1<code>;CT11; to enable CTCSS encode+decode on Sub VFO; CT10; to disable
+        "ftx1": ("CN1{tone:03d};CT11;", "CT10;"),
+        # FT-991/FT-991A: CN0<code>; sets CTCSS code on VFO-A; CT1; enables encode
+        "ft991": ("CN0{tone:03d};CT1;", "CT0;"),
+    }
+
     def _on_ctcss_method_changed(self) -> None:
         """Enable/disable CAT command fields based on the selected CTCSS method."""
-        is_custom = self._ctcss_method_combo.currentData() == "custom_cat"
-        self._ctcss_cat_on_edit.setEnabled(is_custom)
-        self._ctcss_cat_off_edit.setEnabled(is_custom)
+        method = self._ctcss_method_combo.currentData()
+        if method in self._CTCSS_PRESETS:
+            on_cmd, off_cmd = self._CTCSS_PRESETS[method]
+            self._ctcss_cat_on_edit.setText(on_cmd)
+            self._ctcss_cat_off_edit.setText(off_cmd)
+            self._ctcss_cat_on_edit.setEnabled(False)
+            self._ctcss_cat_off_edit.setEnabled(False)
+        elif method == "custom_cat":
+            self._ctcss_cat_on_edit.setEnabled(True)
+            self._ctcss_cat_off_edit.setEnabled(True)
+        else:  # "hamlib"
+            self._ctcss_cat_on_edit.setText("")
+            self._ctcss_cat_off_edit.setText("")
+            self._ctcss_cat_on_edit.setEnabled(False)
+            self._ctcss_cat_off_edit.setEnabled(False)
 
     def _on_mode_toggled(self, _checked: bool) -> None:
         is_direct = self._radio_direct.isChecked()
