@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 from core.engine import DopplerCalculator, Observation, PassPredictor, SatelliteEngine
 from core.location import LocationManager
 from data.amsat_status import AMSATStatusFetcher
+from data.ctcss_db import get_ctcss
 from data.tle_manager import TLEManager
 from data.transmitter_manager import TransmitterManager
 from i18n import _
@@ -275,6 +276,10 @@ class MainWindow(QMainWindow):
         # Override for CTCSS label: set when a button is pressed, reset on transponder change.
         # None -> show the transmitter's ctcss_tone; float -> persist the last-sent tone.
         self._current_ctcss_tone: float | None = None
+        # Resolved CTCSS tone for the current transmitter (SatNOGS or CTCSS_DB fallback).
+        self._ctcss_tone_hz: float | None = None
+        # Activation tone for the current satellite (from CTCSS_DB; None if not applicable).
+        self._ctcss_activation_hz: float | None = None
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
@@ -859,7 +864,6 @@ class MainWindow(QMainWindow):
             ul_nom = self._current_transmitter.get("uplink_low")
             invert = bool(self._current_transmitter.get("invert", False))
             mode = self._current_transmitter.get("mode")
-            ctcss = self._current_transmitter.get("ctcss_tone")
             dl_corr, dl_shift = (
                 DopplerCalculator.correct_downlink(float(dl_nom), rr)
                 if dl_nom is not None
@@ -897,7 +901,9 @@ class MainWindow(QMainWindow):
                 self._tune_ul_override = None
 
             ctcss_display = (
-                self._current_ctcss_tone if self._current_ctcss_tone is not None else ctcss
+                self._current_ctcss_tone
+                if self._current_ctcss_tone is not None
+                else self._ctcss_tone_hz
             )
             self._radio_control.update_doppler(
                 dl_nom,
@@ -908,7 +914,6 @@ class MainWindow(QMainWindow):
                 ul_shift,
                 mode,
                 ctcss_display,
-                ctcss,
             )
             # Transmit Doppler-corrected frequencies to the connected rig (regardless of elevation).
             # set_vfo_frequencies() involves TCP communication with recv(), so calling it on the
@@ -1175,9 +1180,25 @@ class MainWindow(QMainWindow):
             dl = self._current_transmitter.get("downlink_low")
             ul = self._current_transmitter.get("uplink_low")
             mode = self._current_transmitter.get("mode")
-            ctcss = self._current_transmitter.get("ctcss_tone")
-            self._radio_control.update_doppler(dl, dl, None, ul, ul, None, mode, ctcss)
+            satnogs_tone = self._current_transmitter.get("ctcss_tone")
+            db_info = get_ctcss(self._selected_norad) if self._selected_norad else None
+            # SatNOGS ctcss_tone takes priority; DB tone is the fallback.
+            tone_hz: float | None = (
+                float(satnogs_tone)
+                if satnogs_tone
+                else (db_info["tone_hz"] if db_info and db_info.get("tone_hz") else None)
+            )
+            activation_hz: float | None = (
+                db_info["activation_hz"] if db_info and db_info.get("activation_hz") else None
+            )
+            self._ctcss_tone_hz = tone_hz
+            self._ctcss_activation_hz = activation_hz
+            self._radio_control.update_ctcss(tone_hz, activation_hz)
+            self._radio_control.update_doppler(dl, dl, None, ul, ul, None, mode, tone_hz)
         else:
+            self._ctcss_tone_hz = None
+            self._ctcss_activation_hz = None
+            self._radio_control.update_ctcss(None, None)
             self._radio_control.update_doppler(None, None, None, None, None, None)
         self._send_mode_only_to_rig()
         self._send_ctcss_cat_to_rig()
@@ -1239,7 +1260,7 @@ class MainWindow(QMainWindow):
         if self._rig_controller is None:
             return
         if tone_hz is None:
-            tone_hz = float((self._current_transmitter or {}).get("ctcss_tone") or 0.0)
+            tone_hz = float(self._ctcss_tone_hz or 0.0)
         rig = self._rig_controller
         cat_on = self._ctcss_cat_on
         cat_off = self._ctcss_cat_off
@@ -1563,8 +1584,9 @@ class MainWindow(QMainWindow):
         self._trsp_lock = locked
 
     def _on_ctcss_activate(self) -> None:
-        """SO-50: send the 74.4 Hz activation tone."""
-        self._on_ctcss_send(74.4)
+        """Send the satellite's activation tone (tone_hz from CTCSS_DB)."""
+        if self._ctcss_activation_hz is not None:
+            self._on_ctcss_send(self._ctcss_activation_hz)
 
     def _on_ctcss_send(self, tone_hz: float) -> None:
         """Send a CTCSS tone to the rig (background thread); errors shown in status bar."""

@@ -39,9 +39,7 @@ class RadioControlWidget(QWidget):
     lock_changed: Signal = Signal(bool)
     rig_connected: Signal = Signal()
     ctcss_send_requested: Signal = Signal(float)
-    ctcss_activate_requested: Signal = Signal()  # SO-50 74.4 Hz activation tone
-
-    _SO50_NORAD: int = 27607
+    ctcss_activate_requested: Signal = Signal()  # activation-tone button pressed
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -49,7 +47,7 @@ class RadioControlWidget(QWidget):
         self._rotator: RotatorController | None = None
         self._transmitters: list[dict[str, Any]] = []
         self._current_ctcss_hz: float | None = None
-        self._norad: int | None = None
+        self._ctcss_activation_hz: float | None = None
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -182,14 +180,11 @@ class RadioControlWidget(QWidget):
 
     def set_satellite(self, norad: int, name: str) -> None:
         """Set the selected satellite."""
-        self._norad = norad
         self._sat_name_label.setText(name)
         self._norad_label.setText(str(norad))
-        self._update_ctcss_buttons()
 
     def clear_satellite(self) -> None:
         """Clear satellite info and frequency display."""
-        self._norad = None
         self._sat_name_label.setText("—")
         self._norad_label.setText("—")
         self._xpdr_combo.blockSignals(True)
@@ -198,6 +193,7 @@ class RadioControlWidget(QWidget):
         self._transmitters = []
         self._xpdr_combo.blockSignals(False)
         self._clear_frequency()
+        self.update_ctcss(None, None)
 
     def set_transmitters(
         self,
@@ -232,13 +228,11 @@ class RadioControlWidget(QWidget):
         uplink_shift_hz: float | None,
         mode: str | None = None,
         ctcss_hz: float | None = None,
-        ctcss_btn_hz: float | None = None,
     ) -> None:
-        """Update the Doppler-corrected frequency and related parameters.
+        """Update the Doppler-corrected frequency and status label.
 
-        ctcss_hz:     tone shown in the status label (may be a button-press override).
-        ctcss_btn_hz: tone shown on the Send button and emitted on press (always the
-                      transponder's actual tone); falls back to ctcss_hz when not given.
+        ctcss_hz: value shown in the CTCSS status label (may be an override set by
+                  a button press; the Send button tone is managed by update_ctcss()).
         """
         if downlink_corrected_hz is not None:
             self._downlink_label.setText(f"{downlink_corrected_hz / 1e6:.6f} MHz")
@@ -262,12 +256,9 @@ class RadioControlWidget(QWidget):
             self._uplink_label.setText("—")
             self._uplink_doppler_label.setText("—")
 
-        btn_hz = ctcss_btn_hz if ctcss_btn_hz is not None else ctcss_hz
-        self._current_ctcss_hz = btn_hz if (btn_hz and btn_hz > 0) else None
         self._mode_label.setText(mode if mode else "—")
         display_hz = ctcss_hz if (ctcss_hz and ctcss_hz > 0) else None
         self._ctcss_label.setText(f"{display_hz:.1f} Hz" if display_hz else "—")
-        self._update_ctcss_buttons()
 
     def update_rotator(self, state: RotatorState | None) -> None:
         """Update the current rotator position."""
@@ -306,7 +297,6 @@ class RadioControlWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     def _clear_frequency(self) -> None:
-        self._current_ctcss_hz = None
         for label in (
             self._downlink_label,
             self._downlink_doppler_label,
@@ -316,7 +306,6 @@ class RadioControlWidget(QWidget):
             self._ctcss_label,
         ):
             label.setText("—")
-        self._update_ctcss_buttons()
 
     @staticmethod
     def _xpdr_label(xpdr: dict[str, Any]) -> str:
@@ -327,13 +316,22 @@ class RadioControlWidget(QWidget):
         desc = xpdr.get("description", "?")
         return f"{desc}  [{dl_str}  {xtype}]"
 
+    def update_ctcss(self, tone_hz: float | None, activation_hz: float | None) -> None:
+        """Update CTCSS button state from the current transponder and satellite DB info."""
+        self._current_ctcss_hz = tone_hz if (tone_hz and tone_hz > 0) else None
+        self._ctcss_activation_hz = activation_hz if (activation_hz and activation_hz > 0) else None
+        self._update_ctcss_buttons()
+
     def _update_ctcss_buttons(self) -> None:
-        """Show/hide and label CTCSS buttons based on satellite and transponder tone."""
+        """Show/hide and label CTCSS buttons based on current tone and activation tone."""
         has_tone = self._current_ctcss_hz is not None
         self._ctcss_send_btn.setVisible(has_tone)
         if has_tone:
             self._ctcss_send_btn.setText(f"{self._current_ctcss_hz:.1f} Hz")
-        self._ctcss_activate_btn.setVisible(self._norad == self._SO50_NORAD)
+        has_activation = self._ctcss_activation_hz is not None
+        self._ctcss_activate_btn.setVisible(has_activation)
+        if has_activation:
+            self._ctcss_activate_btn.setText(f"{self._ctcss_activation_hz:.1f} Hz (Activation)")
 
     def _on_xpdr_changed(self, index: int) -> None:
         if 0 <= index < len(self._transmitters):
@@ -399,8 +397,9 @@ class RadioControlWidget(QWidget):
             self.ctcss_send_requested.emit(self._current_ctcss_hz)
 
     def _on_ctcss_activate(self) -> None:
-        """SO-50: transmit 74.4 Hz activation tone to start the 10-minute timer."""
-        self._ctcss_label.setText("74.4 Hz")
+        """Transmit the satellite's activation tone (e.g. SO-50: 74.4 Hz)."""
+        if self._ctcss_activation_hz is not None:
+            self._ctcss_label.setText(f"{self._ctcss_activation_hz:.1f} Hz")
         self.ctcss_activate_requested.emit()
 
     def _on_connect_rotator(self) -> None:
