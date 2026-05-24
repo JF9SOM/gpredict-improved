@@ -18,6 +18,7 @@ import contextlib
 import importlib.util
 import logging
 import os
+import re
 import socket
 import sys
 import threading
@@ -910,7 +911,9 @@ class HamlibNetController(RigController):
             return self._rig_model
         try:
             resp = self._cmd("w ID;")
-            if "0670" in resp or "0570" in resp:
+            logger.info("RigNet: ID raw response=%r", resp)
+            m = re.search(r"ID(\d{4})", resp)
+            if m and m.group(1) in ("0570", "0670"):
                 self._rig_model = "ft991"
             else:
                 self._rig_model = "generic"
