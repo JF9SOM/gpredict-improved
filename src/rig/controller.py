@@ -1099,11 +1099,15 @@ class HamlibNetController(RigController):
         cat_on_template: str,
         cat_off_template: str,
     ) -> None:
-        """Send a custom CTCSS CAT command via rigctld's 'w' (raw) passthrough.
+        """Send a custom CTCSS CAT command via a fresh TCP connection to rigctld.
 
-        Each ';'-separated sub-command is sent as a separate 'w' command so
-        rigctld can forward it verbatim to the rig's serial port.
-        Silently ignores errors (best-effort).
+        Opens an independent socket (same pattern as send_mode_only()) so this
+        works regardless of the main connection state — _send_mode_only_to_rig()
+        disconnects the main socket before calling send_mode_only(), which would
+        leave self._sock=None and silently discard commands sent via _cmd().
+
+        Each ';'-separated sub-command is wrapped as 'w <part>;' and forwarded
+        verbatim to the rig's serial port by rigctld.
         """
         if tone_hz > 0 and cat_on_template:
             tone_number = CTCSS_TABLE.get(tone_hz)
@@ -1115,10 +1119,22 @@ class HamlibNetController(RigController):
             template = cat_off_template
         else:
             return
-        for sub in template.split(";"):
-            sub = sub.strip()
-            if sub:
-                self._cmd(f"w {sub};")
+        parts = [p.strip() for p in template.split(";") if p.strip()]
+        if not parts:
+            return
+        logger.info("RigNet.send_ctcss_cat: tone_hz=%s cmd=%r", tone_hz, template)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self._TIMEOUT)
+            sock.connect((self._host, self._port))
+            for part in parts:
+                cmd = f"w {part};"
+                logger.info("RigNet.send_ctcss_cat: sending %r", cmd)
+                sock.sendall((cmd + "\n").encode())
+                sock.recv(64)
+            sock.close()
+        except Exception as exc:
+            logger.error("RigNet.send_ctcss_cat: %s", exc)
 
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
         """Set mode on both VFOs via an independent TCP connection.
