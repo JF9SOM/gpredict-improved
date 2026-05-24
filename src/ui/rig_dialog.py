@@ -333,6 +333,23 @@ class RigSettingsDialog(QDialog):
         type_form.addRow(_("Radio Type:"), self._radio_type_combo)
         layout.addWidget(type_group)
 
+        # --- CTCSS Tone Settings ---
+        ctcss_group = QGroupBox(_("CTCSS Tone Settings"))
+        ctcss_form = QFormLayout(ctcss_group)
+        self._ctcss_method_combo = QComboBox()
+        self._ctcss_method_combo.addItem(_("Hamlib standard"), "hamlib")
+        self._ctcss_method_combo.addItem(_("Custom CAT command"), "custom_cat")
+        self._ctcss_method_combo.currentIndexChanged.connect(self._on_ctcss_method_changed)
+        ctcss_form.addRow(_("CTCSS Method:"), self._ctcss_method_combo)
+        self._ctcss_cat_on_edit = QLineEdit()
+        self._ctcss_cat_on_edit.setPlaceholderText(_("e.g. CN1{tone:03d};CT11;"))
+        ctcss_form.addRow(_("CAT ON command:"), self._ctcss_cat_on_edit)
+        self._ctcss_cat_off_edit = QLineEdit()
+        self._ctcss_cat_off_edit.setPlaceholderText(_("e.g. CT10;"))
+        ctcss_form.addRow(_("CAT OFF command:"), self._ctcss_cat_off_edit)
+        layout.addWidget(ctcss_group)
+        self._on_ctcss_method_changed()
+
         # --- Status ---
         self._status_label = QLabel("")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -396,6 +413,12 @@ class RigSettingsDialog(QDialog):
     # ------------------------------------------------------------------ #
     # Port scan / mode toggle
     # ------------------------------------------------------------------ #
+
+    def _on_ctcss_method_changed(self) -> None:
+        """Enable/disable CAT command fields based on the selected CTCSS method."""
+        is_custom = self._ctcss_method_combo.currentData() == "custom_cat"
+        self._ctcss_cat_on_edit.setEnabled(is_custom)
+        self._ctcss_cat_off_edit.setEnabled(is_custom)
 
     def _on_mode_toggled(self, _checked: bool) -> None:
         is_direct = self._radio_direct.isChecked()
@@ -467,6 +490,15 @@ class RigSettingsDialog(QDialog):
                 self._radio_type_combo.setCurrentIndex(i)
                 break
 
+        ctcss_method = str(s.get("ctcss_method", "hamlib"))
+        for i in range(self._ctcss_method_combo.count()):
+            if self._ctcss_method_combo.itemData(i) == ctcss_method:
+                self._ctcss_method_combo.setCurrentIndex(i)
+                break
+        self._ctcss_cat_on_edit.setText(str(s.get("ctcss_cat_on", "")))
+        self._ctcss_cat_off_edit.setText(str(s.get("ctcss_cat_off", "")))
+        self._on_ctcss_method_changed()
+
     def _save_settings(self) -> None:
         model_id: int = self._model_combo.currentData() or 1
         s = {
@@ -477,6 +509,9 @@ class RigSettingsDialog(QDialog):
             "host": self._host_edit.text(),
             "net_port": self._net_port_spin.value(),
             "radio_type": self._radio_type_combo.currentData() or "full_duplex",
+            "ctcss_method": self._ctcss_method_combo.currentData() or "hamlib",
+            "ctcss_cat_on": self._ctcss_cat_on_edit.text(),
+            "ctcss_cat_off": self._ctcss_cat_off_edit.text(),
         }
         if hasattr(self._conn, "execute"):
             self._conn.execute(

@@ -86,6 +86,61 @@ def _build_mode_map() -> dict[str, int]:
 
 MODE_MAP: dict[str, int] = _build_mode_map()
 
+# CTCSS tone frequency (Hz) → rig index used in custom CAT commands.
+# Covers the standard 50-tone table; gaps are intentional (some tone numbers
+# are omitted from the FTX-1F documentation).
+CTCSS_TABLE: dict[float, int] = {
+    67.0: 0,
+    69.3: 1,
+    71.9: 2,
+    74.4: 3,
+    77.0: 4,
+    79.7: 5,
+    82.5: 6,
+    85.4: 7,
+    88.5: 8,
+    91.5: 9,
+    94.8: 10,
+    97.4: 11,
+    100.0: 12,
+    103.5: 13,
+    107.2: 14,
+    110.9: 15,
+    114.8: 16,
+    118.8: 17,
+    123.0: 18,
+    127.3: 19,
+    131.8: 20,
+    136.5: 21,
+    141.3: 22,
+    146.2: 23,
+    151.4: 24,
+    156.7: 25,
+    159.8: 26,
+    162.2: 27,
+    165.5: 28,
+    167.9: 29,
+    171.3: 30,
+    173.8: 31,
+    177.3: 32,
+    183.5: 34,
+    186.2: 35,
+    189.9: 36,
+    192.8: 37,
+    196.6: 38,
+    199.5: 39,
+    203.5: 40,
+    206.5: 41,
+    210.7: 42,
+    218.1: 43,
+    225.7: 44,
+    229.1: 45,
+    233.6: 46,
+    241.8: 47,
+    250.3: 48,
+    254.1: 49,
+}
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -221,6 +276,23 @@ class RigController(ABC):
     @abstractmethod
     def set_dcs_code(self, code: int) -> bool:
         """Set the DCS code (0 to disable)."""
+
+    # -- Custom CAT CTCSS --
+
+    def send_ctcss_cat(  # noqa: B027
+        self,
+        tone_hz: float,
+        cat_on_template: str,
+        cat_off_template: str,
+    ) -> None:
+        """Send a custom CAT CTCSS command bypassing Hamlib's CTCSS API.
+
+        Looks up tone_hz in CTCSS_TABLE to get the rig index, then formats
+        cat_on_template with {tone=index} and splits on ';' to send each
+        sub-command individually.  Sends cat_off_template when tone_hz <= 0
+        or the tone is not in CTCSS_TABLE.  Default implementation is a no-op;
+        subclasses override to send via their transport layer.
+        """
 
     # -- VFO --
 
@@ -579,6 +651,43 @@ class HamlibDirectController(RigController):
             if rig is not None:
                 with contextlib.suppress(Exception):
                     rig.close()
+
+    def send_ctcss_cat(
+        self,
+        tone_hz: float,
+        cat_on_template: str,
+        cat_off_template: str,
+    ) -> None:
+        """Send a custom CTCSS CAT command directly to the serial port.
+
+        Writes each ';'-separated sub-command to the serial device using a
+        direct file write (equivalent to printf '...' > /dev/FTX1CAT).
+        Silently ignores errors (best-effort).
+        """
+        if tone_hz > 0 and cat_on_template:
+            tone_number = CTCSS_TABLE.get(tone_hz)
+            if tone_number is None:
+                logger.warning("RigDirect.send_ctcss_cat: %.1f Hz not in CTCSS_TABLE", tone_hz)
+                return
+            template = cat_on_template.format(tone=tone_number)
+        elif cat_off_template:
+            template = cat_off_template
+        else:
+            return
+        logger.info("RigDirect: send_ctcss_cat template=%r port=%s", template, self._port)
+        for sub in template.split(";"):
+            sub = sub.strip()
+            if not sub:
+                continue
+            raw = (sub + ";").encode()
+            try:
+                fd = os.open(self._port, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+                try:
+                    os.write(fd, raw)
+                finally:
+                    os.close(fd)
+            except OSError as exc:
+                logger.error("RigDirect.send_ctcss_cat write(%r): %s", raw, exc)
 
     def get_rig_info(self) -> RigInfo | None:
         """Return info about the connected rig."""
@@ -983,6 +1092,33 @@ class HamlibNetController(RigController):
     def set_vfo(self, vfo: str) -> bool:
         resp = self._cmd(f"V {vfo}")
         return "RPRT 0" in resp
+
+    def send_ctcss_cat(
+        self,
+        tone_hz: float,
+        cat_on_template: str,
+        cat_off_template: str,
+    ) -> None:
+        """Send a custom CTCSS CAT command via rigctld's 'w' (raw) passthrough.
+
+        Each ';'-separated sub-command is sent as a separate 'w' command so
+        rigctld can forward it verbatim to the rig's serial port.
+        Silently ignores errors (best-effort).
+        """
+        if tone_hz > 0 and cat_on_template:
+            tone_number = CTCSS_TABLE.get(tone_hz)
+            if tone_number is None:
+                logger.warning("RigNet.send_ctcss_cat: %.1f Hz not in CTCSS_TABLE", tone_hz)
+                return
+            template = cat_on_template.format(tone=tone_number)
+        elif cat_off_template:
+            template = cat_off_template
+        else:
+            return
+        for sub in template.split(";"):
+            sub = sub.strip()
+            if sub:
+                self._cmd(f"w {sub};")
 
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
         """Set mode on both VFOs via an independent TCP connection.

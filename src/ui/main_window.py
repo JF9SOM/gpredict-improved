@@ -258,6 +258,9 @@ class MainWindow(QMainWindow):
         self._amsat_fetcher = AMSATStatusFetcher(conn)
         self._transmitter_manager = TransmitterManager(conn)
         self._rig_controller: RigController | None = None
+        self._ctcss_method: str = "hamlib"
+        self._ctcss_cat_on: str = ""
+        self._ctcss_cat_off: str = ""
         # Lock indicating whether the rig control thread is currently running.
         # If acquire(blocking=False) fails, the previous cycle is still executing.
         self._rig_busy_lock = threading.Lock()
@@ -1144,6 +1147,7 @@ class MainWindow(QMainWindow):
         else:
             self._radio_control.update_doppler(None, None, None, None, None, None)
         self._send_mode_only_to_rig()
+        self._send_ctcss_cat_to_rig()
 
     def _disconnect_rig(self) -> None:
         """Disconnect the rig and refresh the UI status."""
@@ -1174,6 +1178,31 @@ class MainWindow(QMainWindow):
         if rig.is_connected:
             self._disconnect_rig()
         rig.send_mode_only(dl_mode, ul_mode)
+
+    def _send_ctcss_cat_to_rig(self) -> None:
+        """Send custom CAT CTCSS command when ctcss_method='custom_cat'.
+
+        Runs in a background thread so the UI is not blocked.
+        Only fires when the current transponder has a CTCSS tone set.
+        """
+        if self._ctcss_method != "custom_cat":
+            return
+        if self._rig_controller is None:
+            return
+        tone_hz: float = 0.0
+        if self._current_transmitter is not None:
+            tone_hz = float(self._current_transmitter.get("ctcss_tone") or 0.0)
+        rig = self._rig_controller
+        cat_on = self._ctcss_cat_on
+        cat_off = self._ctcss_cat_off
+
+        def _send() -> None:
+            try:
+                rig.send_ctcss_cat(tone_hz, cat_on, cat_off)
+            except Exception as exc:
+                self._rig_error.emit(f"send_ctcss_cat: {exc}")
+
+        threading.Thread(target=_send, daemon=True).start()
 
     def _refresh_passes(self) -> None:
         """Fetch pass predictions for the selected satellite and update the pass list and chart."""
@@ -1466,6 +1495,9 @@ class MainWindow(QMainWindow):
                 self._rig_controller = HamlibDirectController(
                     model_id=model_id, port=serial_port, baud_rate=baud
                 )
+            self._ctcss_method = str(settings.get("ctcss_method", "hamlib"))
+            self._ctcss_cat_on = str(settings.get("ctcss_cat_on", ""))
+            self._ctcss_cat_off = str(settings.get("ctcss_cat_off", ""))
             self._radio_control.set_rig(self._rig_controller)
             self._update_rig_label()
         except Exception as exc:
