@@ -1243,10 +1243,10 @@ class HamlibNetController(RigController):
         """Set mode on both VFOs.
 
         FT-991/FT-991A path (ctcss_method == "ft991"):
-          Uses the existing main socket while connected; commands are serialised
-          with the Doppler F/I cycle by holding _cmd_lock for the full sequence.
-          MD0{code};           — set VFO-A (DL) mode
+          Opens a fresh independent socket (same pattern as FTX-1F / generic).
+          MD0{code};           — set VFO-A (DL) mode via rigctld w command
           SV; MD0{code}; SV;  — swap to VFO-B, set UL mode, swap back
+          The main socket is kept open; no _cmd_lock is held.
 
         FTX-1F / generic path:
           Opens a fresh TCP socket (main socket is disconnected by the caller).
@@ -1258,14 +1258,30 @@ class HamlibNetController(RigController):
             ul_code = _FT991_MODE_MAP.get(ul_mode)
             if not dl_code and not ul_code:
                 return
-            with self._cmd_lock:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self._TIMEOUT)
+                sock.connect((self._host, self._port))
+
+                def _send(cmd: str) -> None:
+                    sock.sendall(f"{cmd}\n".encode())
+                    data = b""
+                    while b"RPRT" not in data:
+                        chunk = sock.recv(256)
+                        if not chunk:
+                            break
+                        data += chunk
+
                 if dl_code:
-                    self._cmd_raw(f"w MD0{dl_code};")
+                    _send(f"w MD0{dl_code};")
                 if ul_code:
-                    self._cmd_raw("w SV;")
-                    self._cmd_raw(f"w MD0{ul_code};")
-                    self._cmd_raw("w SV;")
-            logger.info("RigNet: FT-991 mode dl=%s ul=%s", dl_mode, ul_mode)
+                    _send("w SV;")
+                    _send(f"w MD0{ul_code};")
+                    _send("w SV;")
+                sock.close()
+                logger.info("RigNet: FT-991 mode dl=%s ul=%s", dl_mode, ul_mode)
+            except Exception as exc:
+                logger.warning("RigNet: FT-991 mode send failed: %s", exc)
             return
         rigctld_ul = _SATNOGS_TO_RIGCTLD_MODE.get(ul_mode)
         rigctld_dl = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
