@@ -59,8 +59,10 @@ from rig.controller import (
     CTCSS_PRESET_TEMPLATES,
     HamlibDirectController,
     HamlibNetController,
+    HamlibRotatorController,
     RigControlError,
     RigController,
+    RotatorController,
 )
 from ui.pass_chart import PassChartView
 from ui.pass_panel import PassPanel
@@ -262,6 +264,7 @@ class MainWindow(QMainWindow):
         self._amsat_fetcher = AMSATStatusFetcher(conn)
         self._transmitter_manager = TransmitterManager(conn)
         self._rig_controller: RigController | None = None
+        self._rotator_controller: RotatorController | None = None
         self._ctcss_method: str = "hamlib"
         self._ctcss_cat_on: str = ""
         self._ctcss_cat_off: str = ""
@@ -310,6 +313,7 @@ class MainWindow(QMainWindow):
         self._restore_satellite_filter()
         self._load_satellites()
         self._load_rig_settings()
+        self._load_rotator_settings()
 
         if fastapi_app is not None:
             self._start_web_server(fastapi_app, web_port)
@@ -466,6 +470,7 @@ class MainWindow(QMainWindow):
         self._qr_button.setToolTip(_("Show QR code for web access"))
         self._qr_button.clicked.connect(self._on_show_qr)
         self._rig_label = QLabel(_("RIG: 未接続"))
+        self._rot_label = QLabel(_("ROT: 未設定"))
 
         if sb:
             sb.addWidget(self._qth_label)
@@ -474,6 +479,7 @@ class MainWindow(QMainWindow):
             sb.addPermanentWidget(self._url_label)
             sb.addPermanentWidget(self._qr_button)
             sb.addPermanentWidget(self._rig_label)
+            sb.addPermanentWidget(self._rot_label)
 
     # ------------------------------------------------------------------ #
     # Data loading
@@ -946,6 +952,7 @@ class MainWindow(QMainWindow):
                     logger.debug("RigNet: previous cycle still running, skipping tick")
         self._radio_control.refresh_status()
         self._update_rig_label()
+        self._update_rot_label()
 
     def _on_rig_error(self, msg: str) -> None:
         """Display an error from the background rig thread in the status bar (UI thread)."""
@@ -1683,9 +1690,52 @@ class MainWindow(QMainWindow):
             self._rig_label.setText(_("RIG: 切断"))
 
     def _on_rotator_settings(self) -> None:
-        QMessageBox.information(
-            self, _("Rotator Settings"), _("Rotator settings dialog not yet implemented.")
-        )
+        from ui.rotator_dialog import RotatorSettingsDialog
+
+        dialog = RotatorSettingsDialog(self._conn, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._load_rotator_settings()
+
+    def _load_rotator_settings(self) -> None:
+        """Load rotator settings from the DB and instantiate the controller."""
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'rotator_settings'"
+            ).fetchone()
+            if row is None:
+                return
+            settings: dict[str, Any] = json.loads(row["value"])
+            mode = settings.get("mode", "net")
+            if mode == "net":
+                host = str(settings.get("host", "localhost"))
+                port = int(settings.get("net_port", 4533))
+                self._rotator_controller = HamlibRotatorController(
+                    net_mode=True,
+                    net_host=host,
+                    net_port=port,
+                )
+            else:
+                model_id = int(settings.get("model_id", 1))
+                serial_port = str(settings.get("port", "/dev/ttyUSB0"))
+                baud = int(settings.get("baud_rate", 9600))
+                self._rotator_controller = HamlibRotatorController(
+                    model_id=model_id,
+                    port=serial_port,
+                    baud_rate=baud,
+                )
+            self._radio_control.set_rotator(self._rotator_controller)
+            self._update_rot_label()
+        except Exception as exc:
+            logger.warning("Failed to load rotator settings: %s", exc)
+
+    def _update_rot_label(self) -> None:
+        """Update the ROT label in the status bar."""
+        if self._rotator_controller is None:
+            self._rot_label.setText(_("ROT: 未設定"))
+        elif self._rotator_controller.is_connected:
+            self._rot_label.setText(_("ROT: 接続中"))
+        else:
+            self._rot_label.setText(_("ROT: 切断"))
 
     def _on_set_language(self, lang: str) -> None:
         from i18n import set_language
