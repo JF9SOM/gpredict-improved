@@ -1435,36 +1435,29 @@ class HamlibRotatorController(RotatorController):
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
-    def _normalize_az(self, target_az: float) -> float:
-        """Return shortest-path azimuth from the last commanded position.
-
-        When _last_az is None (first call after connect), returns target_az
-        unchanged. Otherwise adjusts target_az so the difference from
-        _last_az is in the range (-180, +180], allowing the rotctld P
-        command to use values outside 0-360 (e.g. 370) so the rotator
-        travels clockwise across the 0-degree boundary instead of reversing.
-        """
-        if self._last_az is None:
-            self._last_az = target_az
-            return target_az
-
-        diff = target_az - self._last_az
-        while diff > 180:
-            diff -= 360
-        while diff < -180:
-            diff += 360
-
-        normalized = self._last_az + diff
-        self._last_az = normalized
-        return normalized
-
     def set_position(self, azimuth_deg: float, elevation_deg: float) -> bool:
-        """Rotate to the specified azimuth and elevation."""
+        """Rotate to the specified azimuth and elevation.
+
+        On the first call after connect (_last_az is None) the target azimuth
+        is sent as-is so the rotator jumps directly to the satellite position.
+        On subsequent calls the shortest-path azimuth is computed to avoid
+        360-degree wrap-around reversal (e.g. 350→10 sends 370, not 10).
+        """
         if not self.is_connected:
             return False
         try:
-            az_cmd = self._normalize_az(azimuth_deg)
-            el_cmd = max(0.0, min(180.0, elevation_deg))
+            if self._last_az is None:
+                az_cmd = azimuth_deg
+            else:
+                diff = azimuth_deg - self._last_az
+                while diff > 180:
+                    diff -= 360
+                while diff < -180:
+                    diff += 360
+                az_cmd = self._last_az + diff
+            self._last_az = az_cmd
+            el_cmd = max(0.0, min(90.0, elevation_deg))
+
             if self._net_mode and self._sock:
                 cmd = f"P {az_cmd:.1f} {el_cmd:.1f}\n"
                 self._sock.sendall(cmd.encode())
