@@ -350,6 +350,14 @@ class RigSettingsDialog(QDialog):
         self._ctcss_cat_off_edit = QLineEdit()
         self._ctcss_cat_off_edit.setPlaceholderText(_("e.g. CT10;"))
         ctcss_form.addRow(_("CAT OFF command:"), self._ctcss_cat_off_edit)
+        self._direct_cat_port_edit = QLineEdit()
+        self._direct_cat_port_edit.setPlaceholderText(_("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)"))
+        ctcss_form.addRow(_("Direct CAT Port:"), self._direct_cat_port_edit)
+        self._direct_cat_baud_combo = QComboBox()
+        for b in ["4800", "9600", "19200", "38400", "57600", "115200"]:
+            self._direct_cat_baud_combo.addItem(b)
+        self._direct_cat_baud_combo.setCurrentText("38400")
+        ctcss_form.addRow(_("Direct CAT Baud:"), self._direct_cat_baud_combo)
         layout.addWidget(ctcss_group)
         self._on_ctcss_method_changed()
 
@@ -512,6 +520,11 @@ class RigSettingsDialog(QDialog):
                 break
         self._ctcss_cat_on_edit.setText(str(s.get("ctcss_cat_on", "")))
         self._ctcss_cat_off_edit.setText(str(s.get("ctcss_cat_off", "")))
+        self._direct_cat_port_edit.setText(str(s.get("direct_cat_port", "")))
+        baud_str = str(s.get("direct_cat_baud", 38400))
+        idx = self._direct_cat_baud_combo.findText(baud_str)
+        if idx >= 0:
+            self._direct_cat_baud_combo.setCurrentIndex(idx)
         self._on_ctcss_method_changed()
 
     def _save_settings(self) -> None:
@@ -527,6 +540,8 @@ class RigSettingsDialog(QDialog):
             "ctcss_method": self._ctcss_method_combo.currentData() or "hamlib",
             "ctcss_cat_on": self._ctcss_cat_on_edit.text(),
             "ctcss_cat_off": self._ctcss_cat_off_edit.text(),
+            "direct_cat_port": self._direct_cat_port_edit.text(),
+            "direct_cat_baud": int(self._direct_cat_baud_combo.currentText()),
         }
         if hasattr(self._conn, "execute"):
             self._conn.execute(

@@ -1559,7 +1559,11 @@ class MainWindow(QMainWindow):
                 host = str(settings.get("host", "localhost"))
                 port = int(settings.get("net_port", 4532))
                 self._rig_controller = HamlibNetController(
-                    host=host, port=port, radio_type=radio_type
+                    host=host,
+                    port=port,
+                    radio_type=radio_type,
+                    direct_cat_port=str(settings.get("direct_cat_port", "")),
+                    direct_cat_baud=int(settings.get("direct_cat_baud", 38400)),
                 )
             else:
                 model_id = int(settings.get("model_id", 1))

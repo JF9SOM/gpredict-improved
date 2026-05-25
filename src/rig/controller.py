@@ -22,6 +22,7 @@ import re
 import socket
 import sys
 import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -774,19 +775,29 @@ class HamlibNetController(RigController):
     _TIMEOUT = 10.0  # seconds — allows for slow CAT backends such as FTX-1
 
     def __init__(
-        self, host: str = "localhost", port: int = 4532, radio_type: str = "full_duplex"
+        self,
+        host: str = "localhost",
+        port: int = 4532,
+        radio_type: str = "full_duplex",
+        direct_cat_port: str = "",
+        direct_cat_baud: int = 38400,
     ) -> None:
         """
         Args:
-            host:        Host where rigctld is running
-            port:        rigctld port number (default 4532)
-            radio_type:  "full_duplex"=send both F and I (default) /
-                         "rx_only"=F only / "tx_only"=I only
+            host:             Host where rigctld is running
+            port:             rigctld port number (default 4532)
+            radio_type:       "full_duplex"=send both F and I (default) /
+                              "rx_only"=F only / "tx_only"=I only
+            direct_cat_port:  Serial port for direct CAT (bypasses rigctld w cmd).
+                              Empty string disables direct CAT (uses rigctld).
+            direct_cat_baud:  Baud rate for direct_cat_port (default 38400)
         """
         super().__init__()
         self._host = host
         self._port = port
         self._radio_type = radio_type
+        self._direct_port = direct_cat_port
+        self._direct_baud = direct_cat_baud
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
@@ -1148,6 +1159,24 @@ class HamlibNetController(RigController):
         resp = self._cmd(f"V {vfo}")
         return "RPRT 0" in resp
 
+    def _send_cat_direct(self, cmd: str) -> None:
+        """Send a single CAT command directly to the serial port, bypassing rigctld.
+
+        Used when _direct_port is configured and rigctld's w command is unreliable
+        for the connected rig (e.g. FT-991 CTCSS commands).
+        Silently ignores all errors (best-effort).
+        """
+        if not self._direct_port:
+            return
+        try:
+            import serial  # pyserial — optional dependency
+
+            with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
+                s.write(cmd.encode())
+                time.sleep(0.1)
+        except Exception as exc:
+            logger.warning("RigNet: direct CAT failed: %s", exc)
+
     def send_ctcss_cat(
         self,
         tone_hz: float,
@@ -1177,7 +1206,11 @@ class HamlibNetController(RigController):
         parts = [p.strip() for p in template.split(";") if p.strip()]
         if not parts:
             return
-        logger.info("RigNet.send_ctcss_cat: tone_hz=%s cmd=%r", tone_hz, template)
+        logger.info("RigNet.send_ctcss_cat: tone_hz=%s cmd=%r direct=%r", tone_hz, template, bool(self._direct_port))
+        if self._direct_port:
+            for part in parts:
+                self._send_cat_direct(f"{part};")
+            return
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
