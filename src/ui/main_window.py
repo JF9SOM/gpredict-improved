@@ -312,6 +312,7 @@ class MainWindow(QMainWindow):
         self._radio_control.lock_changed.connect(self._on_lock_changed)
         self._radio_control.ctcss_send_requested.connect(self._on_ctcss_send)
         self._radio_control.ctcss_activate_requested.connect(self._on_ctcss_activate)
+        self._radio_control.rotator_connected.connect(self._on_rotator_connected)
         self._restore_satellite_filter()
         self._load_satellites()
         self._load_rig_settings()
@@ -1754,6 +1755,23 @@ class MainWindow(QMainWindow):
             self._update_rot_label()
         except Exception as exc:
             logger.warning("Failed to load rotator settings: %s", exc)
+
+    def _on_rotator_connected(self) -> None:
+        """Send the current satellite position to the rotator immediately after connect."""
+        if self._rotator_controller is None or not self._rotator_controller.is_connected:
+            return
+        if self._selected_norad is None or self._engine is None:
+            return
+        obs = self._engine.observe(self._selected_norad)
+        if obs is None:
+            return
+        rot = self._rotator_controller
+        az = obs.azimuth_deg
+        el = obs.elevation_deg
+        threading.Thread(
+            target=lambda: rot.set_position(az, el), daemon=True
+        ).start()
+        self._update_rot_label()
 
     def _update_rot_label(self) -> None:
         """Update the ROT label in the status bar."""

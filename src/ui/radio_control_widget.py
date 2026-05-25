@@ -38,6 +38,7 @@ class RadioControlWidget(QWidget):
     tune_requested: Signal = Signal()
     lock_changed: Signal = Signal(bool)
     rig_connected: Signal = Signal()
+    rotator_connected: Signal = Signal()
     ctcss_send_requested: Signal = Signal(float)
     ctcss_activate_requested: Signal = Signal()  # activation-tone button pressed
 
@@ -408,5 +409,6 @@ class RadioControlWidget(QWidget):
         if self._rotator.is_connected:
             self._rotator.disconnect()
         else:
-            self._rotator.connect()
+            if self._rotator.connect():
+                self.rotator_connected.emit()
         self._update_rot_status()

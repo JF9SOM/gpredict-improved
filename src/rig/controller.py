@@ -1382,6 +1382,7 @@ class HamlibRotatorController(RotatorController):
         self._rot: Any = None
         self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._sock: socket.socket | None = None
+        self._last_az: float | None = None  # last commanded AZ for shortest-path calc
 
     def connect(self) -> bool:
         """Connect to the rotator."""
@@ -1410,6 +1411,7 @@ class HamlibRotatorController(RotatorController):
 
             with self._lock:
                 self._state = RigState.CONNECTED
+            self._last_az = None
             logger.info("Rotator: connected")
             return True
         except Exception as exc:
@@ -1433,20 +1435,45 @@ class HamlibRotatorController(RotatorController):
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
+    def _normalize_az(self, target_az: float) -> float:
+        """Return shortest-path azimuth from the last commanded position.
+
+        When _last_az is None (first call after connect), returns target_az
+        unchanged. Otherwise adjusts target_az so the difference from
+        _last_az is in the range (-180, +180], allowing the rotctld P
+        command to use values outside 0-360 (e.g. 370) so the rotator
+        travels clockwise across the 0-degree boundary instead of reversing.
+        """
+        if self._last_az is None:
+            self._last_az = target_az
+            return target_az
+
+        diff = target_az - self._last_az
+        while diff > 180:
+            diff -= 360
+        while diff < -180:
+            diff += 360
+
+        normalized = self._last_az + diff
+        self._last_az = normalized
+        return normalized
+
     def set_position(self, azimuth_deg: float, elevation_deg: float) -> bool:
         """Rotate to the specified azimuth and elevation."""
         if not self.is_connected:
             return False
         try:
+            az_cmd = self._normalize_az(azimuth_deg)
+            el_cmd = max(0.0, min(180.0, elevation_deg))
             if self._net_mode and self._sock:
-                cmd = f"P {azimuth_deg:.1f} {elevation_deg:.1f}\n"
+                cmd = f"P {az_cmd:.1f} {el_cmd:.1f}\n"
                 self._sock.sendall(cmd.encode())
             elif self._rot is not None:
-                self._rot.set_position(azimuth_deg, elevation_deg)
+                self._rot.set_position(az_cmd, el_cmd)
 
             with self._lock:
-                self._rotor_state.azimuth_deg = azimuth_deg
-                self._rotor_state.elevation_deg = elevation_deg
+                self._rotor_state.azimuth_deg = az_cmd
+                self._rotor_state.elevation_deg = el_cmd
                 self._rotor_state.is_moving = True
             return True
         except Exception as exc:
