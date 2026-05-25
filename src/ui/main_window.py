@@ -1564,6 +1564,7 @@ class MainWindow(QMainWindow):
                     radio_type=radio_type,
                     direct_cat_port=str(settings.get("direct_cat_port", "")),
                     direct_cat_baud=int(settings.get("direct_cat_baud", 38400)),
+                    ctcss_method=str(settings.get("ctcss_method", "hamlib")),
                 )
             else:
                 model_id = int(settings.get("model_id", 1))

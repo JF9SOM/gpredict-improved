@@ -812,6 +812,7 @@ class HamlibNetController(RigController):
         radio_type: str = "full_duplex",
         direct_cat_port: str = "",
         direct_cat_baud: int = 38400,
+        ctcss_method: str = "hamlib",
     ) -> None:
         """
         Args:
@@ -822,6 +823,8 @@ class HamlibNetController(RigController):
             direct_cat_port:  Serial port for direct CAT (bypasses rigctld w cmd).
                               Empty string disables direct CAT (uses rigctld).
             direct_cat_baud:  Baud rate for direct_cat_port (default 38400)
+            ctcss_method:     CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat").
+                              Used to select the mode-setting strategy in send_mode_only().
         """
         super().__init__()
         self._host = host
@@ -829,6 +832,7 @@ class HamlibNetController(RigController):
         self._radio_type = radio_type
         self._direct_port = direct_cat_port
         self._direct_baud = direct_cat_baud
+        self._ctcss_method = ctcss_method
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
@@ -1272,7 +1276,7 @@ class HamlibNetController(RigController):
         connection, which is closed before this is called).
         Silently ignores all errors (best-effort).
 
-        FT-991/FT-991A path (detected via ID CAT command at connect time):
+        FT-991/FT-991A path (ctcss_method == "ft991"):
           MD0{code};           — set VFO-A (DL) mode
           SV; MD0{code}; SV;  — swap to VFO-B, set UL mode, swap back
 
@@ -1280,8 +1284,8 @@ class HamlibNetController(RigController):
           V Sub → M {ul} 0 → V Main → M {dl} 0
           On S 1 Main split: Sub=TX (uplink), Main=RX (downlink).
         """
-        rig = self._get_rig_model()
-        if rig == "ft991":
+        is_ft991 = self._ctcss_method == "ft991"
+        if is_ft991:
             dl_code = _FT991_MODE_MAP.get(dl_mode)
             ul_code = _FT991_MODE_MAP.get(ul_mode)
             if not dl_code and not ul_code:
@@ -1295,7 +1299,7 @@ class HamlibNetController(RigController):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
             sock.connect((self._host, self._port))
-            if rig == "ft991":
+            if is_ft991:
                 if dl_code:
                     sock.sendall(f"w MD0{dl_code};\n".encode())
                     sock.recv(64)
