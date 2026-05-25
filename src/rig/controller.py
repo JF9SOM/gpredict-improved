@@ -1362,6 +1362,8 @@ class HamlibRotatorController(RotatorController):
     NET connection (rotctld). When net_mode=True, connects to rotctld over TCP.
     """
 
+    _CATCH_UP_THRESHOLD: float = 5.0  # degrees; switch to normal tracking when within this
+
     def __init__(
         self,
         model_id: int = 1,
@@ -1383,6 +1385,7 @@ class HamlibRotatorController(RotatorController):
         self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._sock: socket.socket | None = None
         self._last_az: float | None = None  # last commanded AZ for shortest-path calc
+        self._catching_up: bool = False  # True while rotator is moving to initial position
 
     def connect(self) -> bool:
         """Connect to the rotator."""
@@ -1412,6 +1415,7 @@ class HamlibRotatorController(RotatorController):
             with self._lock:
                 self._state = RigState.CONNECTED
             self._last_az = None
+            self._catching_up = False
             logger.info("Rotator: connected")
             return True
         except Exception as exc:
@@ -1435,39 +1439,63 @@ class HamlibRotatorController(RotatorController):
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
+    def _send_p(self, az: float, el: float) -> None:
+        """Send the P command and discard the RPRT response to keep the socket buffer clean."""
+        if self._net_mode and self._sock:
+            self._sock.sendall(f"P {az:.1f} {el:.1f}\n".encode())
+            with contextlib.suppress(Exception):
+                self._sock.recv(256)  # discard RPRT 0
+        elif self._rot is not None:
+            self._rot.set_position(az, el)
+        with self._lock:
+            self._rotor_state.azimuth_deg = az
+            self._rotor_state.elevation_deg = el
+            self._rotor_state.is_moving = True
+
     def set_position(self, azimuth_deg: float, elevation_deg: float) -> bool:
         """Rotate to the specified azimuth and elevation.
 
-        On the first call after connect (_last_az is None) the target azimuth
-        is sent as-is so the rotator jumps directly to the satellite position.
-        On subsequent calls the shortest-path azimuth is computed to avoid
-        360-degree wrap-around reversal (e.g. 350→10 sends 370, not 10).
+        Three phases:
+        1. First call after connect (_last_az is None): jump directly to satellite
+           position and enter catch-up mode.
+        2. Catch-up mode: poll the rotator position each cycle; once within
+           _CATCH_UP_THRESHOLD degrees of the satellite, switch to normal tracking.
+        3. Normal tracking: send P every cycle using shortest-path AZ to avoid
+           360-degree wrap-around reversal.
         """
         if not self.is_connected:
             return False
         try:
-            if self._last_az is None:
-                az_cmd = azimuth_deg
-            else:
-                diff = azimuth_deg - self._last_az
-                while diff > 180:
-                    diff -= 360
-                while diff < -180:
-                    diff += 360
-                az_cmd = self._last_az + diff
-            self._last_az = az_cmd
             el_cmd = max(0.0, min(90.0, elevation_deg))
 
-            if self._net_mode and self._sock:
-                cmd = f"P {az_cmd:.1f} {el_cmd:.1f}\n"
-                self._sock.sendall(cmd.encode())
-            elif self._rot is not None:
-                self._rot.set_position(az_cmd, el_cmd)
+            if self._last_az is None:
+                self._last_az = azimuth_deg
+                self._catching_up = True
+                self._send_p(azimuth_deg, el_cmd)
+                logger.info("Rotator: initial jump to az=%.1f el=%.1f", azimuth_deg, el_cmd)
+                return True
 
-            with self._lock:
-                self._rotor_state.azimuth_deg = az_cmd
-                self._rotor_state.elevation_deg = el_cmd
-                self._rotor_state.is_moving = True
+            if self._catching_up:
+                current = self.get_position()
+                az_diff = abs(current.azimuth_deg - azimuth_deg)
+                el_diff = abs(current.elevation_deg - el_cmd)
+                if az_diff <= self._CATCH_UP_THRESHOLD and el_diff <= self._CATCH_UP_THRESHOLD:
+                    self._catching_up = False
+                    logger.info("Rotator: caught up, starting normal tracking")
+                else:
+                    logger.debug(
+                        "Rotator: catching up az_diff=%.1f el_diff=%.1f", az_diff, el_diff
+                    )
+                    return True
+
+            diff = azimuth_deg - self._last_az
+            while diff > 180:
+                diff -= 360
+            while diff < -180:
+                diff += 360
+            az_cmd = self._last_az + diff
+            self._last_az = az_cmd
+            self._send_p(az_cmd, el_cmd)
             return True
         except Exception as exc:
             logger.error("Rotator.set_position: %s", exc)
