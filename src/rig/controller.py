@@ -18,7 +18,6 @@ import contextlib
 import importlib.util
 import logging
 import os
-import re
 import socket
 import sys
 import threading
@@ -781,6 +780,7 @@ class HamlibNetController(RigController):
         radio_type: str = "full_duplex",
         direct_cat_port: str = "",
         direct_cat_baud: int = 38400,
+        ctcss_method: str = "hamlib",
     ) -> None:
         """
         Args:
@@ -791,6 +791,8 @@ class HamlibNetController(RigController):
             direct_cat_port:  Serial port for direct CAT (bypasses rigctld w cmd).
                               Empty string disables direct CAT (uses rigctld).
             direct_cat_baud:  Baud rate for direct_cat_port (default 38400)
+            ctcss_method:     CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat").
+                              Used to select the mode-setting strategy in send_mode_only().
         """
         super().__init__()
         self._host = host
@@ -798,13 +800,13 @@ class HamlibNetController(RigController):
         self._radio_type = radio_type
         self._direct_port = direct_cat_port
         self._direct_baud = direct_cat_baud
+        self._ctcss_method = ctcss_method
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
         self._cached_model_name: str = ""  # fetched once on connect and cached
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
-        self._rig_model: str | None = None  # cached rig type; None until first _get_rig_model()
 
     # -- Connection management --
 
@@ -821,7 +823,6 @@ class HamlibNetController(RigController):
                 return True
             self._state = RigState.CONNECTING
 
-        self._rig_model = None  # force fresh detection on every connect
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
@@ -848,7 +849,6 @@ class HamlibNetController(RigController):
                     self._state = RigState.ERROR
                 logger.error("RigNet: S 1 Main timed out or failed — aborting connect")
                 return False
-            self._get_rig_model()  # populate cache while socket is alive
             return True
         except OSError as exc:
             with self._lock:
@@ -870,8 +870,6 @@ class HamlibNetController(RigController):
             self._sock = None
             self._last_dl_hz = None
             self._last_ul_hz = None
-            # _rig_model is intentionally NOT reset here so send_mode_only()
-            # can use the cached value after the socket is closed.
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -912,30 +910,6 @@ class HamlibNetController(RigController):
         """Send a command to rigctld and return the response (thread-safe)."""
         with self._cmd_lock:
             return self._cmd_raw(command)
-
-    def _get_rig_model(self) -> str:
-        """Detect and cache the rig model via the ID CAT command.
-
-        Returns "ft991" for FT-991/FT-991A (ID 0670/0570), "generic" otherwise.
-        Safe to call when disconnected — _cmd() returns "" and the result is cached
-        as "generic". Populate the cache at connect() time to ensure the correct
-        model is known before send_mode_only() is called (which runs after disconnect).
-        """
-        if self._rig_model is not None:
-            return self._rig_model
-        try:
-            with self._cmd_lock:
-                resp = self._cmd_raw("w ID;")
-            logger.info("RigNet: ID raw response=%r", resp)
-            m = re.search(r"ID(\d{4})", resp)
-            if m and m.group(1) in ("0570", "0670"):
-                self._rig_model = "ft991"
-            else:
-                self._rig_model = "generic"
-        except Exception:
-            self._rig_model = "generic"
-        logger.info("RigNet: detected rig=%s", self._rig_model)
-        return self._rig_model
 
     def _fetch_model_name(self) -> str:
         """Fetch the model name once at connect time using the _ command.
@@ -1237,56 +1211,68 @@ class HamlibNetController(RigController):
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
         """Set mode on both VFOs via an independent TCP connection.
 
-        Opens a new socket to rigctld (separate from the main tracking
-        connection, which is closed before this is called).
-        Silently ignores all errors (best-effort).
-
-        FT-991/FT-991A path (detected via ID CAT command at connect time):
-          MD0{code};           — set VFO-A (DL) mode
+        FT-991/FT-991A path (ctcss_method == "ft991"):
+          Opens a fresh independent socket; main connection is kept alive.
+          MD0{code};           — set VFO-A (DL) mode via rigctld w command
           SV; MD0{code}; SV;  — swap to VFO-B, set UL mode, swap back
+          Each command waits for RPRT in the response before proceeding.
+          2-second per-command timeout (SV may not return RPRT on some firmwares).
 
         FTX-1F / generic path:
+          Opens a fresh socket (main socket disconnected by the caller).
           V Sub → M {ul} 0 → V Main → M {dl} 0
           On S 1 Main split: Sub=TX (uplink), Main=RX (downlink).
         """
-        rig = self._get_rig_model()
-        if rig == "ft991":
+        if self._ctcss_method == "ft991":
             dl_code = _FT991_MODE_MAP.get(dl_mode)
             ul_code = _FT991_MODE_MAP.get(ul_mode)
             if not dl_code and not ul_code:
                 return
-        else:
-            rigctld_ul = _SATNOGS_TO_RIGCTLD_MODE.get(ul_mode)
-            rigctld_dl = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
-            if not rigctld_ul and not rigctld_dl:
-                return
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self._TIMEOUT)
+                sock.connect((self._host, self._port))
+                sock.settimeout(2.0)  # short per-command timeout; SV may not send RPRT
+
+                def _w(cmd: str) -> None:
+                    sock.sendall(f"w {cmd}\n".encode())
+                    buf = b""
+                    with contextlib.suppress(OSError):
+                        while b"RPRT" not in buf:
+                            chunk = sock.recv(256)
+                            if not chunk:
+                                break
+                            buf += chunk
+
+                if dl_code:
+                    _w(f"MD0{dl_code};")
+                if ul_code:
+                    _w("SV;")
+                    _w(f"MD0{ul_code};")
+                    _w("SV;")
+                sock.close()
+                logger.info("RigNet: FT-991 mode dl=%s ul=%s", dl_mode, ul_mode)
+            except Exception as exc:
+                logger.warning("RigNet: FT-991 mode send failed: %s", exc)
+            return
+        rigctld_ul = _SATNOGS_TO_RIGCTLD_MODE.get(ul_mode)
+        rigctld_dl = _SATNOGS_TO_RIGCTLD_MODE.get(dl_mode)
+        if not rigctld_ul and not rigctld_dl:
+            return
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
             sock.connect((self._host, self._port))
-            if rig == "ft991":
-                if dl_code:
-                    sock.sendall(f"w MD0{dl_code};\n".encode())
-                    sock.recv(64)
-                if ul_code:
-                    sock.sendall(b"w SV;\n")
-                    sock.recv(64)
-                    sock.sendall(f"w MD0{ul_code};\n".encode())
-                    sock.recv(64)
-                    sock.sendall(b"w SV;\n")
-                    sock.recv(64)
-                logger.info("RigNet: FT-991 mode dl=%s ul=%s", dl_mode, ul_mode)
-            else:
-                if rigctld_ul:
-                    sock.sendall(b"V Sub\n")
-                    sock.recv(64)
-                    sock.sendall(f"M {rigctld_ul} 0\n".encode())
-                    sock.recv(64)
-                if rigctld_dl:
-                    sock.sendall(b"V Main\n")
-                    sock.recv(64)
-                    sock.sendall(f"M {rigctld_dl} 0\n".encode())
-                    sock.recv(64)
+            if rigctld_ul:
+                sock.sendall(b"V Sub\n")
+                sock.recv(64)
+                sock.sendall(f"M {rigctld_ul} 0\n".encode())
+                sock.recv(64)
+            if rigctld_dl:
+                sock.sendall(b"V Main\n")
+                sock.recv(64)
+                sock.sendall(f"M {rigctld_dl} 0\n".encode())
+                sock.recv(64)
             sock.close()
         except Exception:
             pass
