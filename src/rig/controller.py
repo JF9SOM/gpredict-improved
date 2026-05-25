@@ -1484,9 +1484,7 @@ class HamlibRotatorController(RotatorController):
                     self._catching_up = False
                     logger.info("Rotator: caught up, starting normal tracking")
                 else:
-                    logger.debug(
-                        "Rotator: catching up az_diff=%.1f el_diff=%.1f", az_diff, el_diff
-                    )
+                    logger.debug("Rotator: catching up az_diff=%.1f el_diff=%.1f", az_diff, el_diff)
                     return True
 
             az_diff = azimuth_deg - self._last_az
