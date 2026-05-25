@@ -96,8 +96,9 @@ MODE_MAP: dict[str, int] = _build_mode_map()
 CTCSS_PRESET_TEMPLATES: dict[str, tuple[str, str]] = {
     # FTX-1: CN P1 P2 P3P3P3; — P1=1 (Sub), P2=0 (CTCSS), P3=tone index 000-049
     "ftx1": ("CN10{tone:03d};CT11;", "CT10;"),
-    # FT-991/FT-991A: CN0<code>; sets CTCSS code on VFO-A; CT1; enables encode
-    "ft991": ("CN0{tone:03d};CT1;", "CT0;"),
+    # FT-991/FT-991A: CN P1 P2 P3P3P3; — P1=0 (fixed), P2=0 (CTCSS), P3=tone index 000-049
+    # CT P1 P2; — P1=0 (fixed), P2=2 (CTCSS ENC only); CT00; to disable
+    "ft991": ("CN00{tone:03d};CT02;", "CT00;"),
 }
 
 # CTCSS tone frequency (Hz) → rig index used in custom CAT commands.
@@ -809,6 +810,7 @@ class HamlibNetController(RigController):
                 return True
             self._state = RigState.CONNECTING
 
+        self._rig_model = None  # force fresh detection on every connect
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
@@ -857,7 +859,8 @@ class HamlibNetController(RigController):
             self._sock = None
             self._last_dl_hz = None
             self._last_ul_hz = None
-            self._rig_model = None
+            # _rig_model is intentionally NOT reset here so send_mode_only()
+            # can use the cached value after the socket is closed.
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -910,7 +913,8 @@ class HamlibNetController(RigController):
         if self._rig_model is not None:
             return self._rig_model
         try:
-            resp = self._cmd("w ID;")
+            with self._cmd_lock:
+                resp = self._cmd_raw("w ID;")
             logger.info("RigNet: ID raw response=%r", resp)
             m = re.search(r"ID(\d{4})", resp)
             if m and m.group(1) in ("0570", "0670"):
