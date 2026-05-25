@@ -626,12 +626,39 @@ class HamlibDirectController(RigController):
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
         """Set mode on VFOA (downlink/RX) and VFOB (uplink/TX).
 
-        Opens a dedicated short-lived serial connection so that the mode can be
-        set even when the main tracking connection has already been disconnected
-        — mirroring HamlibNetController which opens a fresh TCP socket per call.
-        Silently ignores all errors (best-effort).
+        FT-991/FT-991A path (model IDs 1035/1036):
+          set_mode(RIG_VFO_B) fails with -11 on these models, so raw CAT is used:
+          MD0{code};           — set VFO-A (DL) mode
+          SV; MD0{code}; SV;  — swap to VFO-B, set UL mode, swap back
+          Commands are written directly to the serial port via os.open().
+
+        Generic path:
+          Opens a short-lived Hamlib connection and calls set_mode per VFO.
+          Silently ignores all errors (best-effort).
         """
         logger.info("RigDirect: send_mode_only dl=%s ul=%s", dl_mode, ul_mode)
+        if self._model_id in _FT991_DIRECT_MODEL_IDS:
+            dl_code = _FT991_MODE_MAP.get(dl_mode)
+            ul_code = _FT991_MODE_MAP.get(ul_mode)
+            if not dl_code and not ul_code:
+                return
+            cmds: list[bytes] = []
+            if dl_code:
+                cmds.append(f"MD0{dl_code};".encode())
+            if ul_code:
+                cmds.extend([b"SV;", f"MD0{ul_code};".encode(), b"SV;"])
+            for raw in cmds:
+                try:
+                    fd = os.open(self._port, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+                    try:
+                        os.write(fd, raw)
+                    finally:
+                        os.close(fd)
+                    time.sleep(0.1)
+                except OSError as exc:
+                    logger.error("RigDirect.send_mode_only FT-991 CAT: %s", exc)
+            logger.info("RigDirect: FT-991 mode dl=%s ul=%s done", dl_mode, ul_mode)
+            return
         if not HAMLIB_AVAILABLE:
             return
         rig: Any = None
@@ -762,6 +789,10 @@ _FT991_MODE_MAP: dict[str, str] = {
     "CW-R": "7",
     "FM-N": "B",
 }
+
+# Hamlib model IDs for FT-991/FT-991A — set_mode(RIG_VFO_B) fails on these
+# models with -11 (Feature not available); raw CAT SV swap is used instead.
+_FT991_DIRECT_MODEL_IDS: frozenset[int] = frozenset({1035, 1036})
 
 
 class HamlibNetController(RigController):
