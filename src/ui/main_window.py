@@ -271,6 +271,8 @@ class MainWindow(QMainWindow):
         # Lock indicating whether the rig control thread is currently running.
         # If acquire(blocking=False) fails, the previous cycle is still executing.
         self._rig_busy_lock = threading.Lock()
+        # Same pattern for rotator set_position calls.
+        self._rot_busy_lock = threading.Lock()
         # Cache for forced frequency transmission when the Tune button resets to centre frequency.
         # None -> use the Doppler-corrected value as-is.
         # A value -> transmit it once then reset to None.
@@ -950,6 +952,31 @@ class MainWindow(QMainWindow):
                     threading.Thread(target=_rig_send, daemon=True).start()
                 else:
                     logger.debug("RigNet: previous cycle still running, skipping tick")
+
+        # Send AZ/EL to the rotator every tick (same non-blocking pattern as rig).
+        if (
+            obs is not None
+            and self._rotator_controller is not None
+            and self._rotator_controller.is_connected
+        ):
+            if self._rot_busy_lock.acquire(blocking=False):
+                rot = self._rotator_controller
+                az = obs.azimuth_deg
+                el = obs.elevation_deg
+
+                def _rot_send() -> None:
+                    try:
+                        rot.set_position(az, el)
+                        logger.info("Rotator: set position az=%.1f el=%.1f", az, el)
+                    except Exception as exc:
+                        logger.error("Rotator: set_position error: %s", exc)
+                    finally:
+                        self._rot_busy_lock.release()
+
+                threading.Thread(target=_rot_send, daemon=True).start()
+            else:
+                logger.debug("Rotator: previous cycle still running, skipping tick")
+
         self._radio_control.refresh_status()
         self._update_rig_label()
         self._update_rot_label()
