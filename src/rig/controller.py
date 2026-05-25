@@ -1455,13 +1455,14 @@ class HamlibRotatorController(RotatorController):
     def set_position(self, azimuth_deg: float, elevation_deg: float) -> bool:
         """Rotate to the specified azimuth and elevation.
 
-        Three phases:
+        Four phases:
         1. First call after connect (_last_az is None): jump directly to satellite
            position and enter catch-up mode.
         2. Catch-up mode: poll the rotator position each cycle; once within
            _CATCH_UP_THRESHOLD degrees of the satellite, switch to normal tracking.
-        3. Normal tracking: send P every cycle using shortest-path AZ to avoid
-           360-degree wrap-around reversal.
+        3. Normal tracking: send raw satellite AZ (0-360) each cycle.
+        4. Large AZ jump (>90 deg, e.g. crossing 0/360): re-enter catch-up and
+           send one P command so the rotator moves to the new position at full speed.
         """
         if not self.is_connected:
             return False
@@ -1488,14 +1489,23 @@ class HamlibRotatorController(RotatorController):
                     )
                     return True
 
-            diff = azimuth_deg - self._last_az
-            while diff > 180:
-                diff -= 360
-            while diff < -180:
-                diff += 360
-            az_cmd = self._last_az + diff
-            self._last_az = az_cmd
-            self._send_p(az_cmd, el_cmd)
+            az_diff = azimuth_deg - self._last_az
+            while az_diff > 180:
+                az_diff -= 360
+            while az_diff < -180:
+                az_diff += 360
+
+            if abs(az_diff) > 90:
+                self._catching_up = True
+                self._last_az = azimuth_deg
+                self._send_p(azimuth_deg, el_cmd)
+                logger.info(
+                    "Rotator: large AZ jump detected (%.1f°), re-entering catch-up", az_diff
+                )
+                return True
+
+            self._last_az = azimuth_deg
+            self._send_p(azimuth_deg, el_cmd)
             return True
         except Exception as exc:
             logger.error("Rotator.set_position: %s", exc)
