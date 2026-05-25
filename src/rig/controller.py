@@ -1208,7 +1208,9 @@ class HamlibNetController(RigController):
             return
         logger.info(
             "RigNet.send_ctcss_cat: tone_hz=%s cmd=%r direct=%r",
-            tone_hz, template, bool(self._direct_port),
+            tone_hz,
+            template,
+            bool(self._direct_port),
         )
         if self._direct_port:
             for part in parts:
