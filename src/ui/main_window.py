@@ -1221,10 +1221,12 @@ class MainWindow(QMainWindow):
 
         FT-991: keeps the main connection alive; send_mode_only() opens an
         independent socket for the mode commands, so no disconnect is needed.
+        send_mode_only() is run in a background thread to avoid blocking the UI.
 
-        FTX-1F / generic: disconnects first so the Doppler cycle's F/I commands
-        cannot race with the V commands inside send_mode_only().
-        The user must reconnect manually after a mode change.
+        FTX-1F / generic: disconnects first (on the UI thread, so status is
+        updated immediately) so the Doppler cycle's F/I commands cannot race
+        with the V commands inside send_mode_only().  send_mode_only() itself
+        runs in a background thread.  The user must reconnect manually.
         """
         if self._rig_controller is None or self._current_transmitter is None:
             return
@@ -1236,14 +1238,18 @@ class MainWindow(QMainWindow):
         ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         rig = self._rig_controller
         if rig.is_connected and self._ctcss_method != "ft991":
-            self._disconnect_rig()
-        rig.send_mode_only(dl_mode, ul_mode)
+            self._disconnect_rig()  # UI update must happen on the UI thread
         logger.info(
             "CTCSS: tone=%s method=%s cat_on=%r",
             self._current_transmitter.get("ctcss_tone") if self._current_transmitter else None,
             self._ctcss_method,
             self._ctcss_cat_on,
         )
+
+        def _do_send() -> None:
+            rig.send_mode_only(dl_mode, ul_mode)
+
+        threading.Thread(target=_do_send, daemon=True).start()
 
     # Methods that use custom CAT commands for CTCSS (not handled by Hamlib itself).
     _CAT_CTCSS_METHODS: frozenset[str] = frozenset({"custom_cat", "ftx1", "ft991"})
