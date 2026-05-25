@@ -1487,14 +1487,17 @@ class HamlibRotatorController(RotatorController):
         try:
             if self._net_mode and self._sock:
                 self._sock.sendall(b"p\n")
-                data = self._sock.recv(256).decode(errors="replace").strip()
-                parts = data.split()
-                if len(parts) >= 2:
-                    az = float(parts[0])
-                    el = float(parts[1])
+                data = self._sock.recv(512).decode(errors="replace")
+                values: list[float] = []
+                for line in data.split("\n"):
+                    line = line.strip()
+                    if line and not line.startswith("RPRT"):
+                        with contextlib.suppress(ValueError):
+                            values.append(float(line))
+                if len(values) >= 2:
                     with self._lock:
-                        self._rotor_state.azimuth_deg = az
-                        self._rotor_state.elevation_deg = el
+                        self._rotor_state.azimuth_deg = values[0]
+                        self._rotor_state.elevation_deg = values[1]
             elif self._rot is not None:
                 az, el = self._rot.get_position()
                 with self._lock:

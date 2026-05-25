@@ -941,7 +941,7 @@ class TestHamlibRotatorController:
     def _make_net_ctrl_connected(self) -> HamlibRotatorController:
         ctrl = HamlibRotatorController(net_mode=True)
         mock_sock = MagicMock(spec=socket.socket)
-        mock_sock.recv.return_value = b"180.0 45.0\n"
+        mock_sock.recv.return_value = b"180.0\n45.0\nRPRT 0\n"
         ctrl._sock = mock_sock
         with ctrl._lock:
             ctrl._state = RigState.CONNECTED
