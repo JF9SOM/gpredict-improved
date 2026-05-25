@@ -1214,15 +1214,15 @@ class MainWindow(QMainWindow):
         self._radio_control.refresh_status()
 
     def _send_mode_only_to_rig(self) -> None:
-        """Set mode on both VFOs via an independent connection on transponder change.
+        """Set mode on both VFOs on transponder change.
 
         Computes dl_mode / ul_mode from the current transponder, applying
         _MODE_INVERT when invert=True (e.g. RS-44 USB↔LSB).
 
-        When connected, disconnects first so the Doppler cycle's F/I commands
-        cannot race with the V commands inside send_mode_only(), then calls
-        send_mode_only() immediately.  The user must reconnect manually.
-        When not connected, calls send_mode_only() directly.
+        FT-991 (ctcss_method == "ft991"): send_mode_only() uses the live main
+        socket (_cmd_raw under _cmd_lock), so we must NOT disconnect first.
+        Generic / FTX-1F: disconnect first to prevent V command races with the
+        Doppler F/I cycle; user must reconnect manually afterwards.
         """
         if self._rig_controller is None or self._current_transmitter is None:
             return
@@ -1233,7 +1233,7 @@ class MainWindow(QMainWindow):
         dl_mode = mode
         ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         rig = self._rig_controller
-        if rig.is_connected:
+        if rig.is_connected and self._ctcss_method != "ft991":
             self._disconnect_rig()
         rig.send_mode_only(dl_mode, ul_mode)
         logger.info(
