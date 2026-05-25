@@ -1768,9 +1768,7 @@ class MainWindow(QMainWindow):
         rot = self._rotator_controller
         az = obs.azimuth_deg
         el = obs.elevation_deg
-        threading.Thread(
-            target=lambda: rot.set_position(az, el), daemon=True
-        ).start()
+        threading.Thread(target=lambda: rot.set_position(az, el), daemon=True).start()
         self._update_rot_label()
 
     def _update_rot_label(self) -> None:
