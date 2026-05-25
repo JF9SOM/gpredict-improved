@@ -530,3 +530,36 @@ S 1 Mainはrigctld標準プロトコル。全機種共通。
 - PC: GPD MicroPC2 (Ubuntu)
 - Hamlib: 4.7.1-rc (2026-02-16) モデルID 1051
 - 接続: USB → /dev/FTX1CAT → udev/systemd → rigctld:4532
+
+---
+
+## Rig-Specific Implementation Notes
+
+### FTX-1F (Hamlib model 1051)
+- rigctld backend forces Sub=TX, Main=RX regardless of S command argument
+- `S 1 Main` is required for split (not `S 1 Sub`) — rigctld standard protocol
+- `F {hz}` → Main (RX/DL),  `I {hz}` → Sub (TX/UL) via rigctld
+- Mode setting: `V Sub → M {ul_mode} 0 → V Main → M {dl_mode} 0` via independent socket
+- `V` (active VFO switch) command causes TX LED to light → forbidden in Doppler cycle
+- CTCSS: Hamlib `L CTCSS_TONE` → `RPRT -11` (not supported by backend)
+  Custom CAT via rigctld `w` command: `CN10{tone:03d};CT11;` / `CT10;`
+  `CN P1=1:SUB, P2=0:CTCSS, P3=tone index 000-049`
+
+### FT-991A (Hamlib model 1036, CAT ID=0670)
+- `MD` command only targets Main VFO (`P1=0` is fixed)
+- VFO-B mode setting requires SV swap: `SV; → MD0{code}; → SV;`
+- Hamlib `set_mode(RIG_VFO_B)` → `-11 Feature not available`
+- CTCSS: Hamlib `L CTCSS_TONE` → `RPRT -11` (not supported by backend)
+  Custom CAT: `CN00{tone:03d};CT02;` / `CT00;`
+  `CN P1=0:fixed, P2=0:CTCSS, P3=tone index 000-049`
+  `CT P2=2`: CTCSS ENC only; `CT00;` to disable
+- rigctld `w CN…` works but requires FM mode to be active on the rig
+- `SV`/`MD` commands via rigctld `w` each take ~2 s (wait for RPRT with 2 s timeout)
+- `send_mode_only()` runs in a background thread to prevent UI freeze
+
+### NET mode (rigctld) vs Direct mode (Hamlib built-in)
+- FTX-1F: both NET and Direct work; NET preferred (more stable)
+- FT-991A: both NET and Direct work
+  - Direct: `set_mode(RIG_VFO_B)` fails → uses `os.open()` raw serial writes for SV swap
+  - NET: uses independent socket for mode/CTCSS commands to avoid Doppler cycle conflict
+- Detection: use `ctcss_method` setting value (`"ft991"`) — never use `w ID;` (causes 10 s timeout)
