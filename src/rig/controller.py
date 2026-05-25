@@ -1206,7 +1206,10 @@ class HamlibNetController(RigController):
         parts = [p.strip() for p in template.split(";") if p.strip()]
         if not parts:
             return
-        logger.info("RigNet.send_ctcss_cat: tone_hz=%s cmd=%r direct=%r", tone_hz, template, bool(self._direct_port))
+        logger.info(
+            "RigNet.send_ctcss_cat: tone_hz=%s cmd=%r direct=%r",
+            tone_hz, template, bool(self._direct_port),
+        )
         if self._direct_port:
             for part in parts:
                 self._send_cat_direct(f"{part};")

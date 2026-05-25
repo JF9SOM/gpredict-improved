@@ -351,7 +351,9 @@ class RigSettingsDialog(QDialog):
         self._ctcss_cat_off_edit.setPlaceholderText(_("e.g. CT10;"))
         ctcss_form.addRow(_("CAT OFF command:"), self._ctcss_cat_off_edit)
         self._direct_cat_port_edit = QLineEdit()
-        self._direct_cat_port_edit.setPlaceholderText(_("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)"))
+        self._direct_cat_port_edit.setPlaceholderText(
+            _("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)")
+        )
         ctcss_form.addRow(_("Direct CAT Port:"), self._direct_cat_port_edit)
         self._direct_cat_baud_combo = QComboBox()
         for b in ["4800", "9600", "19200", "38400", "57600", "115200"]:
