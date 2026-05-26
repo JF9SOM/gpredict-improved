@@ -958,6 +958,22 @@ class TestHamlibRotatorController:
         assert state.azimuth_deg == 180.0
         assert state.elevation_deg == 45.0
 
+    def test_zero_crossing_forward_reenters_catchup(self) -> None:
+        ctrl = self._make_net_ctrl_connected()
+        ctrl._last_az = 350.0
+        ctrl._catching_up = False
+        assert ctrl.set_position(1.0, 10.0)
+        assert ctrl._catching_up
+        assert ctrl._last_az == pytest.approx(1.0)
+
+    def test_zero_crossing_reverse_reenters_catchup(self) -> None:
+        ctrl = self._make_net_ctrl_connected()
+        ctrl._last_az = 5.0
+        ctrl._catching_up = False
+        assert ctrl.set_position(355.0, 10.0)
+        assert ctrl._catching_up
+        assert ctrl._last_az == pytest.approx(355.0)
+
     def test_net_stop_sends_command(self) -> None:
         ctrl = self._make_net_ctrl_connected()
         assert ctrl.stop()

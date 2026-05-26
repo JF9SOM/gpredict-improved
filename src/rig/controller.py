@@ -1487,18 +1487,17 @@ class HamlibRotatorController(RotatorController):
                     logger.debug("Rotator: catching up az_diff=%.1f el_diff=%.1f", az_diff, el_diff)
                     return True
 
-            az_diff = azimuth_deg - self._last_az
-            while az_diff > 180:
-                az_diff -= 360
-            while az_diff < -180:
-                az_diff += 360
+            last = self._last_az
+            crossed_zero = (last > 270 and azimuth_deg < 90) or (last < 90 and azimuth_deg > 270)
 
-            if abs(az_diff) > 90:
+            if crossed_zero:
                 self._catching_up = True
                 self._last_az = azimuth_deg
                 self._send_p(azimuth_deg, el_cmd)
                 logger.info(
-                    "Rotator: large AZ jump detected (%.1f°), re-entering catch-up", az_diff
+                    "Rotator: 0-degree wrap %.1f->%.1f, re-entering catch-up",
+                    last,
+                    azimuth_deg,
                 )
                 return True
 
