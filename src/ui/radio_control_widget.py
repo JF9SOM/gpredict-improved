@@ -10,6 +10,7 @@ from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -39,6 +40,7 @@ class RadioControlWidget(QWidget):
     lock_changed: Signal = Signal(bool)
     rig_connected: Signal = Signal()
     rotator_connected: Signal = Signal()
+    south_init_changed: Signal = Signal(bool)
     ctcss_send_requested: Signal = Signal(float)
     ctcss_activate_requested: Signal = Signal()  # activation-tone button pressed
 
@@ -170,6 +172,20 @@ class RadioControlWidget(QWidget):
         btn_row.addWidget(self._connect_rot_btn)
         layout.addLayout(btn_row)
 
+        # South Init option: offset AZ by 180° to avoid 0/360° boundary crossing
+        si_row = QHBoxLayout()
+        self._south_init_cb = QCheckBox(_("South Init"))
+        self._south_init_cb.setToolTip(
+            _(
+                "Rotator starts facing south (180°). "
+                "AZ is offset by 180° so the 0/360° wrap is avoided."
+            )
+        )
+        self._south_init_cb.toggled.connect(self.south_init_changed.emit)
+        si_row.addWidget(self._south_init_cb)
+        si_row.addStretch()
+        layout.addLayout(si_row)
+
         layout.addStretch()
 
         self._update_rig_status()
@@ -279,6 +295,12 @@ class RadioControlWidget(QWidget):
         """Set the rotator controller."""
         self._rotator = rotator
         self._update_rot_status()
+
+    def set_south_init(self, checked: bool) -> None:
+        """Set the South Init checkbox without emitting south_init_changed."""
+        self._south_init_cb.blockSignals(True)
+        self._south_init_cb.setChecked(checked)
+        self._south_init_cb.blockSignals(False)
 
     def set_cycle(self, ms: int) -> None:
         """Set the Cycle spin box value externally without emitting a signal."""

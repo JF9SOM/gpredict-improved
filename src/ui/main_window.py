@@ -273,6 +273,8 @@ class MainWindow(QMainWindow):
         self._rig_busy_lock = threading.Lock()
         # Same pattern for rotator set_position calls.
         self._rot_busy_lock = threading.Lock()
+        # When True, AZ sent to the rotator is offset by 180° (south-initialized rotator).
+        self._rotator_south_init: bool = False
         # Cache for forced frequency transmission when the Tune button resets to centre frequency.
         # None -> use the Doppler-corrected value as-is.
         # A value -> transmit it once then reset to None.
@@ -313,6 +315,7 @@ class MainWindow(QMainWindow):
         self._radio_control.ctcss_send_requested.connect(self._on_ctcss_send)
         self._radio_control.ctcss_activate_requested.connect(self._on_ctcss_activate)
         self._radio_control.rotator_connected.connect(self._on_rotator_connected)
+        self._radio_control.south_init_changed.connect(self._on_south_init_changed)
         self._restore_satellite_filter()
         self._load_satellites()
         self._load_rig_settings()
@@ -962,7 +965,7 @@ class MainWindow(QMainWindow):
         ):
             if self._rot_busy_lock.acquire(blocking=False):
                 rot = self._rotator_controller
-                az = obs.azimuth_deg
+                az = self._apply_south_offset(obs.azimuth_deg)
                 el = obs.elevation_deg
 
                 def _rot_send() -> None:
@@ -1755,6 +1758,15 @@ class MainWindow(QMainWindow):
             self._update_rot_label()
         except Exception as exc:
             logger.warning("Failed to load rotator settings: %s", exc)
+        try:
+            south_row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'rotator_south_init'"
+            ).fetchone()
+            checked = bool(int(south_row["value"])) if south_row else False
+            self._rotator_south_init = checked
+            self._radio_control.set_south_init(checked)
+        except Exception as exc:
+            logger.warning("Failed to load rotator_south_init: %s", exc)
 
     def _on_rotator_connected(self) -> None:
         """Send the current satellite position to the rotator immediately after connect."""
@@ -1766,10 +1778,28 @@ class MainWindow(QMainWindow):
         if obs is None:
             return
         rot = self._rotator_controller
-        az = obs.azimuth_deg
+        az = self._apply_south_offset(obs.azimuth_deg)
         el = obs.elevation_deg
         threading.Thread(target=lambda: rot.set_position(az, el), daemon=True).start()
         self._update_rot_label()
+
+    def _apply_south_offset(self, az: float) -> float:
+        """Apply 180-degree offset when the rotator is south-initialized."""
+        if not self._rotator_south_init:
+            return az
+        return (az + 180) % 360
+
+    def _on_south_init_changed(self, checked: bool) -> None:
+        """Update state and persist south_init setting when the checkbox is toggled."""
+        self._rotator_south_init = checked
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('rotator_south_init', ?)",
+                ("1" if checked else "0",),
+            )
+            self._conn.commit()
+        except Exception as exc:
+            logger.warning("Failed to save rotator_south_init: %s", exc)
 
     def _update_rot_label(self) -> None:
         """Update the ROT label in the status bar."""

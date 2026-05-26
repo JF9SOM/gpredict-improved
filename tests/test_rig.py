@@ -889,6 +889,33 @@ class TestHamlibNetController:
 # ---------------------------------------------------------------------------
 
 
+class TestSouthInitOffset:
+    """Test the 180-degree AZ offset computation used in south-init rotator mode."""
+
+    @staticmethod
+    def _apply(az: float) -> float:
+        return (az + 180) % 360
+
+    def test_north_maps_to_south(self) -> None:
+        assert self._apply(0.0) == pytest.approx(180.0)
+
+    def test_south_maps_to_north(self) -> None:
+        assert self._apply(180.0) == pytest.approx(0.0)
+
+    def test_east_maps_to_west(self) -> None:
+        assert self._apply(90.0) == pytest.approx(270.0)
+
+    def test_near_zero_forward(self) -> None:
+        assert self._apply(350.0) == pytest.approx(170.0)
+
+    def test_near_zero_reverse(self) -> None:
+        assert self._apply(10.0) == pytest.approx(190.0)
+
+    def test_identity_after_double_offset(self) -> None:
+        az = 137.5
+        assert self._apply(self._apply(az)) == pytest.approx(az)
+
+
 class TestHamlibRotatorController:
     def _make_ctrl(self) -> HamlibRotatorController:
         return HamlibRotatorController(model_id=1, port="/dev/null")
