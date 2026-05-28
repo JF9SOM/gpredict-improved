@@ -424,6 +424,21 @@ python -m pytest tests/test_rig.py -q 2>&1 | tail -5
 
 `test_main_window.py` のテストは CI（GitHub Actions）で確認する。
 
+### コミット前チェックリスト
+
+**必ずこの順番で実行すること。いずれかが失敗したらコミットしない。**
+
+```bash
+# 1. フォーマット（自動修正）
+ruff format src/ tests/
+
+# 2. リントチェック
+ruff check src/ tests/
+
+# 3. テスト（test_rig.pyのみ）
+python -m pytest tests/test_rig.py -q 2>&1 | tail -5
+```
+
 ---
 
 ## ビルド・配布
