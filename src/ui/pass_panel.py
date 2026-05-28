@@ -16,6 +16,7 @@ from typing import Any
 from PySide6.QtCore import QDate, QDateTime, Qt, QThread, QTime, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDateTimeEdit,
     QFileDialog,
     QHBoxLayout,
@@ -35,6 +36,15 @@ from PySide6.QtWidgets import (
 from core.engine import PassInfo, PassPredictor
 from i18n import _
 from ui.pass_chart import QUALITY_COLORS, pass_quality
+
+# Quick-range shortcuts: (display label, hours offset from "From")
+_QUICK_RANGES: tuple[tuple[str, int], ...] = (
+    ("+ 6h", 6),
+    ("+24h", 24),
+    ("+ 3d", 72),
+    ("+ 7d", 168),
+    ("+30d", 720),
+)
 
 
 def _dt_to_qdatetime(dt: datetime) -> QDateTime:
@@ -120,12 +130,26 @@ def _make_dt_edit() -> QDateTimeEdit:
     return edit
 
 
+def _make_quick_combo() -> QComboBox:
+    """Return a QComboBox populated with quick range options."""
+    combo = QComboBox()
+    for label, _hours in _QUICK_RANGES:
+        combo.addItem(label)
+    combo.setFixedWidth(68)
+    combo.setToolTip(_("Set 'To' = 'From' + selected offset"))
+    return combo
+
+
 class PassPanel(QWidget):
     """
     Upcoming Passes panel (2-tab layout).
 
     Tab 1 "Target" — pass list for the selected satellite (date/time range, quick buttons, Search)
     Tab 2 "Group"  — pass list for all filtered satellites (background search, CSV export)
+
+    Both tabs collapse the date-range controls, quick-range selector, search/cancel buttons
+    and (for Group) the pagination + export into a single toolbar row so the result table
+    receives the maximum available vertical space.
     """
 
     pass_selected: Signal = Signal(object)  # PassInfo
@@ -181,37 +205,45 @@ class PassPanel(QWidget):
         layout.addWidget(self._tabs)
 
     def _build_target_tab(self) -> QWidget:
+        """Build the Target tab.
+
+        All controls live in a single toolbar row:
+            From [dt]  To [dt]  (UTC)  [Quick▼]  [Search]
+        """
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(2, 2, 2, 2)
         vbox.setSpacing(2)
 
-        # Date/time range row
-        dr = QHBoxLayout()
-        dr.addWidget(QLabel(_("From:")))
-        self._target_from = _make_dt_edit()
-        dr.addWidget(self._target_from)
-        dr.addWidget(QLabel(_("To:")))
-        self._target_to = _make_dt_edit()
-        dr.addWidget(self._target_to)
-        dr.addWidget(QLabel("(UTC)"))
-        dr.addStretch()
-        vbox.addLayout(dr)
+        # ---- single toolbar row ----
+        row = QHBoxLayout()
+        row.setSpacing(4)
 
-        # Quick buttons + Search row
-        qr = QHBoxLayout()
-        for label, hours in (("+ 6h", 6), ("+24h", 24), ("+ 3d", 72), ("+ 7d", 168), ("+30d", 720)):
-            btn = QPushButton(label)
-            btn.setFixedWidth(46)
-            btn.clicked.connect(lambda _c=False, h=hours: self._on_target_quick(h))
-            qr.addWidget(btn)
-        qr.addStretch()
+        row.addWidget(QLabel(_("From:")))
+        self._target_from = _make_dt_edit()
+        self._target_from.setMaximumWidth(130)
+        row.addWidget(self._target_from)
+
+        row.addWidget(QLabel(_("To:")))
+        self._target_to = _make_dt_edit()
+        self._target_to.setMaximumWidth(130)
+        row.addWidget(self._target_to)
+
+        row.addWidget(QLabel("(UTC)"))
+
+        self._target_quick_combo = _make_quick_combo()
+        self._target_quick_combo.activated.connect(self._on_target_quick_combo)
+        row.addWidget(self._target_quick_combo)
+
+        row.addStretch()
+
         search_btn = QPushButton(_("Search"))
         search_btn.clicked.connect(self._on_target_search)
-        qr.addWidget(search_btn)
-        vbox.addLayout(qr)
+        row.addWidget(search_btn)
 
-        # Table
+        vbox.addLayout(row)
+
+        # ---- result table ----
         self._target_table = QTableWidget(0, len(self._TARGET_COLS))
         self._target_table.setHorizontalHeaderLabels(list(self._TARGET_COLS))
         self._target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -226,54 +258,86 @@ class PassPanel(QWidget):
         return w
 
     def _build_group_tab(self) -> QWidget:
+        """Build the Group tab.
+
+        All controls — date range, quick selector, search/cancel, pagination and
+        export — are collapsed into a single toolbar row so the pass table gets
+        the maximum available vertical space:
+
+            From [dt]  To [dt]  (UTC)  Min El: [spin]  [Quick▼]  [Search]  [Cancel]
+            ← stretch →  [←]  [Page X/Y (N passes)]  [→]  [Export CSV]
+        """
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(2, 2, 2, 2)
         vbox.setSpacing(2)
 
-        # Date/time range + Min El row
-        dr = QHBoxLayout()
-        dr.addWidget(QLabel(_("From:")))
+        # ---- single toolbar row ----
+        row = QHBoxLayout()
+        row.setSpacing(4)
+
+        row.addWidget(QLabel(_("From:")))
         self._group_from = _make_dt_edit()
-        dr.addWidget(self._group_from)
-        dr.addWidget(QLabel(_("To:")))
+        self._group_from.setMaximumWidth(130)
+        row.addWidget(self._group_from)
+
+        row.addWidget(QLabel(_("To:")))
         self._group_to = _make_dt_edit()
-        dr.addWidget(self._group_to)
-        dr.addWidget(QLabel("(UTC)"))
-        dr.addWidget(QLabel(_("Min El:")))
+        self._group_to.setMaximumWidth(130)
+        row.addWidget(self._group_to)
+
+        row.addWidget(QLabel("(UTC)"))
+
+        row.addWidget(QLabel(_("Min El:")))
         self._group_min_el = QSpinBox()
         self._group_min_el.setRange(0, 90)
         self._group_min_el.setValue(5)
         self._group_min_el.setSuffix("°")
-        self._group_min_el.setFixedWidth(60)
-        dr.addWidget(self._group_min_el)
-        dr.addStretch()
-        vbox.addLayout(dr)
+        self._group_min_el.setFixedWidth(56)
+        row.addWidget(self._group_min_el)
 
-        # Quick buttons + Search + Cancel row
-        qr = QHBoxLayout()
-        for label, hours in (("+ 6h", 6), ("+24h", 24), ("+ 3d", 72), ("+ 7d", 168), ("+30d", 720)):
-            btn = QPushButton(label)
-            btn.setFixedWidth(46)
-            btn.clicked.connect(lambda _c=False, h=hours: self._on_group_quick(h))
-            qr.addWidget(btn)
-        qr.addStretch()
+        self._group_quick_combo = _make_quick_combo()
+        self._group_quick_combo.activated.connect(self._on_group_quick_combo)
+        row.addWidget(self._group_quick_combo)
+
         self._group_search_btn = QPushButton(_("Search"))
         self._group_search_btn.clicked.connect(self._on_group_search)
-        qr.addWidget(self._group_search_btn)
+        row.addWidget(self._group_search_btn)
+
         self._group_cancel_btn = QPushButton(_("Cancel"))
         self._group_cancel_btn.clicked.connect(self._on_group_cancel)
         self._group_cancel_btn.setEnabled(False)
-        qr.addWidget(self._group_cancel_btn)
-        vbox.addLayout(qr)
+        row.addWidget(self._group_cancel_btn)
 
-        # Progress bar
+        row.addStretch()
+
+        # Pagination — right-aligned on the same row
+        self._prev_btn = QPushButton("←")
+        self._prev_btn.setFixedWidth(26)
+        self._prev_btn.clicked.connect(self._on_prev_page)
+        row.addWidget(self._prev_btn)
+
+        self._page_label = QLabel("Page 1")
+        row.addWidget(self._page_label)
+
+        self._next_btn = QPushButton("→")
+        self._next_btn.setFixedWidth(26)
+        self._next_btn.clicked.connect(self._on_next_page)
+        row.addWidget(self._next_btn)
+
+        self._export_btn = QPushButton(_("Export CSV"))
+        self._export_btn.clicked.connect(self._on_export_csv)
+        row.addWidget(self._export_btn)
+
+        vbox.addLayout(row)
+
+        # ---- progress bar (hidden until search is running) ----
         self._group_progress = QProgressBar()
         self._group_progress.setRange(0, 100)
         self._group_progress.setVisible(False)
         vbox.addWidget(self._group_progress)
 
-        # Table
+        # ---- result table ----
         self._group_table = QTableWidget(0, len(self._GROUP_COLS))
         self._group_table.setHorizontalHeaderLabels(list(self._GROUP_COLS))
         self._group_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -284,22 +348,6 @@ class PassPanel(QWidget):
         self._group_table.cellClicked.connect(self._on_group_cell_clicked)
         self._group_table.itemSelectionChanged.connect(self._on_group_selection_changed)
         vbox.addWidget(self._group_table)
-
-        # Pagination + CSV export row
-        pr = QHBoxLayout()
-        self._prev_btn = QPushButton("← " + _("Prev"))
-        self._prev_btn.clicked.connect(self._on_prev_page)
-        self._page_label = QLabel("Page 1")
-        self._next_btn = QPushButton(_("Next") + " →")
-        self._next_btn.clicked.connect(self._on_next_page)
-        pr.addWidget(self._prev_btn)
-        pr.addWidget(self._page_label)
-        pr.addWidget(self._next_btn)
-        pr.addStretch()
-        self._export_btn = QPushButton(_("Export CSV"))
-        self._export_btn.clicked.connect(self._on_export_csv)
-        pr.addWidget(self._export_btn)
-        vbox.addLayout(pr)
 
         self._reset_group_datetimes()
         return w
@@ -365,6 +413,11 @@ class PassPanel(QWidget):
     # Callbacks — Target tab
     # ------------------------------------------------------------------ #
 
+    def _on_target_quick_combo(self, index: int) -> None:
+        """Apply the quick range selected from the combo box to the Target tab."""
+        _label, hours = _QUICK_RANGES[index]
+        self._on_target_quick(hours)
+
     def _on_target_quick(self, hours: int) -> None:
         start = _qdatetime_to_dt(self._target_from.dateTime())
         self._target_to.setDateTime(_dt_to_qdatetime(start + timedelta(hours=hours)))
@@ -385,6 +438,11 @@ class PassPanel(QWidget):
     # ------------------------------------------------------------------ #
     # Callbacks — Group tab
     # ------------------------------------------------------------------ #
+
+    def _on_group_quick_combo(self, index: int) -> None:
+        """Apply the quick range selected from the combo box to the Group tab."""
+        _label, hours = _QUICK_RANGES[index]
+        self._on_group_quick(hours)
 
     def _on_group_quick(self, hours: int) -> None:
         start = _qdatetime_to_dt(self._group_from.dateTime())
