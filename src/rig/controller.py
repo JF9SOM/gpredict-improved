@@ -1405,7 +1405,12 @@ class HamlibRotatorController(RotatorController):
 
                 self._hamlib = _H
                 rot = _H.Rot(self._model_id)
-                rot.set_conf("rig_pathname", self._port)
+                logger.info(
+                    "Rotator: creating controller port=%s model=%s",
+                    self._port,
+                    self._model_id,
+                )
+                rot.set_conf("rot_pathname", self._port)
                 rot.set_conf("serial_speed", str(self._baud_rate))
                 rot.open()
                 self._rot = rot
