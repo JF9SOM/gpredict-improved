@@ -478,8 +478,8 @@ class MainWindow(QMainWindow):
         self._qr_button.setMaximumWidth(32)
         self._qr_button.setToolTip(_("Show QR code for web access"))
         self._qr_button.clicked.connect(self._on_show_qr)
-        self._rig_label = QLabel(_("RIG: 未接続"))
-        self._rot_label = QLabel(_("ROT: 未設定"))
+        self._rig_label = QLabel(_("RIG: Off"))
+        self._rot_label = QLabel(_("ROT: Off"))
 
         if sb:
             sb.addWidget(self._qth_label)
@@ -1732,11 +1732,11 @@ class MainWindow(QMainWindow):
     def _update_rig_label(self) -> None:
         """Update the RIG label in the status bar."""
         if self._rig_controller is None:
-            self._rig_label.setText(_("RIG: 未接続"))
+            self._rig_label.setText(_("RIG: Off"))
         elif self._rig_controller.is_connected:
-            self._rig_label.setText(_("RIG: 接続中"))
+            self._rig_label.setText(_("RIG: On"))
         else:
-            self._rig_label.setText(_("RIG: 切断"))
+            self._rig_label.setText(_("RIG: Off"))
 
     def _on_rotator_settings(self) -> None:
         from ui.rotator_dialog import RotatorSettingsDialog
@@ -1833,11 +1833,11 @@ class MainWindow(QMainWindow):
     def _update_rot_label(self) -> None:
         """Update the ROT label in the status bar."""
         if self._rotator_controller is None:
-            self._rot_label.setText(_("ROT: 未設定"))
+            self._rot_label.setText(_("ROT: Off"))
         elif self._rotator_controller.is_connected:
-            self._rot_label.setText(_("ROT: 接続中"))
+            self._rot_label.setText(_("ROT: On"))
         else:
-            self._rot_label.setText(_("ROT: 切断"))
+            self._rot_label.setText(_("ROT: Off"))
 
     def _on_set_language(self, lang: str) -> None:
         from i18n import set_language
