@@ -226,6 +226,8 @@ class MainWindow(QMainWindow):
     # Signals used by the SatNOGS UUID background fetch to update the UI thread.
     _satnogs_open_url: Signal = Signal(str)
     _satnogs_not_found: Signal = Signal()
+    # Signal used to pass rotator position from a background thread to the UI thread.
+    _rot_pos_updated: Signal = Signal(float, float)
 
     def __init__(
         self,
@@ -312,6 +314,7 @@ class MainWindow(QMainWindow):
         self._radio_control.cycle_changed.connect(self._on_cycle_changed)
         self._radio_control.tune_requested.connect(self._on_tune_requested)
         self._radio_control.lock_changed.connect(self._on_lock_changed)
+        self._rot_pos_updated.connect(self._on_rotator_pos_updated)
         self._radio_control.ctcss_send_requested.connect(self._on_ctcss_send)
         self._radio_control.ctcss_activate_requested.connect(self._on_ctcss_activate)
         self._radio_control.rotator_connected.connect(self._on_rotator_connected)
@@ -972,6 +975,8 @@ class MainWindow(QMainWindow):
                     try:
                         rot.set_position(az, el)
                         logger.info("Rotator: set position az=%.1f el=%.1f", az, el)
+                        pos = rot.get_position()
+                        self._rot_pos_updated.emit(pos.azimuth_deg, pos.elevation_deg)
                     except Exception as exc:
                         logger.error("Rotator: set_position error: %s", exc)
                     finally:
@@ -980,6 +985,8 @@ class MainWindow(QMainWindow):
                 threading.Thread(target=_rot_send, daemon=True).start()
             else:
                 logger.debug("Rotator: previous cycle still running, skipping tick")
+        elif self._rotator_controller is None or not self._rotator_controller.is_connected:
+            self._pass_chart.set_rotator_position(None, None)
 
         self._radio_control.refresh_status()
         self._update_rig_label()
@@ -991,6 +998,14 @@ class MainWindow(QMainWindow):
         sb = self.statusBar()
         if sb:
             sb.showMessage(f"RIG: {msg}", 3000)
+
+    def _on_rotator_pos_updated(self, rot_az: float, rot_el: float) -> None:
+        """Update the Pass Chart rotator marker with the actual rotator position (UI thread)."""
+        if self._rotator_south_init:
+            display_az = (rot_az - 180.0) % 360.0
+        else:
+            display_az = rot_az
+        self._pass_chart.set_rotator_position(display_az, rot_el)
 
     def _update_statusbar(self) -> None:
         """Update the QTH text and TLE last-updated timestamp in the status bar."""
