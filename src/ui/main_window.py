@@ -1000,11 +1000,8 @@ class MainWindow(QMainWindow):
             sb.showMessage(f"RIG: {msg}", 3000)
 
     def _on_rotator_pos_updated(self, rot_az: float, rot_el: float) -> None:
-        """Update the Pass Chart rotator marker with the actual rotator position (UI thread)."""
-        if self._rotator_south_init:
-            display_az = (rot_az - 180.0) % 360.0
-        else:
-            display_az = rot_az
+        """Update the radar rotator marker with the actual rotator position (UI thread)."""
+        display_az = (rot_az - 180.0) % 360.0 if self._rotator_south_init else rot_az
         self._radar_view.set_rotator_position(display_az, rot_el)
 
     def _update_statusbar(self) -> None:
