@@ -135,8 +135,9 @@ def _maps_dir() -> Path:
 class _DownloadThread(QThread):
     """Background thread that downloads a single URL to a local path."""
 
-    finished: Signal = Signal(str)  # emits local file path on success
-    failed: Signal = Signal(str)  # emits error message on failure
+    # Use distinct names to avoid shadowing QThread.finished (no-arg signal).
+    download_done: Signal = Signal(str)  # emits local file path on success
+    download_error: Signal = Signal(str)  # emits error message on failure
 
     def __init__(self, url: str, dest: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -144,14 +145,14 @@ class _DownloadThread(QThread):
         self._dest = dest
 
     def run(self) -> None:
-        """Download the file; emit finished or failed when done."""
+        """Download the file; emit download_done or download_error when done."""
         try:
             resp = httpx.get(self._url, timeout=60.0, follow_redirects=True)
             resp.raise_for_status()
             self._dest.write_bytes(resp.content)
-            self.finished.emit(str(self._dest))
+            self.download_done.emit(str(self._dest))
         except Exception as exc:  # noqa: BLE001
-            self.failed.emit(str(exc))
+            self.download_error.emit(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -372,8 +373,8 @@ class SettingsDialog(QDialog):
         self._status_label.setText(_("Downloading…"))
 
         thread = _DownloadThread(info["url"], dest, parent=self)
-        thread.finished.connect(self._on_download_finished)
-        thread.failed.connect(self._on_download_failed)
+        thread.download_done.connect(self._on_download_finished)
+        thread.download_error.connect(self._on_download_failed)
         self._download_thread = thread
         thread.start()
 
