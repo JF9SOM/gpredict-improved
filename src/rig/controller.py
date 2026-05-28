@@ -1386,6 +1386,8 @@ class HamlibRotatorController(RotatorController):
         self._sock: socket.socket | None = None
         self._last_az: float | None = None  # last commanded AZ for shortest-path calc
         self._catching_up: bool = False  # True while rotator is moving to initial position
+        self._sat_az_prev: float | None = None  # satellite AZ two ticks ago (for direction detection)
+        self._sat_az_curr: float | None = None  # satellite AZ last tick
 
     def connect(self) -> bool:
         """Connect to the rotator."""
@@ -1421,6 +1423,8 @@ class HamlibRotatorController(RotatorController):
                 self._state = RigState.CONNECTED
             self._last_az = None
             self._catching_up = False
+            self._sat_az_prev = None
+            self._sat_az_curr = None
             logger.info("Rotator: connected")
             return True
         except Exception as exc:
@@ -1463,8 +1467,10 @@ class HamlibRotatorController(RotatorController):
         Four phases:
         1. First call after connect (_last_az is None): jump directly to satellite
            position and enter catch-up mode.
-        2. Catch-up mode: poll the rotator position each cycle; once within
-           _CATCH_UP_THRESHOLD degrees of the satellite, switch to normal tracking.
+        2. Catch-up mode: poll the rotator position each cycle and update the target
+           every tick so the rotator keeps chasing a moving satellite. Exit when:
+           (a) within _CATCH_UP_THRESHOLD degrees, or
+           (b) rotator has overtaken a right-moving satellite.
         3. Normal tracking: send raw satellite AZ (0-360) each cycle.
         4. Large AZ jump (>90 deg, e.g. crossing 0/360): re-enter catch-up and
            send one P command so the rotator moves to the new position at full speed.
@@ -1483,14 +1489,27 @@ class HamlibRotatorController(RotatorController):
 
             if self._catching_up:
                 current = self.get_position()
-                az_diff = abs(current.azimuth_deg - azimuth_deg)
-                el_diff = abs(current.elevation_deg - el_cmd)
-                if az_diff <= self._CATCH_UP_THRESHOLD and el_diff <= self._CATCH_UP_THRESHOLD:
+                rot_az = current.azimuth_deg
+                sat_az = azimuth_deg
+
+                sat_moving_right = (
+                    self._sat_az_curr is not None
+                    and self._sat_az_prev is not None
+                    and sat_az > self._sat_az_prev
+                )
+                az_diff = abs(rot_az - sat_az)
+
+                if sat_moving_right and rot_az > sat_az:
                     self._catching_up = False
-                    logger.info("Rotator: caught up, starting normal tracking")
+                    logger.info("Rotator: caught up (overtook satellite), starting tracking")
+                elif az_diff <= self._CATCH_UP_THRESHOLD:
+                    self._catching_up = False
+                    logger.info("Rotator: caught up (within threshold), starting tracking")
                 else:
-                    logger.debug("Rotator: catching up az_diff=%.1f el_diff=%.1f", az_diff, el_diff)
-                    return True
+                    logger.debug("Rotator: catching up az_diff=%.1f", az_diff)
+
+                self._sat_az_prev = self._sat_az_curr
+                self._sat_az_curr = sat_az
 
             last = self._last_az
             crossed_zero = (last > 270 and azimuth_deg < 90) or (last < 90 and azimuth_deg > 270)

@@ -227,6 +227,7 @@ class RadarView(QWidget):
             self._draw_satellite(p, track, color, cx, cy, r)
 
         self._draw_rotator_marker(p, cx, cy, r)
+        self._draw_legend(p)
         self._draw_status(p, cx, cy, r)
 
     def _draw_background(self, p: QPainter, cx: float, cy: float, r: float) -> None:
@@ -355,6 +356,32 @@ class RadarView(QWidget):
         p.setFont(label_font)
         p.setPen(color)
         p.drawText(int(x) + dot_r + 2, int(y) + 4, track.name)
+
+    def _draw_legend(self, p: QPainter) -> None:
+        """Draw a small legend in the top-right corner."""
+        font = QFont()
+        font.setPointSize(8)
+        p.setFont(font)
+
+        x = self.width() - 155
+        y = 18
+        line_h = 16
+
+        # Satellite position: blue filled circle
+        p.setPen(QColor("#3498db"))
+        p.setBrush(QColor("#3498db"))
+        p.drawEllipse(x, y - 7, 8, 8)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawText(x + 12, y, "Satellite Position")
+
+        # Rotator position: orange ×
+        rot_y = y + line_h
+        mx, my = x + 4, rot_y - 2  # center of the × icon (4px half-size)
+        p.setPen(QPen(QColor("#FF8C00"), 2))
+        p.drawLine(mx - 4, my - 4, mx + 4, my + 4)
+        p.drawLine(mx - 4, my + 4, mx + 4, my - 4)
+        p.setPen(QColor("#FF8C00"))
+        p.drawText(x + 12, rot_y, "Rotator Position")
 
     def _draw_rotator_marker(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         """Draw an × marker at the rotator's current AZ/EL position."""
