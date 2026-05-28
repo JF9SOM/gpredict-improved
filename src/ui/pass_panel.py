@@ -16,6 +16,7 @@ from typing import Any
 from PySide6.QtCore import QDate, QDateTime, Qt, QThread, QTime, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCalendarWidget,
     QComboBox,
     QDateTimeEdit,
     QFileDialog,
@@ -122,10 +123,56 @@ class _GroupSearchWorker(QThread):
         self.finished_results.emit(results)
 
 
-def _make_dt_edit() -> QDateTimeEdit:
-    """Return a QDateTimeEdit with a calendar popup displaying UTC."""
-    edit = QDateTimeEdit()
-    edit.setCalendarPopup(True)
+class _CalendarWithNow(QCalendarWidget):
+    """QCalendarWidget extended with a 'Current Time' button at the bottom of the grid.
+
+    Emits ``now_requested`` when the button is clicked; the owning
+    ``_NowDateTimeEdit`` handles the actual datetime update and popup close.
+    """
+
+    now_requested: Signal = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        now_btn = QPushButton(_("Current Time"))
+        now_btn.setToolTip(_("Set date and time to now (UTC)"))
+        now_btn.clicked.connect(self.now_requested)
+        # QCalendarWidget creates a QVBoxLayout internally during __init__;
+        # appending our button here places it below the month grid.
+        cal_layout = self.layout()
+        if cal_layout is not None:
+            cal_layout.addWidget(now_btn)
+
+
+class _NowDateTimeEdit(QDateTimeEdit):
+    """QDateTimeEdit whose calendar popup includes a 'Current Time' reset button.
+
+    Clicking 'Current Time' resets both the date and the time portion to the
+    current UTC instant and dismisses the calendar popup.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setCalendarPopup(True)
+        self._cal = _CalendarWithNow()
+        self.setCalendarWidget(self._cal)
+        self._cal.now_requested.connect(self._apply_now)
+
+    def _apply_now(self) -> None:
+        """Reset to the current UTC instant and close the calendar popup."""
+        now = datetime.now(UTC)
+        qdt = _dt_to_qdatetime(now)
+        # Emitting activated(QDate) triggers the internal QCalendarPopup slot
+        # (dateSelected) which: (1) propagates the date to the edit via
+        # newDateEntered → setDate, and (2) calls hidePopup() to dismiss the popup.
+        self._cal.activated.emit(qdt.date())
+        # setDate() only updates the date portion; update time separately.
+        self.setTime(qdt.time())
+
+
+def _make_dt_edit() -> _NowDateTimeEdit:
+    """Return a _NowDateTimeEdit with a UTC calendar popup and a 'Current Time' button."""
+    edit = _NowDateTimeEdit()
     edit.setDisplayFormat("yyyy-MM-dd HH:mm")
     return edit
 
