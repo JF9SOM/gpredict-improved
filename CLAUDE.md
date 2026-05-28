@@ -504,6 +504,76 @@ sudo usermod -aG dialout $USER
 
 ---
 
+## 多言語化ロードマップ
+
+### 開発方針
+**フェーズ1（現在）**: 英語モードのみで全機能を完成させる。  
+**フェーズ2（英語完成後）**: 日本語モードを追加する。
+
+コード中のすべての UI 文字列は `_("...")` でラップ済みであること。
+新しい文字列を追加する際も必ず `_("English string")` で書くこと（日本語をハードコードしない）。
+
+### 日本語モード追加時の作業手順
+
+#### 1. 翻訳対象文字列の抽出
+```bash
+# src/ 以下の _("...") を全て抽出して .pot ファイルを生成
+xgettext --language=Python --keyword=_ --keyword=ngettext:1,2 \
+    -o locale/gpredict_improved.pot \
+    $(find src/ -name "*.py")
+```
+
+#### 2. 日本語 .po ファイルの作成・更新
+```bash
+# 初回: テンプレートから ja.po を作成
+msginit --input=locale/gpredict_improved.pot \
+        --locale=ja --output=locale/ja/LC_MESSAGES/gpredict_improved.po
+
+# 2回目以降: 既存 .po に新しい文字列をマージ
+msgmerge --update \
+    locale/ja/LC_MESSAGES/gpredict_improved.po \
+    locale/gpredict_improved.pot
+```
+
+#### 3. .po ファイルの翻訳編集
+`locale/ja/LC_MESSAGES/gpredict_improved.po` を開き、
+`msgstr ""` の部分に日本語訳を記入する。
+
+```po
+# 例
+msgid "RIG: Off"
+msgstr "RIG: 切断"
+
+msgid "RIG: On"
+msgstr "RIG: 接続中"
+
+msgid "Satellite Position"
+msgstr "衛星位置"
+```
+
+#### 4. .mo ファイルのコンパイル
+```bash
+msgfmt locale/ja/LC_MESSAGES/gpredict_improved.po \
+       -o locale/ja/LC_MESSAGES/gpredict_improved.mo
+```
+
+#### 5. 動作確認
+```python
+# 起動時またはメニューから言語切り替え
+from i18n import set_language
+set_language("ja")
+```
+
+#### 6. コミット対象
+`.po` と `.mo` の両方をコミットする（`.mo` はバイナリだが配布に必要）。
+
+### 注意事項
+- `_("...")` の中身は**常に英語**で書く（gettext の msgid が英語前提）
+- Qt 標準ダイアログ（QMessageBox等）のボタン文字列は Qt 側の翻訳ファイル（`qtbase_ja.qm`）が担当するため別途対応不要
+- Web UI（`src/web/static/`）の JavaScript 文字列は別管理（gettext 非対応）。フェーズ2では手動置換またはブラウザ向け i18n ライブラリの導入を検討する
+
+---
+
 ## HamlibNetController 実装メモ（2026-05-20 確認済み）
 
 ### FTX-1F + rigctld での動作確認済みプロトコル
