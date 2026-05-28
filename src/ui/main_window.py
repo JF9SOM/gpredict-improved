@@ -23,6 +23,8 @@ from typing import Any, TypedDict
 import httpx
 from PySide6.QtCore import QPoint, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
     QCloseEvent,
     QColor,
     QDesktopServices,
@@ -324,6 +326,7 @@ class MainWindow(QMainWindow):
         self._load_rig_settings()
         self._load_rotator_settings()
         self._apply_world_map()
+        self._apply_time_zone()
 
         if fastapi_app is not None:
             self._start_web_server(fastapi_app, web_port)
@@ -456,6 +459,20 @@ class MainWindow(QMainWindow):
             if lang_menu:
                 lang_menu.addAction("English", lambda: self._on_set_language("en"))
                 lang_menu.addAction("日本語", lambda: self._on_set_language("ja"))
+
+            tz_menu = view_menu.addMenu(_("Time Zone"))
+            if tz_menu:
+                tz_group = QActionGroup(self)
+                tz_group.setExclusive(True)
+                self._tz_utc_action = QAction("UTC", self, checkable=True)
+                self._tz_local_action = QAction(_("Local Time"), self, checkable=True)
+                tz_group.addAction(self._tz_utc_action)
+                tz_group.addAction(self._tz_local_action)
+                tz_menu.addAction(self._tz_utc_action)
+                tz_menu.addAction(self._tz_local_action)
+                self._tz_utc_action.triggered.connect(lambda: self._on_time_zone_changed(True))
+                self._tz_local_action.triggered.connect(lambda: self._on_time_zone_changed(False))
+
             view_menu.addSeparator()
             view_menu.addAction(_("Radar"), lambda: self._tab_widget.setCurrentIndex(1))
             view_menu.addAction(_("Pass Chart"), lambda: self._tab_widget.setCurrentIndex(2))
@@ -1443,6 +1460,35 @@ class MainWindow(QMainWindow):
 
         path = SettingsDialog.get_world_map_path(self._conn)
         self._world_map.set_map_image(path)
+
+    def _apply_time_zone(self) -> None:
+        """Load the saved time zone preference and apply it to all time-display widgets."""
+        row = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'time_zone_mode'"
+        ).fetchone()
+        use_utc = (row["value"] if row and row["value"] else "utc") != "local"
+
+        # Sync menu checkmarks
+        if hasattr(self, "_tz_utc_action"):
+            self._tz_utc_action.setChecked(use_utc)
+            self._tz_local_action.setChecked(not use_utc)
+
+        self._pass_list.set_use_utc(use_utc)
+        self._pass_chart.set_use_utc(use_utc)
+
+    def _on_time_zone_changed(self, use_utc: bool) -> None:
+        """Persist the time zone preference and propagate to all display widgets."""
+        value = "utc" if use_utc else "local"
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO app_settings (key, value, updated_at)
+            VALUES ('time_zone_mode', ?, CURRENT_TIMESTAMP)
+            """,
+            (value,),
+        )
+        self._conn.commit()
+        self._pass_list.set_use_utc(use_utc)
+        self._pass_chart.set_use_utc(use_utc)
 
     def _on_settings_accepted(self) -> None:
         """After Settings OK, sync the enabled TLE sources and redraw the satellite list."""

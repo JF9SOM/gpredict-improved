@@ -174,6 +174,7 @@ class PassChartView(QWidget):
         self._series_to_pass: dict[QSplineSeries, PassInfo] = {}
         self._overlay: list[tuple[QSplineSeries, float, QColor]] = []
         self._peak_label_items: list[QGraphicsTextItem] = []
+        self._use_utc: bool = True
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -227,6 +228,18 @@ class PassChartView(QWidget):
         """
         self._passes = passes
         self._sat_name = sat_name
+        self._rebuild()
+
+    def set_use_utc(self, use_utc: bool) -> None:
+        """Switch the time axis between UTC and local time display.
+
+        Args:
+            use_utc: True → axis labels and title show UTC;
+                     False → axis labels show system local time.
+        """
+        if use_utc == self._use_utc:
+            return
+        self._use_utc = use_utc
         self._rebuild()
 
     def clear(self) -> None:
@@ -303,8 +316,8 @@ class PassChartView(QWidget):
 
         # Set the range after all series have been added (attachAxis overwrites auto-range)
         dt_axis.setRange(
-            QDateTime.fromMSecsSinceEpoch(int(now.timestamp() * 1000)),
-            QDateTime.fromMSecsSinceEpoch(int(cutoff.timestamp() * 1000)),
+            self._epoch_ms_to_qdatetime(now.timestamp() * 1000),
+            self._epoch_ms_to_qdatetime(cutoff.timestamp() * 1000),
         )
         el_axis.setRange(0.0, 90.0)
 
@@ -395,10 +408,16 @@ class PassChartView(QWidget):
             except Exception:  # noqa: BLE001
                 pass
 
+    def _epoch_ms_to_qdatetime(self, epoch_ms: float) -> QDateTime:
+        """Convert epoch milliseconds to a QDateTime in the active display timezone."""
+        if self._use_utc:
+            return QDateTime.fromMSecsSinceEpoch(int(epoch_ms), Qt.TimeSpec.UTC)
+        return QDateTime.fromMSecsSinceEpoch(int(epoch_ms))
+
     def _make_time_axis(self) -> QDateTimeAxis:
         axis = QDateTimeAxis()
         axis.setFormat("HH:mm")
-        axis.setTitleText("Time (UTC)")
+        axis.setTitleText("Time (UTC)" if self._use_utc else "Time (Local)")
         axis.setTickCount(7)
         return axis
 

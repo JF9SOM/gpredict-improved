@@ -48,6 +48,51 @@ _QUICK_RANGES: tuple[tuple[str, int], ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Timezone-aware helpers
+# ---------------------------------------------------------------------------
+
+
+def _utc_to_display_qdatetime(dt_utc: datetime, use_utc: bool) -> QDateTime:
+    """Convert a UTC-aware datetime to a QDateTime in the chosen display timezone.
+
+    Args:
+        dt_utc:  UTC-aware datetime (tzinfo=UTC)
+        use_utc: True → UTC spec QDateTime; False → LocalTime spec QDateTime
+
+    Returns:
+        QDateTime ready for use in a QDateTimeEdit.
+    """
+    if use_utc:
+        return QDateTime(
+            QDate(dt_utc.year, dt_utc.month, dt_utc.day),
+            QTime(dt_utc.hour, dt_utc.minute, dt_utc.second),
+            Qt.TimeSpec.UTC,
+        )
+    # Convert to the system local timezone before building QDateTime
+    local_dt = dt_utc.astimezone()
+    return QDateTime(
+        QDate(local_dt.year, local_dt.month, local_dt.day),
+        QTime(local_dt.hour, local_dt.minute, local_dt.second),
+        Qt.TimeSpec.LocalTime,
+    )
+
+
+def _format_aos(dt_utc: datetime, use_utc: bool) -> str:
+    """Format an AOS timestamp for table display in the chosen timezone.
+
+    Args:
+        dt_utc:  UTC-aware AOS datetime
+        use_utc: True → format in UTC; False → format in system local time
+
+    Returns:
+        Formatted string like "05/28 16:30".
+    """
+    if use_utc:
+        return dt_utc.strftime("%m/%d %H:%M")
+    return dt_utc.astimezone().strftime("%m/%d %H:%M")
+
+
 def _dt_to_qdatetime(dt: datetime) -> QDateTime:
     """Convert a Python datetime (UTC) to a QDateTime (UTC spec)."""
     return QDateTime(
@@ -58,11 +103,84 @@ def _dt_to_qdatetime(dt: datetime) -> QDateTime:
 
 
 def _qdatetime_to_dt(qdt: QDateTime) -> datetime:
-    """Convert a QDateTime to a Python datetime (UTC)."""
+    """Convert a QDateTime (any spec) to a UTC Python datetime."""
     utc = qdt.toUTC()
     d = utc.date()
     t = utc.time()
     return datetime(d.year(), d.month(), d.day(), t.hour(), t.minute(), t.second(), tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Calendar widget with "Current Time" button
+# ---------------------------------------------------------------------------
+
+
+class _CalendarWithNow(QCalendarWidget):
+    """QCalendarWidget extended with a 'Current Time' button at the bottom of the grid.
+
+    Emits ``now_requested`` when the button is clicked; the owning
+    ``_NowDateTimeEdit`` handles the actual datetime update and popup close.
+    """
+
+    now_requested: Signal = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        now_btn = QPushButton(_("Current Time"))
+        now_btn.setToolTip(_("Set date and time to now"))
+        now_btn.clicked.connect(self.now_requested)
+        # QCalendarWidget creates a QVBoxLayout internally during __init__;
+        # appending our button here places it below the month grid.
+        cal_layout = self.layout()
+        if cal_layout is not None:
+            cal_layout.addWidget(now_btn)
+
+
+class _NowDateTimeEdit(QDateTimeEdit):
+    """QDateTimeEdit whose calendar popup includes a 'Current Time' reset button.
+
+    Supports switching between UTC and local time display via ``set_use_utc()``.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._use_utc: bool = True
+        self.setCalendarPopup(True)
+        self.setTimeSpec(Qt.TimeSpec.UTC)  # default: show UTC
+        self._cal = _CalendarWithNow()
+        self.setCalendarWidget(self._cal)
+        self._cal.now_requested.connect(self._apply_now)
+
+    def set_use_utc(self, use_utc: bool) -> None:
+        """Switch the display between UTC and local time.
+
+        Also updates the currently displayed value to the correct timezone.
+        """
+        if use_utc == self._use_utc:
+            return
+        self._use_utc = use_utc
+        new_spec = Qt.TimeSpec.UTC if use_utc else Qt.TimeSpec.LocalTime
+        # Convert the current value to the new timezone before changing the spec
+        # so the displayed instant stays the same.
+        current_utc = _qdatetime_to_dt(self.dateTime())
+        self.setTimeSpec(new_spec)
+        self.setDateTime(_utc_to_display_qdatetime(current_utc, use_utc))
+
+    def _apply_now(self) -> None:
+        """Reset to the current instant in the active display timezone and close popup."""
+        now_utc = datetime.now(UTC)
+        qdt = _utc_to_display_qdatetime(now_utc, self._use_utc)
+        # Emitting activated(QDate) triggers QCalendarPopup.dateSelected which:
+        #   1. propagates the date to the edit via newDateEntered → setDate
+        #   2. calls hidePopup() to dismiss the popup
+        self._cal.activated.emit(qdt.date())
+        # setDate() only updates the date portion; apply the time separately.
+        self.setTime(qdt.time())
+
+
+# ---------------------------------------------------------------------------
+# Group search worker
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -123,51 +241,9 @@ class _GroupSearchWorker(QThread):
         self.finished_results.emit(results)
 
 
-class _CalendarWithNow(QCalendarWidget):
-    """QCalendarWidget extended with a 'Current Time' button at the bottom of the grid.
-
-    Emits ``now_requested`` when the button is clicked; the owning
-    ``_NowDateTimeEdit`` handles the actual datetime update and popup close.
-    """
-
-    now_requested: Signal = Signal()
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        now_btn = QPushButton(_("Current Time"))
-        now_btn.setToolTip(_("Set date and time to now (UTC)"))
-        now_btn.clicked.connect(self.now_requested)
-        # QCalendarWidget creates a QVBoxLayout internally during __init__;
-        # appending our button here places it below the month grid.
-        cal_layout = self.layout()
-        if cal_layout is not None:
-            cal_layout.addWidget(now_btn)
-
-
-class _NowDateTimeEdit(QDateTimeEdit):
-    """QDateTimeEdit whose calendar popup includes a 'Current Time' reset button.
-
-    Clicking 'Current Time' resets both the date and the time portion to the
-    current UTC instant and dismisses the calendar popup.
-    """
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setCalendarPopup(True)
-        self._cal = _CalendarWithNow()
-        self.setCalendarWidget(self._cal)
-        self._cal.now_requested.connect(self._apply_now)
-
-    def _apply_now(self) -> None:
-        """Reset to the current UTC instant and close the calendar popup."""
-        now = datetime.now(UTC)
-        qdt = _dt_to_qdatetime(now)
-        # Emitting activated(QDate) triggers the internal QCalendarPopup slot
-        # (dateSelected) which: (1) propagates the date to the edit via
-        # newDateEntered → setDate, and (2) calls hidePopup() to dismiss the popup.
-        self._cal.activated.emit(qdt.date())
-        # setDate() only updates the date portion; update time separately.
-        self.setTime(qdt.time())
+# ---------------------------------------------------------------------------
+# Widget factories
+# ---------------------------------------------------------------------------
 
 
 def _make_dt_edit() -> _NowDateTimeEdit:
@@ -187,6 +263,11 @@ def _make_quick_combo() -> QComboBox:
     return combo
 
 
+# ---------------------------------------------------------------------------
+# PassPanel
+# ---------------------------------------------------------------------------
+
+
 class PassPanel(QWidget):
     """
     Upcoming Passes panel (2-tab layout).
@@ -197,6 +278,8 @@ class PassPanel(QWidget):
     Both tabs collapse the date-range controls, quick-range selector, search/cancel buttons
     and (for Group) the pagination + export into a single toolbar row so the result table
     receives the maximum available vertical space.
+
+    Call ``set_use_utc(False)`` to switch all datetime displays to local time.
     """
 
     pass_selected: Signal = Signal(object)  # PassInfo
@@ -232,6 +315,7 @@ class PassPanel(QWidget):
         self._cache_key: _CacheKey | None = None
         self._cache_results: list[GroupPassResult] = []
         self._pending_cache_key: _CacheKey | None = None
+        self._use_utc: bool = True
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -252,17 +336,12 @@ class PassPanel(QWidget):
         layout.addWidget(self._tabs)
 
     def _build_target_tab(self) -> QWidget:
-        """Build the Target tab.
-
-        All controls live in a single toolbar row:
-            From [dt]  To [dt]  (UTC)  [Quick▼]  [Search]
-        """
+        """Build the Target tab (single toolbar row + result table)."""
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(2, 2, 2, 2)
         vbox.setSpacing(2)
 
-        # ---- single toolbar row ----
         row = QHBoxLayout()
         row.setSpacing(4)
 
@@ -276,7 +355,9 @@ class PassPanel(QWidget):
         self._target_to.setMaximumWidth(130)
         row.addWidget(self._target_to)
 
-        row.addWidget(QLabel("(UTC)"))
+        # Timezone label: "(UTC)" or "(Local)" — updated by set_use_utc()
+        self._tz_label_target = QLabel("(UTC)")
+        row.addWidget(self._tz_label_target)
 
         self._target_quick_combo = _make_quick_combo()
         self._target_quick_combo.activated.connect(self._on_target_quick_combo)
@@ -290,7 +371,6 @@ class PassPanel(QWidget):
 
         vbox.addLayout(row)
 
-        # ---- result table ----
         self._target_table = QTableWidget(0, len(self._TARGET_COLS))
         self._target_table.setHorizontalHeaderLabels(list(self._TARGET_COLS))
         self._target_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -305,21 +385,12 @@ class PassPanel(QWidget):
         return w
 
     def _build_group_tab(self) -> QWidget:
-        """Build the Group tab.
-
-        All controls — date range, quick selector, search/cancel, pagination and
-        export — are collapsed into a single toolbar row so the pass table gets
-        the maximum available vertical space:
-
-            From [dt]  To [dt]  (UTC)  Min El: [spin]  [Quick▼]  [Search]  [Cancel]
-            ← stretch →  [←]  [Page X/Y (N passes)]  [→]  [Export CSV]
-        """
+        """Build the Group tab (single toolbar row + progress + result table)."""
         w = QWidget()
         vbox = QVBoxLayout(w)
         vbox.setContentsMargins(2, 2, 2, 2)
         vbox.setSpacing(2)
 
-        # ---- single toolbar row ----
         row = QHBoxLayout()
         row.setSpacing(4)
 
@@ -333,7 +404,9 @@ class PassPanel(QWidget):
         self._group_to.setMaximumWidth(130)
         row.addWidget(self._group_to)
 
-        row.addWidget(QLabel("(UTC)"))
+        # Timezone label — updated by set_use_utc()
+        self._tz_label_group = QLabel("(UTC)")
+        row.addWidget(self._tz_label_group)
 
         row.addWidget(QLabel(_("Min El:")))
         self._group_min_el = QSpinBox()
@@ -358,7 +431,6 @@ class PassPanel(QWidget):
 
         row.addStretch()
 
-        # Pagination — right-aligned on the same row
         self._prev_btn = QPushButton("←")
         self._prev_btn.setFixedWidth(26)
         self._prev_btn.clicked.connect(self._on_prev_page)
@@ -378,13 +450,11 @@ class PassPanel(QWidget):
 
         vbox.addLayout(row)
 
-        # ---- progress bar (hidden until search is running) ----
         self._group_progress = QProgressBar()
         self._group_progress.setRange(0, 100)
         self._group_progress.setVisible(False)
         vbox.addWidget(self._group_progress)
 
-        # ---- result table ----
         self._group_table = QTableWidget(0, len(self._GROUP_COLS))
         self._group_table.setHorizontalHeaderLabels(list(self._GROUP_COLS))
         self._group_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -400,25 +470,65 @@ class PassPanel(QWidget):
         return w
 
     # ------------------------------------------------------------------ #
+    # Timezone support
+    # ------------------------------------------------------------------ #
+
+    def set_use_utc(self, use_utc: bool) -> None:
+        """Switch all datetime controls and table AOS columns between UTC and local time.
+
+        Args:
+            use_utc: True → display and accept UTC; False → local system time.
+        """
+        if use_utc == self._use_utc:
+            return
+        self._use_utc = use_utc
+
+        # Update all four datetime edits
+        for edit in (self._target_from, self._target_to, self._group_from, self._group_to):
+            edit.set_use_utc(use_utc)
+
+        # Update timezone labels
+        tz_text = "(UTC)" if use_utc else _("(Local)")
+        self._tz_label_target.setText(tz_text)
+        self._tz_label_group.setText(tz_text)
+
+        # Update table column headers
+        aos_header = "AOS (UTC)" if use_utc else _("AOS (Local)")
+        for table in (self._target_table, self._group_table):
+            # AOS column is index 0 on group table, index 0 on target table
+            header = table.horizontalHeaderItem(0 if table is self._target_table else 1)
+            if header is not None:
+                header.setText(aos_header)
+
+        # Refresh table rows with new timezone formatting
+        self._populate_target_table(self._passes)
+        if self._group_results:
+            self._refresh_group_page()
+
+    # ------------------------------------------------------------------ #
     # Helpers
     # ------------------------------------------------------------------ #
 
     def _reset_target_datetimes(self) -> None:
         now = datetime.now(UTC)
-        self._target_from.setDateTime(_dt_to_qdatetime(now))
-        self._target_to.setDateTime(_dt_to_qdatetime(now + timedelta(hours=24)))
+        self._target_from.setDateTime(_utc_to_display_qdatetime(now, self._use_utc))
+        self._target_to.setDateTime(
+            _utc_to_display_qdatetime(now + timedelta(hours=24), self._use_utc)
+        )
 
     def _reset_group_datetimes(self) -> None:
         now = datetime.now(UTC)
-        self._group_from.setDateTime(_dt_to_qdatetime(now))
-        self._group_to.setDateTime(_dt_to_qdatetime(now + timedelta(hours=24)))
+        self._group_from.setDateTime(_utc_to_display_qdatetime(now, self._use_utc))
+        self._group_to.setDateTime(
+            _utc_to_display_qdatetime(now + timedelta(hours=24), self._use_utc)
+        )
 
     def _populate_target_table(self, passes: list[PassInfo]) -> None:
         self._target_table.setRowCount(0)
         for p in passes:
             row = self._target_table.rowCount()
             self._target_table.insertRow(row)
-            self._target_table.setItem(row, 0, QTableWidgetItem(p.aos.strftime("%m/%d %H:%M")))
+            self._target_table.setItem(row, 0, QTableWidgetItem(_format_aos(p.aos, self._use_utc)))
             self._target_table.setItem(row, 1, QTableWidgetItem(f"{p.max_elevation_deg:.1f}°"))
             mins, secs = divmod(int(p.duration_s), 60)
             self._target_table.setItem(row, 2, QTableWidgetItem(f"{mins}m {secs:02d}s"))
@@ -440,7 +550,7 @@ class PassPanel(QWidget):
             sat_item.setData(Qt.ItemDataRole.UserRole, r.norad_cat_id)
             self._group_table.setItem(row, 0, sat_item)
             p = r.pass_info
-            self._group_table.setItem(row, 1, QTableWidgetItem(p.aos.strftime("%m/%d %H:%M")))
+            self._group_table.setItem(row, 1, QTableWidgetItem(_format_aos(p.aos, self._use_utc)))
             self._group_table.setItem(row, 2, QTableWidgetItem(f"{p.max_elevation_deg:.1f}°"))
             mins, secs = divmod(int(p.duration_s), 60)
             self._group_table.setItem(row, 3, QTableWidgetItem(f"{mins}m {secs:02d}s"))
@@ -467,7 +577,9 @@ class PassPanel(QWidget):
 
     def _on_target_quick(self, hours: int) -> None:
         start = _qdatetime_to_dt(self._target_from.dateTime())
-        self._target_to.setDateTime(_dt_to_qdatetime(start + timedelta(hours=hours)))
+        self._target_to.setDateTime(
+            _utc_to_display_qdatetime(start + timedelta(hours=hours), self._use_utc)
+        )
 
     def _on_target_search(self) -> None:
         start = _qdatetime_to_dt(self._target_from.dateTime())
@@ -493,7 +605,9 @@ class PassPanel(QWidget):
 
     def _on_group_quick(self, hours: int) -> None:
         start = _qdatetime_to_dt(self._group_from.dateTime())
-        self._group_to.setDateTime(_dt_to_qdatetime(start + timedelta(hours=hours)))
+        self._group_to.setDateTime(
+            _utc_to_display_qdatetime(start + timedelta(hours=hours), self._use_utc)
+        )
 
     def _on_group_search(self) -> None:
         if self._predictor is None or not self._sat_list:
