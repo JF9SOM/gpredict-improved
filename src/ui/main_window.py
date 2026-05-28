@@ -1346,6 +1346,12 @@ class MainWindow(QMainWindow):
             now,
             now + timedelta(hours=24),
         )
+        # get_passes(start=now) misses a pass already in progress because its AOS
+        # is in the past and Skyfield emits no retroactive AOS event.  Prepend the
+        # ongoing pass when the satellite is currently above the horizon.
+        current_pass = self._pass_predictor.get_current_pass(self._selected_norad, now)
+        if current_pass is not None:
+            passes = [current_pass, *passes]
         self._current_passes = passes
         self._pass_list.set_passes(passes)
 

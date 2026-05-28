@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -345,6 +345,50 @@ class PassPredictor:
             return []
 
         return self._group_events(norad_cat_id, sat, times, events)
+
+    def get_current_pass(
+        self,
+        norad_cat_id: int,
+        now: datetime | None = None,
+    ) -> PassInfo | None:
+        """Return the ongoing pass if the satellite is currently above the horizon.
+
+        get_passes(start=now) misses the current pass when AOS already occurred
+        before now — Skyfield's find_events() only emits future events, so
+        _group_events() discards the incomplete TCA/LOS-only triplet.
+
+        This method searches from 3 hours before now so that the real AOS is
+        always inside the search window (typical LEO passes are < 20 minutes).
+
+        Args:
+            norad_cat_id: NORAD satellite number
+            now: Reference time (UTC); defaults to datetime.now(UTC)
+
+        Returns:
+            PassInfo whose aos <= now <= los, or None if not currently in a pass.
+        """
+        if now is None:
+            now = datetime.now(UTC)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+
+        obs = self._engine.observe(norad_cat_id)
+        if obs is None or not obs.is_above_horizon:
+            return None
+
+        # 3-hour back-search is far more than any LEO pass duration
+        search_start = now - timedelta(hours=3)
+        search_end = now + timedelta(hours=3)
+        passes = self.get_passes(
+            norad_cat_id,
+            search_start,
+            search_end,
+            min_elevation_deg=0.0,
+        )
+        for p in passes:
+            if p.aos <= now <= p.los:
+                return p
+        return None
 
     # ------------------------------------------------------------------ #
     # Internal processing
