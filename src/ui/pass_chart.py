@@ -30,7 +30,6 @@ from PySide6.QtCore import QDateTime, QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
-    QGraphicsLineItem,
     QGraphicsTextItem,
     QHBoxLayout,
     QLabel,
@@ -175,9 +174,6 @@ class PassChartView(QWidget):
         self._series_to_pass: dict[QSplineSeries, PassInfo] = {}
         self._overlay: list[tuple[QSplineSeries, float, QColor]] = []
         self._peak_label_items: list[QGraphicsTextItem] = []
-        self._rot_az: float | None = None
-        self._rot_el: float | None = None
-        self._rot_marker_lines: list[QGraphicsLineItem] = []
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -240,22 +236,10 @@ class PassChartView(QWidget):
         self._series_to_pass = {}
         self._overlay = []
         self._clear_peak_labels()
-        self._clear_rotator_marker()
         self._chart.removeAllSeries()
         for axis in self._chart.axes():
             self._chart.removeAxis(axis)
         self._chart.setTitle("")
-
-    def set_rotator_position(self, az: float | None, el: float | None) -> None:
-        """Update the rotator current-position marker on the chart.
-
-        Args:
-            az: rotator azimuth in degrees, or None to hide the marker
-            el: rotator elevation in degrees, or None to hide the marker
-        """
-        self._rot_az = az
-        self._rot_el = el
-        self._update_rotator_marker()
 
     # ------------------------------------------------------------------ #
     # Chart construction
@@ -272,9 +256,8 @@ class PassChartView(QWidget):
 
     def _rebuild(self) -> None:
         """Rebuild the chart using passes within the selected time range."""
-        # Remove existing overlays from the scene before deleting series
+        # Remove existing peak labels from the scene before deleting series
         self._clear_peak_labels()
-        self._clear_rotator_marker()
         self._overlay = []
         self._chart.removeAllSeries()
         for axis in self._chart.axes():
@@ -327,10 +310,9 @@ class PassChartView(QWidget):
 
         self._overlay = overlay
 
-        # Place labels and rotator marker 150 ms after Qt Charts finishes layout calculation
+        # Place labels in the scene 150 ms after Qt Charts finishes layout calculation
         # (mapToPosition() returns incorrect coordinates before layout is finalised)
         QTimer.singleShot(150, self._add_peak_labels)
-        QTimer.singleShot(150, self._update_rotator_marker)
 
     def _clear_peak_labels(self) -> None:
         """Remove all peak-label QGraphicsTextItems from the scene."""
@@ -340,78 +322,15 @@ class PassChartView(QWidget):
                 scene.removeItem(item)
         self._peak_label_items.clear()
 
-    def _clear_rotator_marker(self) -> None:
-        """Remove rotator marker lines from the scene."""
-        scene = self._chart.scene()
-        if scene is not None:
-            for item in self._rot_marker_lines:
-                scene.removeItem(item)
-        self._rot_marker_lines.clear()
-
-    def _update_rotator_marker(self) -> None:
-        """Place or hide the rotator × marker at (now, rotator_el) in the chart."""
-        self._clear_rotator_marker()
-
-        if self._rot_az is None or self._rot_el is None:
-            return
-
-        if not self.isVisible():
-            return
-
-        if not self._chart.axes():
-            return
-
-        plot_area = self._chart.plotArea()
-        if plot_area.width() <= 1 or plot_area.height() <= 1:
-            return
-
-        now_ms = datetime.now(UTC).timestamp() * 1000.0
-        el_clamped = max(0.0, min(90.0, self._rot_el))
-        try:
-            chart_pt = self._chart.mapToPosition(QPointF(now_ms, el_clamped))
-            if not plot_area.contains(chart_pt):
-                return
-            scene_pos = self._chart.mapToScene(chart_pt)
-        except Exception:  # noqa: BLE001
-            return
-
-        sz = 6.0
-        pen = QPen(QColor("#FF8C00"))
-        pen.setWidth(2)
-        tooltip = f"Rotator: AZ={self._rot_az:.1f}° EL={self._rot_el:.1f}°"
-
-        line1 = QGraphicsLineItem(
-            scene_pos.x() - sz, scene_pos.y() - sz,
-            scene_pos.x() + sz, scene_pos.y() + sz,
-        )
-        line1.setPen(pen)
-        line1.setToolTip(tooltip)
-
-        line2 = QGraphicsLineItem(
-            scene_pos.x() - sz, scene_pos.y() + sz,
-            scene_pos.x() + sz, scene_pos.y() - sz,
-        )
-        line2.setPen(pen)
-        line2.setToolTip(tooltip)
-
-        scene = self._chart.scene()
-        if scene is None:
-            return
-        scene.addItem(line1)
-        scene.addItem(line2)
-        self._rot_marker_lines = [line1, line2]
-
     def showEvent(self, event: object) -> None:  # noqa: ANN001
-        """(Re)place labels and rotator marker when the widget becomes visible (e.g. on tab switch).
+        """(Re)place labels when the widget becomes visible (e.g. on tab switch).
 
         The chart's drawing mapping is not yet finalised immediately after showEvent,
-        so these are called after a short delay.
+        so _add_peak_labels() is called after a short delay.
         """
         super().showEvent(event)  # type: ignore[arg-type]
         if self._overlay:
             QTimer.singleShot(50, self._add_peak_labels)
-        if self._rot_az is not None:
-            QTimer.singleShot(50, self._update_rotator_marker)
 
     def _add_peak_labels(self, retry: int = 0) -> None:
         """Place elevation labels at each pass peak as QGraphicsTextItems in the scene.

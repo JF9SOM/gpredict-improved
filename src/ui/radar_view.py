@@ -140,6 +140,8 @@ class RadarView(QWidget):
         self.setMinimumSize(200, 200)
         self._tracks: list[SatTrackData] = []
         self._dot_hit_radius: float = 10.0
+        self._rot_az: float | None = None
+        self._rot_el: float | None = None
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -158,6 +160,17 @@ class RadarView(QWidget):
     def clear(self) -> None:
         """Clear all satellites from the radar."""
         self._tracks = []
+        self.update()
+
+    def set_rotator_position(self, az: float | None, el: float | None) -> None:
+        """Update the rotator current-position marker on the radar.
+
+        Args:
+            az: rotator azimuth in degrees, or None to hide the marker
+            el: rotator elevation in degrees, or None to hide the marker
+        """
+        self._rot_az = az
+        self._rot_el = el
         self.update()
 
     # ------------------------------------------------------------------ #
@@ -213,6 +226,7 @@ class RadarView(QWidget):
             self._draw_track(p, track, color, cx, cy, r)
             self._draw_satellite(p, track, color, cx, cy, r)
 
+        self._draw_rotator_marker(p, cx, cy, r)
         self._draw_status(p, cx, cy, r)
 
     def _draw_background(self, p: QPainter, cx: float, cy: float, r: float) -> None:
@@ -341,6 +355,17 @@ class RadarView(QWidget):
         p.setFont(label_font)
         p.setPen(color)
         p.drawText(int(x) + dot_r + 2, int(y) + 4, track.name)
+
+    def _draw_rotator_marker(self, p: QPainter, cx: float, cy: float, r: float) -> None:
+        """Draw an × marker at the rotator's current AZ/EL position."""
+        if self._rot_az is None or self._rot_el is None:
+            return
+        x, y = az_el_to_xy(self._rot_az, self._rot_el, cx, cy, r)
+        sz = 6.0
+        pen = QPen(QColor("#FF8C00"), 2)
+        p.setPen(pen)
+        p.drawLine(int(x - sz), int(y - sz), int(x + sz), int(y + sz))
+        p.drawLine(int(x - sz), int(y + sz), int(x + sz), int(y - sz))
 
     def _draw_status(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         """Draw current or next pass info below the radar circle."""
