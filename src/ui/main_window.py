@@ -1790,6 +1790,17 @@ class MainWindow(QMainWindow):
         """Send the current satellite position to the rotator immediately after connect."""
         if self._rotator_controller is None or not self._rotator_controller.is_connected:
             return
+
+        # Fetch actual rotator position and show on radar; fall back to (0, 0)
+        # if get_position() returns the default RotatorState.
+        rot_ctrl = self._rotator_controller
+
+        def _fetch_init_pos() -> None:
+            pos = rot_ctrl.get_position()
+            self._rot_pos_updated.emit(pos.azimuth_deg, pos.elevation_deg)
+
+        threading.Thread(target=_fetch_init_pos, daemon=True).start()
+
         if self._selected_norad is None or self._engine is None:
             return
         obs = self._engine.observe(self._selected_norad)

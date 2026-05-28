@@ -1363,7 +1363,7 @@ class HamlibRotatorController(RotatorController):
     """
 
     _CATCH_UP_THRESHOLD: float = 5.0  # degrees; switch to normal tracking when within this
-    _CATCH_UP_TIMEOUT: float = 50.0  # seconds; resend P command if catch-up takes too long
+    _CATCH_UP_TIMEOUT: float = 60.0  # seconds; resend P command if catch-up takes too long
 
     def __init__(
         self,
