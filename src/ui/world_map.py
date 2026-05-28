@@ -19,7 +19,16 @@ from typing import Any
 
 import httpx
 from PySide6.QtCore import QPointF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen, QPolygonF
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PySide6.QtWidgets import QSizePolicy, QWidget
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry import shape as geojson_shape
@@ -396,6 +405,8 @@ class WorldMapView(QWidget):
         self._footprint: tuple[int, float, float, float] | None = None
         # Filter: None = show all, set = show only specified NORADs
         self._visible_norads: set[int] | None = None
+        # Optional background map image (replaces polygon rendering when set)
+        self._map_pixmap: QPixmap | None = None
 
     def sizeHint(self) -> QSize:
         return QSize(800, 400)
@@ -442,6 +453,24 @@ class WorldMapView(QWidget):
         if self._footprint is not None:
             self._footprint = None
             self.update()
+
+    def set_map_image(self, path: str | None) -> None:
+        """Set a background map image to use instead of the polygon-rendered map.
+
+        When set, the image is drawn scaled to fill the widget and the land
+        polygon layer is skipped.  Satellite overlays (grid, equator, dots,
+        footprint, observer) are always drawn on top.
+
+        Args:
+            path: Absolute path to a JPEG or PNG equirectangular world map
+                  image, or None to fall back to the built-in polygon map.
+        """
+        if path is None:
+            self._map_pixmap = None
+        else:
+            px = QPixmap(path)
+            self._map_pixmap = px if not px.isNull() else None
+        self.update()
 
     def set_observer_location(self, lat: float, lon: float) -> None:
         """
@@ -495,17 +524,23 @@ class WorldMapView(QWidget):
     def _draw(self, p: QPainter) -> None:
         w, h = float(self.width()), float(self.height())
 
-        # Background (ocean: medium blue)
-        p.fillRect(0, 0, int(w), int(h), QColor("#1565C0"))
+        if self._map_pixmap is not None:
+            # Use downloaded map image as background (scaled to fill widget)
+            p.drawPixmap(0, 0, int(w), int(h), self._map_pixmap)
+        else:
+            # Background (ocean: medium blue)
+            p.fillRect(0, 0, int(w), int(h), QColor("#1565C0"))
 
-        # Land polygons (Natural Earth 110m)
-        p.setPen(QPen(QColor("#1B5E20"), 1))
-        p.setBrush(QColor("#388E3C"))
-        for polygon_coords in get_land_polygons():
-            # Internal representation is (lat, lon) order
-            points = [QPointF(*self.latlon_to_xy(lat, lon, w, h)) for lat, lon in polygon_coords]
-            if len(points) >= 3:
-                p.drawPolygon(QPolygonF(points))
+            # Land polygons (Natural Earth 110m)
+            p.setPen(QPen(QColor("#1B5E20"), 1))
+            p.setBrush(QColor("#388E3C"))
+            for polygon_coords in get_land_polygons():
+                # Internal representation is (lat, lon) order
+                points = [
+                    QPointF(*self.latlon_to_xy(lat, lon, w, h)) for lat, lon in polygon_coords
+                ]
+                if len(points) >= 3:
+                    p.drawPolygon(QPolygonF(points))
 
         # Grid lines (30° intervals, light cyan dashed)
         grid_pen = QPen(QColor("#90CAF9"), 1)

@@ -323,6 +323,7 @@ class MainWindow(QMainWindow):
         self._load_satellites()
         self._load_rig_settings()
         self._load_rotator_settings()
+        self._apply_world_map()
 
         if fastapi_app is not None:
             self._start_web_server(fastapi_app, web_port)
@@ -1436,9 +1437,18 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._on_settings_accepted()
 
+    def _apply_world_map(self) -> None:
+        """Apply the world map image selected in Settings to the WorldMapView."""
+        from ui.settings_dialog import SettingsDialog
+
+        path = SettingsDialog.get_world_map_path(self._conn)
+        self._world_map.set_map_image(path)
+
     def _on_settings_accepted(self) -> None:
         """After Settings OK, sync the enabled TLE sources and redraw the satellite list."""
         from ui.settings_dialog import SettingsDialog
+
+        self._apply_world_map()
 
         enabled = SettingsDialog.get_enabled_sources(self._conn)
 

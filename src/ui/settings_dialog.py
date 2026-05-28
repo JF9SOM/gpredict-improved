@@ -2,7 +2,7 @@
 Settings dialog.
 
 SettingsDialog — Dialog opened from File > Settings.
-Includes a tab for TLE source selection.
+Includes tabs for TLE source selection and world map selection.
 """
 
 from __future__ import annotations
@@ -10,13 +10,22 @@ from __future__ import annotations
 import contextlib
 import json
 import sqlite3
+from pathlib import Path
 
+import httpx
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -24,6 +33,10 @@ from PySide6.QtWidgets import (
 
 from data.tle_manager import TLE_SOURCES
 from i18n import _
+
+# ---------------------------------------------------------------------------
+# TLE source constants
+# ---------------------------------------------------------------------------
 
 _SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "celestrak-stations": "Space Stations (CelesTrak)",
@@ -43,40 +56,139 @@ _DEFAULT_ENABLED = {
     "celestrak-science",
 }
 
+# ---------------------------------------------------------------------------
+# World map constants
+# ---------------------------------------------------------------------------
+
+_GPREDICT_MAPS_BASE = "https://raw.githubusercontent.com/csete/gpredict/master/pixmaps/maps"
+
+#: Curated list of equirectangular world maps from the GPredict repository.
+KNOWN_MAPS: list[dict[str, str]] = [
+    {
+        "name": "NASA Topographic 1024px",
+        "filename": "nasa-topo_1024.jpg",
+        "description": "NASA topographic map — 1024 px JPEG (~74 KB)",
+        "url": f"{_GPREDICT_MAPS_BASE}/nasa-topo_1024.jpg",
+    },
+    {
+        "name": "NASA Topographic 800px",
+        "filename": "nasa-topo_800.png",
+        "description": "NASA topographic map — 800 px PNG (~280 KB)",
+        "url": f"{_GPREDICT_MAPS_BASE}/nasa-topo_800.png",
+    },
+    {
+        "name": "Earth 800px",
+        "filename": "earth_800.png",
+        "description": "Simple Earth map — 800 px PNG (~385 KB)",
+        "url": f"{_GPREDICT_MAPS_BASE}/earth_800.png",
+    },
+    {
+        "name": "Blue Marble — January (1024px)",
+        "filename": "nasa-bmng-01_1024.jpg",
+        "description": "NASA Blue Marble Natural Geography, January — 1024 px JPEG (~106 KB)",
+        "url": f"{_GPREDICT_MAPS_BASE}/nasa-bmng-01_1024.jpg",
+    },
+    {
+        "name": "Blue Marble — March (1024px)",
+        "filename": "nasa-bmng-03_1024.jpg",
+        "description": "NASA Blue Marble Natural Geography, March — 1024 px JPEG (~106 KB)",
+        "url": f"{_GPREDICT_MAPS_BASE}/nasa-bmng-03_1024.jpg",
+    },
+    {
+        "name": "Blue Marble — May (1024px)",
+        "filename": "nasa-bmng-05_1024.jpg",
+        "description": "NASA Blue Marble Natural Geography, May — 1024 px JPEG (~103 KB)",
+        "url": f"{_GPREDICT_MAPS_BASE}/nasa-bmng-05_1024.jpg",
+    },
+    {
+        "name": "Blue Marble — July (1024px)",
+        "filename": "nasa-bmng-07_1024.jpg",
+        "description": "NASA Blue Marble Natural Geography, July — 1024 px JPEG (~95 KB)",
+        "url": f"{_GPREDICT_MAPS_BASE}/nasa-bmng-07_1024.jpg",
+    },
+    {
+        "name": "Blue Marble — August (1024px)",
+        "filename": "nasa-bmng-08_1024.jpg",
+        "description": "NASA Blue Marble Natural Geography, August — 1024 px JPEG (~94 KB)",
+        "url": f"{_GPREDICT_MAPS_BASE}/nasa-bmng-08_1024.jpg",
+    },
+]
+
+#: Sentinel value stored in app_settings to represent the built-in polygon map.
+_BUILTIN_SENTINEL = ""
+
+
+def _maps_dir() -> Path:
+    """Return (and create) the local directory where map images are stored."""
+    from platformdirs import user_data_dir
+
+    d = Path(user_data_dir("gpredict-improved", "gpredict-improved")) / "maps"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Download helper thread
+# ---------------------------------------------------------------------------
+
+
+class _DownloadThread(QThread):
+    """Background thread that downloads a single URL to a local path."""
+
+    finished: Signal = Signal(str)  # emits local file path on success
+    failed: Signal = Signal(str)  # emits error message on failure
+
+    def __init__(self, url: str, dest: Path, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._url = url
+        self._dest = dest
+
+    def run(self) -> None:
+        """Download the file; emit finished or failed when done."""
+        try:
+            resp = httpx.get(self._url, timeout=60.0, follow_redirects=True)
+            resp.raise_for_status()
+            self._dest.write_bytes(resp.content)
+            self.finished.emit(str(self._dest))
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# SettingsDialog
+# ---------------------------------------------------------------------------
+
 
 class SettingsDialog(QDialog):
-    """File > Settings dialog. Includes a tab for TLE source selection."""
+    """File > Settings dialog.  Tabs: TLE Sources, World Map."""
 
     def __init__(self, conn: sqlite3.Connection, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._conn = conn
         self.setWindowTitle(_("Settings"))
-        self.resize(420, 320)
+        self.resize(640, 480)
         self._source_checks: dict[str, QCheckBox] = {}
+        # World-map tab state
+        self._map_list: QListWidget
+        self._preview_label: QLabel
+        self._desc_label: QLabel
+        self._download_btn: QPushButton
+        self._status_label: QLabel
+        self._download_thread: _DownloadThread | None = None
+        self._selected_map_filename: str = _BUILTIN_SENTINEL
         self._setup_ui()
         self._load_settings()
+
+    # ------------------------------------------------------------------ #
+    # UI construction
+    # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
 
-        tle_tab = QWidget()
-        tle_layout = QVBoxLayout(tle_tab)
-        tle_layout.addWidget(QLabel(_("Select TLE sources to download:")))
-
-        group = QGroupBox(_("TLE Sources"))
-        group_layout = QVBoxLayout(group)
-
-        for src in TLE_SOURCES:
-            name = src["name"]
-            label = _SOURCE_DISPLAY_NAMES.get(name, name)
-            cb = QCheckBox(label)
-            self._source_checks[name] = cb
-            group_layout.addWidget(cb)
-
-        tle_layout.addWidget(group)
-        tle_layout.addStretch()
-        tabs.addTab(tle_tab, _("TLE Sources"))
+        tabs.addTab(self._build_tle_tab(), _("TLE Sources"))
+        tabs.addTab(self._build_map_tab(), _("World Map"))
 
         layout.addWidget(tabs)
 
@@ -88,7 +200,216 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _build_tle_tab(self) -> QWidget:
+        """Build the TLE Sources tab widget."""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.addWidget(QLabel(_("Select TLE sources to download:")))
+
+        group = QGroupBox(_("TLE Sources"))
+        group_layout = QVBoxLayout(group)
+
+        for src in TLE_SOURCES:
+            name = src["name"]
+            label = _SOURCE_DISPLAY_NAMES.get(name, name)
+            cb = QCheckBox(label)
+            self._source_checks[name] = cb
+            group_layout.addWidget(cb)
+
+        tab_layout.addWidget(group)
+        tab_layout.addStretch()
+        return tab
+
+    def _build_map_tab(self) -> QWidget:
+        """Build the World Map tab widget."""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.addWidget(
+            QLabel(
+                _(
+                    "Select the background map for the World Map view.\n"
+                    "Maps are downloaded from the GPredict repository and stored locally."
+                )
+            )
+        )
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # --- Left panel: map list ---
+        list_widget = QListWidget()
+        list_widget.setMinimumWidth(200)
+        list_widget.setMaximumWidth(260)
+
+        # First entry: built-in polygon map (always available)
+        builtin_item = QListWidgetItem(_("Built-in polygon map"))
+        builtin_item.setData(Qt.ItemDataRole.UserRole, _BUILTIN_SENTINEL)
+        list_widget.addItem(builtin_item)
+
+        for info in KNOWN_MAPS:
+            filename = info["filename"]
+            downloaded = (_maps_dir() / filename).exists()
+            suffix = _(" ✓") if downloaded else ""
+            item = QListWidgetItem(info["name"] + suffix)
+            item.setData(Qt.ItemDataRole.UserRole, filename)
+            list_widget.addItem(item)
+
+        list_widget.currentItemChanged.connect(self._on_map_item_changed)
+        self._map_list = list_widget
+        splitter.addWidget(list_widget)
+
+        # --- Right panel: preview + info + download ---
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(8, 4, 4, 4)
+
+        # Thumbnail preview
+        preview = QLabel()
+        preview.setFixedSize(320, 160)
+        preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview.setStyleSheet("background: #222; border: 1px solid #555;")
+        preview.setText(_("(no preview)"))
+        self._preview_label = preview
+        right_layout.addWidget(preview)
+
+        # Description
+        desc = QLabel()
+        desc.setWordWrap(True)
+        desc.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._desc_label = desc
+        right_layout.addWidget(desc)
+
+        # Download row
+        dl_row = QHBoxLayout()
+        dl_btn = QPushButton(_("Download"))
+        dl_btn.setEnabled(False)
+        dl_btn.clicked.connect(self._on_download_clicked)
+        self._download_btn = dl_btn
+        dl_row.addWidget(dl_btn)
+
+        status_lbl = QLabel()
+        self._status_label = status_lbl
+        dl_row.addWidget(status_lbl)
+        dl_row.addStretch()
+        right_layout.addLayout(dl_row)
+
+        right_layout.addStretch()
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+
+        tab_layout.addWidget(splitter)
+        return tab
+
+    # ------------------------------------------------------------------ #
+    # Map tab logic
+    # ------------------------------------------------------------------ #
+
+    def _on_map_item_changed(
+        self, current: QListWidgetItem | None, _previous: QListWidgetItem | None
+    ) -> None:
+        """Update the right panel when the user selects a different map entry."""
+        if current is None:
+            return
+
+        filename: str = current.data(Qt.ItemDataRole.UserRole)
+        self._selected_map_filename = filename
+
+        if filename == _BUILTIN_SENTINEL:
+            self._preview_label.setText(_("Built-in polygon map\n(no image file)"))
+            self._preview_label.setPixmap(QPixmap())
+            self._desc_label.setText(
+                _(
+                    "The default map drawn with Natural Earth 110m land polygons.\n"
+                    "No download required."
+                )
+            )
+            self._download_btn.setEnabled(False)
+            self._status_label.setText("")
+            return
+
+        # Look up metadata
+        info = next((m for m in KNOWN_MAPS if m["filename"] == filename), None)
+        if info is None:
+            return
+
+        self._desc_label.setText(info["description"])
+
+        local_path = _maps_dir() / filename
+        if local_path.exists():
+            self._show_preview(local_path)
+            self._download_btn.setEnabled(False)
+            self._status_label.setText(_("Downloaded"))
+        else:
+            self._preview_label.setPixmap(QPixmap())
+            self._preview_label.setText(_("Not downloaded"))
+            self._download_btn.setEnabled(True)
+            self._status_label.setText("")
+
+    def _show_preview(self, path: Path) -> None:
+        """Load and display a scaled thumbnail of the map image."""
+        px = QPixmap(str(path))
+        if px.isNull():
+            self._preview_label.setText(_("(preview unavailable)"))
+            return
+        scaled = px.scaled(
+            self._preview_label.width(),
+            self._preview_label.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._preview_label.setPixmap(scaled)
+        self._preview_label.setText("")
+
+    def _on_download_clicked(self) -> None:
+        """Start downloading the currently selected map in a background thread."""
+        filename = self._selected_map_filename
+        info = next((m for m in KNOWN_MAPS if m["filename"] == filename), None)
+        if info is None:
+            return
+
+        dest = _maps_dir() / filename
+        self._download_btn.setEnabled(False)
+        self._status_label.setText(_("Downloading…"))
+
+        thread = _DownloadThread(info["url"], dest, parent=self)
+        thread.finished.connect(self._on_download_finished)
+        thread.failed.connect(self._on_download_failed)
+        self._download_thread = thread
+        thread.start()
+
+    def _on_download_finished(self, local_path: str) -> None:
+        """Called on the main thread when a download completes successfully."""
+        self._status_label.setText(_("Downloaded"))
+        self._show_preview(Path(local_path))
+        self._refresh_list_item_suffix(Path(local_path).name, downloaded=True)
+        self._download_thread = None
+
+    def _on_download_failed(self, error: str) -> None:
+        """Called on the main thread when a download fails."""
+        self._status_label.setText(_("Error: ") + error)
+        self._download_btn.setEnabled(True)
+        self._download_thread = None
+
+    def _refresh_list_item_suffix(self, filename: str, *, downloaded: bool) -> None:
+        """Update the ✓ suffix on the given list item."""
+        for i in range(self._map_list.count()):
+            item = self._map_list.item(i)
+            if item is None:
+                continue
+            if item.data(Qt.ItemDataRole.UserRole) == filename:
+                base_name = next(
+                    (m["name"] for m in KNOWN_MAPS if m["filename"] == filename), filename
+                )
+                item.setText(base_name + (_(" ✓") if downloaded else ""))
+                break
+
+    # ------------------------------------------------------------------ #
+    # Settings persistence
+    # ------------------------------------------------------------------ #
+
     def _load_settings(self) -> None:
+        """Load TLE source enablement and world map selection from the DB."""
+        # TLE sources
         row = self._conn.execute(
             "SELECT value FROM app_settings WHERE key = 'tle_enabled_sources'"
         ).fetchone()
@@ -103,7 +424,24 @@ class SettingsDialog(QDialog):
             else:
                 cb.setChecked(name in enabled)
 
+        # World map selection
+        map_row = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'world_map_file'"
+        ).fetchone()
+        saved_file = (map_row["value"] if map_row and map_row["value"] else "").strip()
+
+        # Select matching item in the list (default to built-in at index 0)
+        target_index = 0
+        for i in range(self._map_list.count()):
+            item = self._map_list.item(i)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == saved_file:
+                target_index = i
+                break
+        self._map_list.setCurrentRow(target_index)
+
     def _save_settings(self) -> None:
+        """Persist TLE source enablement and world map selection to the DB."""
+        # TLE sources
         enabled = [name for name, cb in self._source_checks.items() if cb.isChecked()]
         self._conn.execute(
             """
@@ -112,7 +450,20 @@ class SettingsDialog(QDialog):
             """,
             (json.dumps(enabled),),
         )
+
+        # World map
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO app_settings (key, value, updated_at)
+            VALUES ('world_map_file', ?, CURRENT_TIMESTAMP)
+            """,
+            (self._selected_map_filename,),
+        )
         self._conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Static helpers
+    # ------------------------------------------------------------------ #
 
     @staticmethod
     def get_enabled_sources(conn: sqlite3.Connection) -> list[str]:
@@ -126,3 +477,17 @@ class SettingsDialog(QDialog):
             except (json.JSONDecodeError, TypeError):
                 pass
         return list(_DEFAULT_ENABLED)
+
+    @staticmethod
+    def get_world_map_path(conn: sqlite3.Connection) -> str | None:
+        """Return the absolute path to the selected world map image, or None for built-in.
+
+        Returns None when no map has been selected, when the saved filename is
+        empty (built-in), or when the file does not exist on disk.
+        """
+        row = conn.execute("SELECT value FROM app_settings WHERE key = 'world_map_file'").fetchone()
+        filename = (row["value"] if row and row["value"] else "").strip()
+        if not filename:
+            return None
+        path = _maps_dir() / filename
+        return str(path) if path.exists() else None
