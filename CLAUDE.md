@@ -482,15 +482,16 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## 実装済み機能一覧（2026年5月18日時点）
+## 実装済み機能一覧（2026年5月29日時点）
 
 - 衛星追尾エンジン（Skyfield）
 - Qt6デスクトップUI（世界地図・レーダー・Pass Chart・Radio Control）
 - FastAPI内蔵Webサーバー（ポート8080）
 - スマホブラウザUI（グループフィルター・Favorites・Group Pass・レーダー）
-- Hamlib内蔵リグ制御（Direct/NET Control）
+- Hamlib内蔵リグ制御（Direct/NET Control）・Rig 1 / Rig 2 デュアルリグ対応
 - SATNOGS周波数DB同期・手動追加
 - TLE自動更新（CelesTrak: Amateur/CubeSat/Weather/Earth-Obs/Science/Stations）
+- **SATNOGS仮ID（90000番台）衛星のTLE自動取得・仮ID→実ID移行パイプライン**
 - AMSAT運用状況スクレイピング・色分け表示
 - お気に入り機能（デスクトップ・スマホ共通DB）
 - フットプリント表示
@@ -501,6 +502,7 @@ sudo usermod -aG dialout $USER
 1. ドップラー補正の実動作確認
 2. ローテーター設定ダイアログ
 3. AppImageビルド（配布パッケージ）
+4. CelesTrak 未収録衛星（NORAD 10000-89999）のTLE取得改善（GROUP=active 等の追加）
 
 ---
 
@@ -685,3 +687,85 @@ S 1 Mainはrigctld標準プロトコル。全機種共通。
   - Direct: `set_mode(RIG_VFO_B)` fails → uses `os.open()` raw serial writes for SV swap
   - NET: uses independent socket for mode/CTCSS commands to avoid Doppler cycle conflict
 - Detection: use `ctcss_method` setting value (`"ft991"`) — never use `w ID;` (causes 10 s timeout)
+
+---
+
+## 仮NORAD ID（90000番台）衛星のTLE・トランスポンダー管理
+
+### 背景
+
+SATNOGS は正式 NORAD ID が未確定の衛星に 90000 番台の仮 ID を割り振る。
+これらは CelesTrak グループフェッチでは TLE が取得できず、位置が表示されない。
+
+### TLE 取得方法（src/data/tle_manager.py）
+
+SATNOGS TLE API エンドポイントを使用：
+```
+GET https://db.satnogs.org/api/tle/?norad_cat_id={fake_id}&format=json
+```
+
+このエンドポイントは仮 ID に対して以下の3種類のいずれかを返す：
+| tle_source | line1 の NORAD | 意味 |
+|---|---|---|
+| Space-Track.org | 実 NORAD ID | SATNOGS が内部で実 ID を把握 |
+| CelesTrak (supplemental) | 実 NORAD ID | CelesTrak 補完カタログで解決 |
+| SatNOGS Team | 仮 ID | 独自生成TLE（精度低め・更新頻度低） |
+
+`fetch_provisional_tles()` は `is_hidden=0 AND norad_cat_id >= 90000` の全衛星を対象に
+このAPIを呼び出し、TLE を `source='satnogs'`, `tle_group='provisional'` として保存する。
+
+- 起動時に `_refresh_satellite_names_sync()` 完了後に自動実行
+- APScheduler で 12 時間ごとに定期更新
+- `source='manual'` の TLE は絶対に上書きしない
+
+### 仮ID→実ID 移行パイプライン（src/data/transmitter_manager.py）
+
+`_run_migration_pipeline(fake_id, real_id)` — **冪等。何度呼んでも安全。**
+
+実行される手順（各ステップはスキップ条件あり）：
+1. 実 ID の satellites レコードを作成（なければ）
+2. 実 ID の衛星名が `OBJECT *` 等のプレースホルダーなら SATNOGS 名で上書き
+3. TLE を仮 ID → 実 ID へコピー（実 ID 側に manual TLE があればスキップ）
+4. トランスミッタを仮 ID → 実 ID へ移行（実 ID 側に既存ならスキップ）
+5. `is_favorite` を実 ID にコピー
+6. 実 ID 衛星に `satnogs_source_id = fake_id` を記録
+7. 仮 ID を `is_hidden = 2`（システム非表示）に設定
+
+#### トリガー
+| トリガー | 発火場所 |
+|---|---|
+| (A) SATNOGS 衛星 API で `norad_follow_id` が設定された | `sync_satellite_names()` |
+| (B) SATNOGS TLE API が返す line1 の NORAD が仮 ID と異なる | `fetch_provisional_tles()` |
+
+### `satnogs_source_id` によるシームレスなトランスポンダー同期
+
+移行後も SATNOGS は仮 ID 側でトランスポンダーを管理し続けることがある。
+`satellites.satnogs_source_id = fake_id` が設定された実 ID 衛星は、
+`sync_from_satnogs()` 内で以下のルーティングが適用される：
+
+```
+SATNOGS API に対して satellite__norad_cat_id=fake_id でクエリ
+→ 返ってきたトランスポンダーを norad_cat_id=real_id として保存
+```
+
+#### フォールバック検知（未実装・将来課題）
+SATNOGS 側がトランスポンダーデータを実 ID に移行した場合、
+`satnogs_source_id` を NULL にリセットして実 ID で同期する機能は未実装。
+現状では `satnogs_source_id` が設定されていても実害はなく、
+SATNOGS が `norad_follow_id` をトランスポンダーに設定した時点で自然に解決される。
+
+### ORIGAMISAT-2（NORAD 68795 / 仮 ID 98325）の状態
+
+```
+satellites(norad_cat_id=68795):
+  is_hidden = 0          ← 表示中
+  satnogs_source_id = 98325  ← 仮 ID でトランスポンダーを取得
+  alt_names = ["JS1YRU", "FO-126"]
+  TLE: source=manual     ← CelesTrakから手動取得・絶対上書きしない
+
+satellites(norad_cat_id=98325):
+  is_hidden = 2          ← システム非表示
+  transmitters = 0件     ← 全て 68795 に移行済み
+```
+
+この衛星は既に最終状態にあり、移行パイプラインは冪等ルールにより何も変更しない。
