@@ -748,11 +748,12 @@ SATNOGS API に対して satellite__norad_cat_id=fake_id でクエリ
 → 返ってきたトランスポンダーを norad_cat_id=real_id として保存
 ```
 
-#### フォールバック検知（未実装・将来課題）
-SATNOGS 側がトランスポンダーデータを実 ID に移行した場合、
-`satnogs_source_id` を NULL にリセットして実 ID で同期する機能は未実装。
-現状では `satnogs_source_id` が設定されていても実害はなく、
-SATNOGS が `norad_follow_id` をトランスポンダーに設定した時点で自然に解決される。
+#### 未実装項目（必要性は低いが、将来的な実装を検討すべき）
+
+| 項目 | 内容 |
+|---|---|
+| **トリガー(C)：GUI手動設定** | 「この衛星の実 NORAD ID は〇〇」とユーザーが GUI から手動指定する機能。トリガー(A)(B) で自動カバーできるケースがほとんどのため現時点では不要。 |
+| **フォールバック検知** | SATNOGS 側がトランスポンダーデータを実 ID に移行した場合に `satnogs_source_id` を自動で NULL にリセットする機能。現状では設定されていても実害はなく、SATNOGS が `norad_follow_id` をトランスポンダーに設定した時点で自然に解決される。 |
 
 ### ORIGAMISAT-2（NORAD 68795 / 仮 ID 98325）の状態
 
