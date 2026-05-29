@@ -527,7 +527,7 @@ class TLEManager:
                     INSERT OR REPLACE INTO tle_data
                         (norad_cat_id, name, line1, line2, epoch,
                          source, tle_group, fetched_at, quality_score)
-                    VALUES (?, ?, ?, ?, ?, 'satnogs', 'provisional', ?, ?)
+                    VALUES (?, ?, ?, ?, ?, 'satnogs', 'amateur', ?, ?)
                     """,
                     (fake_id, name, line1, line2, epoch_dt.isoformat(), now, quality),
                 )
