@@ -325,13 +325,15 @@ class TestRadioControlWidget:
     def test_no_rig_buttons_disabled(self, qtbot) -> None:
         w = RadioControlWidget()
         qtbot.addWidget(w)
-        assert not w._connect_rig_btn.isEnabled()
+        assert not w._connect_rig1_btn.isEnabled()
+        assert not w._connect_rig2_btn.isEnabled()
         assert not w._connect_rot_btn.isEnabled()
 
     def test_rig_status_not_configured(self, qtbot) -> None:
         w = RadioControlWidget()
         qtbot.addWidget(w)
-        assert "configured" in w._rig_status_label.text().lower()
+        assert "configured" in w._rig1_status_label.text().lower()
+        assert "configured" in w._rig2_status_label.text().lower()
 
     # -- Transponder combo --
 
@@ -1689,12 +1691,12 @@ class TestRadioType:
     """Radio Type 設定テスト。"""
 
     def test_radio_type_combo_exists(self, qtbot, db) -> None:
-        """RigSettingsDialog に _radio_type_combo が存在する。"""
+        """RigSettingsDialog の Rig 1 パネルに _radio_type_combo が存在する。"""
         from ui.rig_dialog import RigSettingsDialog
 
         w = RigSettingsDialog(db)
         qtbot.addWidget(w)
-        assert hasattr(w, "_radio_type_combo")
+        assert hasattr(w._panel1, "_radio_type_combo")
 
     def test_radio_type_default_full_duplex(self, qtbot, db) -> None:
         """デフォルトで full_duplex が選択されている。"""
@@ -1702,7 +1704,7 @@ class TestRadioType:
 
         w = RigSettingsDialog(db)
         qtbot.addWidget(w)
-        assert w._radio_type_combo.currentData() == "full_duplex"
+        assert w._panel1._radio_type_combo.currentData() == "full_duplex"
 
     def test_radio_type_items(self, qtbot, db) -> None:
         """full_duplex / rx_only / tx_only の3選択肢がある。"""
@@ -1710,7 +1712,8 @@ class TestRadioType:
 
         w = RigSettingsDialog(db)
         qtbot.addWidget(w)
-        data_values = [w._radio_type_combo.itemData(i) for i in range(w._radio_type_combo.count())]
+        combo = w._panel1._radio_type_combo
+        data_values = [combo.itemData(i) for i in range(combo.count())]
         assert "full_duplex" in data_values
         assert "rx_only" in data_values
         assert "tx_only" in data_values
