@@ -2,13 +2,20 @@
 Rig settings dialog.
 
 RigSettingsDialog — Dialog opened from Radio > Rig Settings.
+Two tabs (Rig 1 / Rig 2) each containing a _RigPanel.
 Supports Hamlib direct connection and NET (rigctld) connection.
-Fetches all supported models from the Hamlib Python binding and
-displays them with a search filter.
+
+DB keys:
+  'rig1_settings' — JSON dict for Rig 1 (always active)
+  'rig2_settings' — JSON dict for Rig 2 (has an 'enabled' boolean field)
+
+Backward compatibility: if 'rig1_settings' is absent but the legacy
+'rig_settings' key exists, it is migrated to 'rig1_settings' on first open.
 """
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import json
 import sys
@@ -16,6 +23,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -26,7 +34,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -35,15 +45,11 @@ from i18n import _
 from rig.controller import CTCSS_PRESET_TEMPLATES
 
 # ---------------------------------------------------------------------------
-# Hamlib Python binding (imported only when available)
+# Hamlib Python binding (imported lazily to avoid Qt TLS collision at startup)
 # ---------------------------------------------------------------------------
 
-# Hamlib is imported lazily inside _load_from_hamlib_api() to avoid loading the
-# shared library at startup, which collides with Qt's thread-local storage.
-
 # ---------------------------------------------------------------------------
-# Fallback model list (for environments without the Hamlib Python binding).
-# Uses actual Hamlib 4.x model numbers.
+# Fallback model list (actual Hamlib 4.x model numbers)
 # ---------------------------------------------------------------------------
 _FALLBACK_MODELS: list[tuple[int, str, str]] = [
     # Hamlib internal
@@ -243,29 +249,64 @@ def _scan_serial_ports() -> list[str]:
         return sorted(set(found))
 
 
-class RigSettingsDialog(QDialog):
-    """Radio > Rig Settings dialog.
+# ---------------------------------------------------------------------------
+# _RigPanel — reusable settings form for one rig
+# ---------------------------------------------------------------------------
 
-    Displays all Hamlib-supported models with a search filter.
+
+class _RigPanel(QWidget):
+    """Configuration panel for a single rig.
+
+    Used as a tab page inside RigSettingsDialog.
+    Rig 1 is always active; Rig 2 has an "Enable Rig 2" checkbox that
+    enables or disables the form below it.
     """
 
-    def __init__(self, conn: Any, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        rig_index: int,
+        all_models: list[tuple[int, str, str]],
+        parent: QWidget | None = None,
+    ) -> None:
+        """
+        Args:
+            rig_index:  1 or 2.  Rig 2 renders an enable checkbox.
+            all_models: pre-loaded Hamlib model list shared between both panels.
+            parent:     parent widget.
+        """
         super().__init__(parent)
-        self._conn = conn
-        self._all_models: list[tuple[int, str, str]] = []
-        self.setWindowTitle(_("Rig Settings"))
-        self.resize(520, 480)
+        self._rig_index = rig_index
+        self._all_models = all_models
+        self._enable_cb: QCheckBox | None = None
+        self._form_widget: QWidget
         self._setup_ui()
-        self._load_models()
-        self._load_settings()
         self._on_scan_ports()
+        self._on_ctcss_method_changed()
 
     # ------------------------------------------------------------------ #
     # UI construction
     # ------------------------------------------------------------------ #
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(4)
+
+        # Rig 2 only: enable checkbox lives above the scrollable form
+        if self._rig_index == 2:
+            self._enable_cb = QCheckBox(_("Enable Rig 2"))
+            self._enable_cb.toggled.connect(self._on_enable_toggled)
+            outer.addWidget(self._enable_cb)
+
+        # Scroll area so the form remains accessible even in a small dialog
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        outer.addWidget(scroll)
+
+        # Form container placed inside the scroll area
+        self._form_widget = QWidget()
+        scroll.setWidget(self._form_widget)
+        form = QVBoxLayout(self._form_widget)
 
         # --- Connection mode ---
         mode_group = QGroupBox(_("Connection Mode"))
@@ -276,7 +317,7 @@ class RigSettingsDialog(QDialog):
         self._radio_direct.toggled.connect(self._on_mode_toggled)
         mode_layout.addWidget(self._radio_direct)
         mode_layout.addWidget(self._radio_net)
-        layout.addWidget(mode_group)
+        form.addWidget(mode_group)
 
         # --- Direct connection settings ---
         self._direct_group = QGroupBox(_("Direct Connection Settings"))
@@ -308,9 +349,10 @@ class RigSettingsDialog(QDialog):
 
         self._model_combo = QComboBox()
         self._model_combo.setMinimumWidth(280)
+        self._populate_model_combo(self._all_models)
         direct_form.addRow(_("Rig Model:"), self._model_combo)
 
-        layout.addWidget(self._direct_group)
+        form.addWidget(self._direct_group)
 
         # --- NET connection settings ---
         self._net_group = QGroupBox(_("NET Connection Settings"))
@@ -319,9 +361,10 @@ class RigSettingsDialog(QDialog):
         net_form.addRow(_("Host:"), self._host_edit)
         self._net_port_spin = QSpinBox()
         self._net_port_spin.setRange(1, 65535)
-        self._net_port_spin.setValue(4532)
+        # Rig 1 defaults to rigctld port 4532; Rig 2 defaults to 4533
+        self._net_port_spin.setValue(4532 if self._rig_index == 1 else 4533)
         net_form.addRow(_("Port:"), self._net_port_spin)
-        layout.addWidget(self._net_group)
+        form.addWidget(self._net_group)
         self._net_group.setVisible(False)
 
         # --- Radio Type ---
@@ -332,7 +375,7 @@ class RigSettingsDialog(QDialog):
         self._radio_type_combo.addItem(_("RX only (F only)"), "rx_only")
         self._radio_type_combo.addItem(_("TX only (I only)"), "tx_only")
         type_form.addRow(_("Radio Type:"), self._radio_type_combo)
-        layout.addWidget(type_group)
+        form.addWidget(type_group)
 
         # --- CTCSS Tone Settings ---
         ctcss_group = QGroupBox(_("CTCSS Tone Settings"))
@@ -360,48 +403,68 @@ class RigSettingsDialog(QDialog):
             self._direct_cat_baud_combo.addItem(b)
         self._direct_cat_baud_combo.setCurrentText("38400")
         ctcss_form.addRow(_("Direct CAT Baud:"), self._direct_cat_baud_combo)
-        layout.addWidget(ctcss_group)
-        self._on_ctcss_method_changed()
+        form.addWidget(ctcss_group)
 
-        # --- Status ---
+        # Status label (port-scan / model-search results)
         self._status_label = QLabel("")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._status_label)
+        form.addWidget(self._status_label)
+        form.addStretch()
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._save_settings)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        # Rig 2 starts disabled until the checkbox is checked
+        if self._rig_index == 2:
+            self._form_widget.setEnabled(False)
 
     # ------------------------------------------------------------------ #
-    # Model list
+    # Slot handlers
     # ------------------------------------------------------------------ #
 
-    def _load_models(self) -> None:
-        """Fetch the Hamlib model list and initialise the combo box."""
-        self._all_models = _load_hamlib_models()
-        self._populate_model_combo(self._all_models)
-        n = len(self._all_models)
-        self._status_label.setText(_("{n} rig models available").format(n=n))
+    def _on_enable_toggled(self, checked: bool) -> None:
+        """Enable or disable the entire form based on the Rig 2 checkbox."""
+        self._form_widget.setEnabled(checked)
 
-    def _populate_model_combo(self, models: list[tuple[int, str, str]]) -> None:
-        """Update the model combo box with the given list, preserving the current selection."""
-        current_id: int | None = self._model_combo.currentData()
-        self._model_combo.clear()
-        for mid, mfg, name in models:
-            label = f"{mfg} — {name} (#{mid})" if mfg else f"{name} (#{mid})"
-            self._model_combo.addItem(label, mid)
-        # Restore the previous selection
-        for i in range(self._model_combo.count()):
-            if self._model_combo.itemData(i) == current_id:
-                self._model_combo.setCurrentIndex(i)
-                break
+    def _on_mode_toggled(self, _checked: bool) -> None:
+        is_direct = self._radio_direct.isChecked()
+        self._direct_group.setVisible(is_direct)
+        self._net_group.setVisible(not is_direct)
+
+    def _on_scan_ports(self) -> None:
+        """Scan serial ports and update the COM port combo box."""
+        current = self._port_combo.currentText()
+        ports = _scan_serial_ports()
+        self._port_combo.clear()
+        if ports:
+            self._port_combo.addItems(ports)
+            self._status_label.setText(_("{n} port(s) found").format(n=len(ports)))
+        else:
+            self._status_label.setText(_("No serial ports found"))
+        if current:
+            idx = self._port_combo.findText(current)
+            if idx >= 0:
+                self._port_combo.setCurrentIndex(idx)
+            else:
+                self._port_combo.setEditText(current)
+
+    def _on_ctcss_method_changed(self) -> None:
+        """Show/hide CAT command fields based on the selected CTCSS method."""
+        method = self._ctcss_method_combo.currentData()
+        if method in CTCSS_PRESET_TEMPLATES:
+            on_cmd, off_cmd = CTCSS_PRESET_TEMPLATES[method]
+            self._ctcss_cat_on_edit.setText(on_cmd)
+            self._ctcss_cat_off_edit.setText(off_cmd)
+            self._ctcss_cat_on_edit.setEnabled(False)
+            self._ctcss_cat_off_edit.setEnabled(False)
+        elif method == "custom_cat":
+            self._ctcss_cat_on_edit.setEnabled(True)
+            self._ctcss_cat_off_edit.setEnabled(True)
+        else:  # "hamlib"
+            self._ctcss_cat_on_edit.setText("")
+            self._ctcss_cat_off_edit.setText("")
+            self._ctcss_cat_on_edit.setEnabled(False)
+            self._ctcss_cat_off_edit.setEnabled(False)
 
     def _on_model_search(self, text: str) -> None:
-        """Filter the model list in real time as the user types."""
+        """Filter the Hamlib model list as the user types."""
         query = text.lower().strip()
         if not query:
             self._populate_model_combo(self._all_models)
@@ -424,69 +487,56 @@ class RigSettingsDialog(QDialog):
             )
 
     # ------------------------------------------------------------------ #
-    # Port scan / mode toggle
+    # Model combo helpers
     # ------------------------------------------------------------------ #
 
-    def _on_ctcss_method_changed(self) -> None:
-        """Enable/disable CAT command fields based on the selected CTCSS method."""
-        method = self._ctcss_method_combo.currentData()
-        if method in CTCSS_PRESET_TEMPLATES:
-            on_cmd, off_cmd = CTCSS_PRESET_TEMPLATES[method]
-            self._ctcss_cat_on_edit.setText(on_cmd)
-            self._ctcss_cat_off_edit.setText(off_cmd)
-            self._ctcss_cat_on_edit.setEnabled(False)
-            self._ctcss_cat_off_edit.setEnabled(False)
-        elif method == "custom_cat":
-            self._ctcss_cat_on_edit.setEnabled(True)
-            self._ctcss_cat_off_edit.setEnabled(True)
-        else:  # "hamlib"
-            self._ctcss_cat_on_edit.setText("")
-            self._ctcss_cat_off_edit.setText("")
-            self._ctcss_cat_on_edit.setEnabled(False)
-            self._ctcss_cat_off_edit.setEnabled(False)
-
-    def _on_mode_toggled(self, _checked: bool) -> None:
-        is_direct = self._radio_direct.isChecked()
-        self._direct_group.setVisible(is_direct)
-        self._net_group.setVisible(not is_direct)
-
-    def _on_scan_ports(self) -> None:
-        """Scan serial ports and update the combo box."""
-        current = self._port_combo.currentText()
-        ports = _scan_serial_ports()
-        self._port_combo.clear()
-        if ports:
-            self._port_combo.addItems(ports)
-            self._status_label.setText(_("{n} port(s) found").format(n=len(ports)))
-        else:
-            self._status_label.setText(_("No serial ports found"))
-        if current:
-            idx = self._port_combo.findText(current)
-            if idx >= 0:
-                self._port_combo.setCurrentIndex(idx)
-            else:
-                self._port_combo.setEditText(current)
+    def _populate_model_combo(self, models: list[tuple[int, str, str]]) -> None:
+        """Populate the model combo box, preserving the current selection if possible."""
+        current_id: int | None = self._model_combo.currentData()
+        self._model_combo.clear()
+        for mid, mfg, name in models:
+            label = f"{mfg} — {name} (#{mid})" if mfg else f"{name} (#{mid})"
+            self._model_combo.addItem(label, mid)
+        for i in range(self._model_combo.count()):
+            if self._model_combo.itemData(i) == current_id:
+                self._model_combo.setCurrentIndex(i)
+                break
 
     # ------------------------------------------------------------------ #
-    # Settings load / save
+    # Public API
     # ------------------------------------------------------------------ #
 
-    def _load_settings(self) -> None:
-        if not hasattr(self._conn, "execute"):
-            return
-        row = self._conn.execute(
-            "SELECT value FROM app_settings WHERE key = 'rig_settings'"
-        ).fetchone()
-        if not row or not row["value"]:
-            return
-        try:
-            s: dict[str, Any] = json.loads(row["value"])
-        except (json.JSONDecodeError, TypeError):
-            return
+    def is_enabled(self) -> bool:
+        """Return True when this rig should be activated.
 
+        Rig 1 is always enabled.  Rig 2 is enabled only when its checkbox
+        is checked.
+        """
+        if self._enable_cb is None:
+            return True
+        return self._enable_cb.isChecked()
+
+    def load(self, s: dict[str, Any]) -> None:
+        """Restore form fields from a saved settings dictionary.
+
+        Args:
+            s: dict produced by :meth:`save` (may be a legacy ``rig_settings`` dict).
+        """
+        # Enable checkbox (Rig 2 only)
+        if self._enable_cb is not None:
+            checked = bool(s.get("enabled", False))
+            self._enable_cb.blockSignals(True)
+            self._enable_cb.setChecked(checked)
+            self._enable_cb.blockSignals(False)
+            self._form_widget.setEnabled(checked)
+
+        # Connection mode
         if s.get("mode") == "net":
             self._radio_net.setChecked(True)
+        else:
+            self._radio_direct.setChecked(True)
 
+        # COM port
         port = str(s.get("port", ""))
         if port:
             idx = self._port_combo.findText(port)
@@ -495,26 +545,31 @@ class RigSettingsDialog(QDialog):
             else:
                 self._port_combo.setEditText(port)
 
+        # Baud rate
         baud = str(s.get("baud_rate", 9600))
         idx = self._baud_combo.findText(baud)
         if idx >= 0:
             self._baud_combo.setCurrentIndex(idx)
 
+        # Rig model
         model_id = int(s.get("model_id", 1))
         for i in range(self._model_combo.count()):
             if self._model_combo.itemData(i) == model_id:
                 self._model_combo.setCurrentIndex(i)
                 break
 
+        # NET settings
         self._host_edit.setText(str(s.get("host", "localhost")))
-        self._net_port_spin.setValue(int(s.get("net_port", 4532)))
+        self._net_port_spin.setValue(int(s.get("net_port", 4532 if self._rig_index == 1 else 4533)))
 
+        # Radio type
         radio_type = str(s.get("radio_type", "full_duplex"))
         for i in range(self._radio_type_combo.count()):
             if self._radio_type_combo.itemData(i) == radio_type:
                 self._radio_type_combo.setCurrentIndex(i)
                 break
 
+        # CTCSS
         ctcss_method = str(s.get("ctcss_method", "hamlib"))
         for i in range(self._ctcss_method_combo.count()):
             if self._ctcss_method_combo.itemData(i) == ctcss_method:
@@ -527,11 +582,18 @@ class RigSettingsDialog(QDialog):
         idx = self._direct_cat_baud_combo.findText(baud_str)
         if idx >= 0:
             self._direct_cat_baud_combo.setCurrentIndex(idx)
+
         self._on_ctcss_method_changed()
 
-    def _save_settings(self) -> None:
+    def save(self) -> dict[str, Any]:
+        """Return the current form state as a settings dictionary.
+
+        Returns:
+            dict with all rig parameters.  Rig 2 dicts include an ``'enabled'``
+            key set to the checkbox state.
+        """
         model_id: int = self._model_combo.currentData() or 1
-        s = {
+        s: dict[str, Any] = {
             "mode": "direct" if self._radio_direct.isChecked() else "net",
             "port": self._port_combo.currentText(),
             "baud_rate": int(self._baud_combo.currentText()),
@@ -545,12 +607,127 @@ class RigSettingsDialog(QDialog):
             "direct_cat_port": self._direct_cat_port_edit.text(),
             "direct_cat_baud": int(self._direct_cat_baud_combo.currentText()),
         }
-        if hasattr(self._conn, "execute"):
-            self._conn.execute(
-                """
-                INSERT OR REPLACE INTO app_settings (key, value, updated_at)
-                VALUES ('rig_settings', ?, CURRENT_TIMESTAMP)
-                """,
-                (json.dumps(s),),
-            )
-            self._conn.commit()
+        if self._enable_cb is not None:
+            s["enabled"] = self._enable_cb.isChecked()
+        return s
+
+
+# ---------------------------------------------------------------------------
+# RigSettingsDialog
+# ---------------------------------------------------------------------------
+
+
+class RigSettingsDialog(QDialog):
+    """Radio > Rig Settings dialog.
+
+    Two tabs — Rig 1 and Rig 2 — each backed by a ``_RigPanel``.
+    Hamlib models are loaded once and shared between both panels.
+
+    DB keys written on OK:
+        ``rig1_settings`` — Rig 1 JSON dict
+        ``rig2_settings`` — Rig 2 JSON dict (includes ``"enabled": bool``)
+    """
+
+    def __init__(self, conn: Any, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._conn = conn
+        self.setWindowTitle(_("Rig Settings"))
+        self.resize(560, 600)
+
+        # Load models once; share between both panels to avoid double Hamlib scan
+        self._all_models = _load_hamlib_models()
+        self._panel1 = _RigPanel(1, self._all_models)
+        self._panel2 = _RigPanel(2, self._all_models)
+
+        self._setup_ui()
+        self._load_settings()
+
+    # ------------------------------------------------------------------ #
+    # UI construction
+    # ------------------------------------------------------------------ #
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        tabs = QTabWidget()
+        tabs.addTab(self._panel1, _("Rig 1"))
+        tabs.addTab(self._panel2, _("Rig 2"))
+        layout.addWidget(tabs)
+
+        # Global info label: total model count
+        n = len(self._all_models)
+        self._status_label = QLabel(_("{n} rig models available").format(n=n))
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._status_label)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save_settings)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    # ------------------------------------------------------------------ #
+    # Settings persistence
+    # ------------------------------------------------------------------ #
+
+    def _load_settings(self) -> None:
+        """Load Rig 1 and Rig 2 settings from the DB.
+
+        Migrates the legacy ``rig_settings`` key to ``rig1_settings`` on first
+        open so existing configurations are not lost.
+        """
+        if not hasattr(self._conn, "execute"):
+            return
+
+        # --- Rig 1: migrate legacy 'rig_settings' → 'rig1_settings' ---
+        row1 = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'rig1_settings'"
+        ).fetchone()
+        if row1 is None:
+            row_old = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'rig_settings'"
+            ).fetchone()
+            if row_old and row_old["value"]:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO app_settings (key, value, updated_at) "
+                    "VALUES ('rig1_settings', ?, CURRENT_TIMESTAMP)",
+                    (row_old["value"],),
+                )
+                self._conn.commit()
+                row1 = self._conn.execute(
+                    "SELECT value FROM app_settings WHERE key = 'rig1_settings'"
+                ).fetchone()
+
+        if row1 and row1["value"]:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                self._panel1.load(json.loads(row1["value"]))
+
+        # --- Rig 2 ---
+        row2 = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'rig2_settings'"
+        ).fetchone()
+        if row2 and row2["value"]:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                self._panel2.load(json.loads(row2["value"]))
+
+    def _save_settings(self) -> None:
+        """Save Rig 1 and Rig 2 settings to the DB."""
+        if not hasattr(self._conn, "execute"):
+            return
+
+        s1 = self._panel1.save()
+        s2 = self._panel2.save()
+
+        self._conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) "
+            "VALUES ('rig1_settings', ?, CURRENT_TIMESTAMP)",
+            (json.dumps(s1),),
+        )
+        self._conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) "
+            "VALUES ('rig2_settings', ?, CURRENT_TIMESTAMP)",
+            (json.dumps(s2),),
+        )
+        self._conn.commit()

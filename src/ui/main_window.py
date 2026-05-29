@@ -269,6 +269,7 @@ class MainWindow(QMainWindow):
         self._amsat_fetcher = AMSATStatusFetcher(conn)
         self._transmitter_manager = TransmitterManager(conn)
         self._rig_controller: RigController | None = None
+        self._rig2_controller: RigController | None = None
         self._rotator_controller: RotatorController | None = None
         self._ctcss_method: str = "hamlib"
         self._ctcss_cat_on: str = ""
@@ -276,6 +277,8 @@ class MainWindow(QMainWindow):
         # Lock indicating whether the rig control thread is currently running.
         # If acquire(blocking=False) fails, the previous cycle is still executing.
         self._rig_busy_lock = threading.Lock()
+        # Non-blocking lock for Rig 2 (same pattern as Rig 1).
+        self._rig2_busy_lock = threading.Lock()
         # Same pattern for rotator set_position calls.
         self._rot_busy_lock = threading.Lock()
         # When True, AZ sent to the rotator is offset by 180° (south-initialized rotator).
@@ -992,6 +995,28 @@ class MainWindow(QMainWindow):
                     threading.Thread(target=_rig_send, daemon=True).start()
                 else:
                     logger.debug("RigNet: previous cycle still running, skipping tick")
+
+            # Transmit Doppler-corrected frequencies to Rig 2 (same non-blocking pattern).
+            if self._rig2_controller is not None and self._rig2_controller.is_connected:
+                if self._rig2_busy_lock.acquire(blocking=False):
+                    rig2 = self._rig2_controller
+                    dl2 = dl_corr
+                    ul2 = ul_corr
+
+                    def _rig2_send() -> None:
+                        try:
+                            rig2.set_vfo_frequencies(dl2, ul2)
+                        except RigControlError as exc:
+                            self._rig_error.emit(str(exc))
+                        except Exception as exc:
+                            logger.error("Rig2: unexpected error in send thread: %s", exc)
+                            self._rig_error.emit(str(exc))
+                        finally:
+                            self._rig2_busy_lock.release()
+
+                    threading.Thread(target=_rig2_send, daemon=True).start()
+                else:
+                    logger.debug("Rig2: previous cycle still running, skipping tick")
 
         # Send AZ/EL to the rotator every tick (same non-blocking pattern as rig).
         if (
@@ -1752,48 +1777,88 @@ class MainWindow(QMainWindow):
             self._load_rig_settings()
 
     def _load_rig_settings(self) -> None:
-        """Load rig settings from the DB and instantiate the controller."""
+        """Load Rig 1 and Rig 2 settings from the DB and instantiate controllers.
+
+        Key priority for Rig 1:
+          1. 'rig1_settings' (new key written by the tabbed dialog)
+          2. 'rig_settings'  (legacy key — backward compatibility)
+        Rig 2 is loaded only when its 'enabled' flag is True.
+        """
+        # ---------- Rig 1 ----------
         try:
             row = self._conn.execute(
-                "SELECT value FROM app_settings WHERE key = 'rig_settings'"
+                "SELECT value FROM app_settings WHERE key = 'rig1_settings'"
             ).fetchone()
             if row is None:
-                return
-            settings: dict[str, Any] = json.loads(row["value"])
-            mode = settings.get("mode", "net")
-            radio_type = str(settings.get("radio_type", "full_duplex"))
-            if mode == "net":
-                host = str(settings.get("host", "localhost"))
-                port = int(settings.get("net_port", 4532))
-                self._rig_controller = HamlibNetController(
-                    host=host,
-                    port=port,
-                    radio_type=radio_type,
-                    direct_cat_port=str(settings.get("direct_cat_port", "")),
-                    direct_cat_baud=int(settings.get("direct_cat_baud", 38400)),
-                    ctcss_method=str(settings.get("ctcss_method", "hamlib")),
+                # Fallback: legacy key written by the old single-rig dialog
+                row = self._conn.execute(
+                    "SELECT value FROM app_settings WHERE key = 'rig_settings'"
+                ).fetchone()
+            if row is not None:
+                settings: dict[str, Any] = json.loads(row["value"])
+                self._rig_controller = self._build_rig_controller(settings)
+                self._ctcss_method = str(settings.get("ctcss_method", "hamlib"))
+                # For preset methods, always use the current authoritative template from
+                # CTCSS_PRESET_TEMPLATES rather than the DB value, which may be stale.
+                if self._ctcss_method in CTCSS_PRESET_TEMPLATES:
+                    self._ctcss_cat_on, self._ctcss_cat_off = CTCSS_PRESET_TEMPLATES[
+                        self._ctcss_method
+                    ]
+                else:
+                    self._ctcss_cat_on = str(settings.get("ctcss_cat_on", ""))
+                    self._ctcss_cat_off = str(settings.get("ctcss_cat_off", ""))
+                logger.info(
+                    "Rig1Settings: method=%s cat_on=%r", self._ctcss_method, self._ctcss_cat_on
                 )
-            else:
-                model_id = int(settings.get("model_id", 1))
-                serial_port = str(settings.get("port", "/dev/ttyUSB0"))
-                baud = int(settings.get("baud_rate", 9600))
-                self._rig_controller = HamlibDirectController(
-                    model_id=model_id, port=serial_port, baud_rate=baud
-                )
-            self._ctcss_method = str(settings.get("ctcss_method", "hamlib"))
-            # For preset methods, always use the current authoritative template from
-            # CTCSS_PRESET_TEMPLATES rather than the DB value, which may be stale
-            # (e.g. saved before a preset command format correction).
-            if self._ctcss_method in CTCSS_PRESET_TEMPLATES:
-                self._ctcss_cat_on, self._ctcss_cat_off = CTCSS_PRESET_TEMPLATES[self._ctcss_method]
-            else:
-                self._ctcss_cat_on = str(settings.get("ctcss_cat_on", ""))
-                self._ctcss_cat_off = str(settings.get("ctcss_cat_off", ""))
-            logger.info("RigSettings: method=%s cat_on=%r", self._ctcss_method, self._ctcss_cat_on)
-            self._radio_control.set_rig(self._rig_controller)
-            self._update_rig_label()
+                self._radio_control.set_rig(self._rig_controller)
         except Exception as exc:
-            logger.warning("Failed to load rig settings: %s", exc)
+            logger.warning("Failed to load Rig 1 settings: %s", exc)
+
+        # ---------- Rig 2 ----------
+        try:
+            row2 = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'rig2_settings'"
+            ).fetchone()
+            if row2 is not None:
+                s2: dict[str, Any] = json.loads(row2["value"])
+                if s2.get("enabled", False):
+                    self._rig2_controller = self._build_rig_controller(s2)
+                    logger.info("Rig2Settings: loaded, radio_type=%s", s2.get("radio_type"))
+                else:
+                    self._rig2_controller = None
+                self._radio_control.set_rig2(self._rig2_controller)
+        except Exception as exc:
+            logger.warning("Failed to load Rig 2 settings: %s", exc)
+
+        self._update_rig_label()
+
+    def _build_rig_controller(self, settings: dict[str, Any]) -> RigController:
+        """Instantiate a RigController from a settings dictionary.
+
+        Args:
+            settings: dict with keys 'mode', 'host', 'net_port', 'model_id', 'port',
+                      'baud_rate', 'radio_type', 'direct_cat_port', 'direct_cat_baud',
+                      'ctcss_method'.
+
+        Returns:
+            Configured (but not yet connected) RigController instance.
+        """
+        mode = settings.get("mode", "net")
+        radio_type = str(settings.get("radio_type", "full_duplex"))
+        if mode == "net":
+            return HamlibNetController(
+                host=str(settings.get("host", "localhost")),
+                port=int(settings.get("net_port", 4532)),
+                radio_type=radio_type,
+                direct_cat_port=str(settings.get("direct_cat_port", "")),
+                direct_cat_baud=int(settings.get("direct_cat_baud", 38400)),
+                ctcss_method=str(settings.get("ctcss_method", "hamlib")),
+            )
+        return HamlibDirectController(
+            model_id=int(settings.get("model_id", 1)),
+            port=str(settings.get("port", "/dev/ttyUSB0")),
+            baud_rate=int(settings.get("baud_rate", 9600)),
+        )
 
     def _on_lock_changed(self, locked: bool) -> None:
         """Update the _trsp_lock flag when the L button is toggled."""
@@ -1873,11 +1938,19 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to save cycle setting: %s", exc)
 
     def _update_rig_label(self) -> None:
-        """Update the RIG label in the status bar."""
-        if self._rig_controller is None:
-            self._rig_label.setText(_("RIG: Off"))
-        elif self._rig_controller.is_connected:
-            self._rig_label.setText(_("RIG: On"))
+        """Update the RIG status label in the status bar.
+
+        Shows "RIG: Off" when neither rig is configured or connected.
+        Shows "RIG: 1" / "RIG: 1+2" to indicate which rigs are active.
+        """
+        r1 = self._rig_controller is not None and self._rig_controller.is_connected
+        r2 = self._rig2_controller is not None and self._rig2_controller.is_connected
+        if r1 and r2:
+            self._rig_label.setText(_("RIG: 1+2"))
+        elif r1:
+            self._rig_label.setText(_("RIG: 1"))
+        elif r2:
+            self._rig_label.setText(_("RIG: 2"))
         else:
             self._rig_label.setText(_("RIG: Off"))
 

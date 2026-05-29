@@ -2,6 +2,8 @@
 Radio Control widget.
 
 RadioControlWidget — Rig and rotator control panel for the selected satellite.
+Supports two independent rig controllers (Rig 1 and Rig 2) with separate
+connect/disconnect buttons and status rows.
 """
 
 from __future__ import annotations
@@ -31,7 +33,10 @@ class RadioControlWidget(QWidget):
     Rig and rotator control panel.
 
     Displays Doppler-corrected frequency, mode, rotator position, and
-    rig/rotator connection status for the selected satellite, with connect/disconnect buttons.
+    rig/rotator connection status for the selected satellite.
+
+    Supports two independent rigs (Rig 1 / Rig 2) with separate connect
+    buttons and status indicators.
     """
 
     transmitter_changed: Signal = Signal(object)
@@ -39,6 +44,7 @@ class RadioControlWidget(QWidget):
     tune_requested: Signal = Signal()
     lock_changed: Signal = Signal(bool)
     rig_connected: Signal = Signal()
+    rig2_connected: Signal = Signal()
     rotator_connected: Signal = Signal()
     south_init_changed: Signal = Signal(bool)
     ctcss_send_requested: Signal = Signal(float)
@@ -46,7 +52,8 @@ class RadioControlWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._rig: RigController | None = None
+        self._rig1: RigController | None = None
+        self._rig2: RigController | None = None
         self._rotator: RotatorController | None = None
         self._transmitters: list[dict[str, Any]] = []
         self._current_ctcss_hz: float | None = None
@@ -102,9 +109,7 @@ class RadioControlWidget(QWidget):
         self._mode_label = QLabel("—")
         self._ctcss_label = QLabel("—")
 
-        # CTCSS row: label + Send + Activate buttons.
-        # Note: FTX-1F does not support L CTCSS_TONE via Hamlib (RPRT -11),
-        # so these buttons may be no-ops on that radio.
+        # CTCSS row: label + Send + Activate buttons
         ctcss_row = QWidget()
         ctcss_row_layout = QHBoxLayout(ctcss_row)
         ctcss_row_layout.setContentsMargins(0, 0, 0, 0)
@@ -140,13 +145,15 @@ class RadioControlWidget(QWidget):
         rot_form.addRow(_("EL:"), self._rot_el_label)
         layout.addWidget(rot_group)
 
-        # Connection status
+        # Connection status — one row per rig plus rotator
         status_group = QGroupBox(_("Status"))
         status_form = QFormLayout(status_group)
         status_form.setContentsMargins(4, 4, 4, 4)
-        self._rig_status_label = QLabel(_("Not configured"))
+        self._rig1_status_label = QLabel(_("Not configured"))
+        self._rig2_status_label = QLabel(_("Not configured"))
         self._rot_status_label = QLabel(_("Not configured"))
-        status_form.addRow(_("Rig:"), self._rig_status_label)
+        status_form.addRow(_("Rig 1:"), self._rig1_status_label)
+        status_form.addRow(_("Rig 2:"), self._rig2_status_label)
         status_form.addRow(_("Rotator:"), self._rot_status_label)
 
         cycle_row = QHBoxLayout()
@@ -162,17 +169,24 @@ class RadioControlWidget(QWidget):
 
         layout.addWidget(status_group)
 
-        # Button row
-        btn_row = QHBoxLayout()
-        self._connect_rig_btn = QPushButton(_("Connect Rig"))
-        self._connect_rig_btn.clicked.connect(self._on_connect_rig)
+        # Button rows: Rig 1 / Rig 2 on first row, Rotator on second row
+        rig_btn_row = QHBoxLayout()
+        self._connect_rig1_btn = QPushButton(_("Connect Rig 1"))
+        self._connect_rig1_btn.clicked.connect(self._on_connect_rig1)
+        self._connect_rig2_btn = QPushButton(_("Connect Rig 2"))
+        self._connect_rig2_btn.clicked.connect(self._on_connect_rig2)
+        rig_btn_row.addWidget(self._connect_rig1_btn)
+        rig_btn_row.addWidget(self._connect_rig2_btn)
+        layout.addLayout(rig_btn_row)
+
+        rot_btn_row = QHBoxLayout()
         self._connect_rot_btn = QPushButton(_("Connect Rotator"))
         self._connect_rot_btn.clicked.connect(self._on_connect_rotator)
-        btn_row.addWidget(self._connect_rig_btn)
-        btn_row.addWidget(self._connect_rot_btn)
-        layout.addLayout(btn_row)
+        rot_btn_row.addWidget(self._connect_rot_btn)
+        rot_btn_row.addStretch()
+        layout.addLayout(rot_btn_row)
 
-        # South Init option: offset AZ by 180° to avoid 0/360° boundary crossing
+        # South Init option
         si_row = QHBoxLayout()
         self._south_init_cb = QCheckBox(_("South Init"))
         self._south_init_cb.setToolTip(
@@ -188,7 +202,8 @@ class RadioControlWidget(QWidget):
 
         layout.addStretch()
 
-        self._update_rig_status()
+        self._update_rig1_status()
+        self._update_rig2_status()
         self._update_rot_status()
 
     # ------------------------------------------------------------------ #
@@ -246,11 +261,7 @@ class RadioControlWidget(QWidget):
         mode: str | None = None,
         ctcss_hz: float | None = None,
     ) -> None:
-        """Update the Doppler-corrected frequency and status label.
-
-        ctcss_hz: value shown in the CTCSS status label (may be an override set by
-                  a button press; the Send button tone is managed by update_ctcss()).
-        """
+        """Update the Doppler-corrected frequency and status label."""
         if downlink_corrected_hz is not None:
             self._downlink_label.setText(f"{downlink_corrected_hz / 1e6:.6f} MHz")
             if downlink_shift_hz is not None:
@@ -287,9 +298,18 @@ class RadioControlWidget(QWidget):
             self._rot_el_label.setText(f"{state.elevation_deg:.1f}°")
 
     def set_rig(self, rig: RigController | None) -> None:
-        """Set the rig controller."""
-        self._rig = rig
-        self._update_rig_status()
+        """Set the Rig 1 controller (kept for backward compatibility)."""
+        self.set_rig1(rig)
+
+    def set_rig1(self, rig: RigController | None) -> None:
+        """Set the Rig 1 controller and refresh the status display."""
+        self._rig1 = rig
+        self._update_rig1_status()
+
+    def set_rig2(self, rig: RigController | None) -> None:
+        """Set the Rig 2 controller and refresh the status display."""
+        self._rig2 = rig
+        self._update_rig2_status()
 
     def set_rotator(self, rotator: RotatorController | None) -> None:
         """Set the rotator controller."""
@@ -309,8 +329,9 @@ class RadioControlWidget(QWidget):
         self._cycle_spin.blockSignals(False)
 
     def refresh_status(self) -> None:
-        """Update the connection status display (called by timer)."""
-        self._update_rig_status()
+        """Update all connection status displays (called by timer)."""
+        self._update_rig1_status()
+        self._update_rig2_status()
         self._update_rot_status()
         if self._rotator is not None and self._rotator.is_connected:
             self.update_rotator(self._rotator.get_position())
@@ -360,32 +381,61 @@ class RadioControlWidget(QWidget):
         if 0 <= index < len(self._transmitters):
             self.transmitter_changed.emit(self._transmitters[index])
 
-    def _update_rig_status(self) -> None:
-        if self._rig is None:
-            self._rig_status_label.setText(_("Not configured"))
-            self._rig_status_label.setStyleSheet("color: gray;")
-            self._connect_rig_btn.setEnabled(False)
+    def _update_rig1_status(self) -> None:
+        """Refresh the Rig 1 status row and button label."""
+        if self._rig1 is None:
+            self._rig1_status_label.setText(_("Not configured"))
+            self._rig1_status_label.setStyleSheet("color: gray;")
+            self._connect_rig1_btn.setEnabled(False)
             return
-        self._connect_rig_btn.setEnabled(True)
-        state = self._rig.state
+        self._connect_rig1_btn.setEnabled(True)
+        state = self._rig1.state
         if state == RigState.CONNECTED:
-            info = self._rig.get_rig_info()
+            info = self._rig1.get_rig_info()
             name = info.model_name if info else "—"
-            self._rig_status_label.setText(f"{_('Connected')}: {name}")
-            self._rig_status_label.setStyleSheet("color: green;")
-            self._connect_rig_btn.setText(_("Disconnect Rig"))
+            self._rig1_status_label.setText(f"{_('Connected')}: {name}")
+            self._rig1_status_label.setStyleSheet("color: green;")
+            self._connect_rig1_btn.setText(_("Disconnect Rig 1"))
         elif state == RigState.CONNECTING:
-            self._rig_status_label.setText(_("Connecting..."))
-            self._rig_status_label.setStyleSheet("color: orange;")
-            self._connect_rig_btn.setText(_("Disconnect Rig"))
+            self._rig1_status_label.setText(_("Connecting..."))
+            self._rig1_status_label.setStyleSheet("color: orange;")
+            self._connect_rig1_btn.setText(_("Disconnect Rig 1"))
         elif state == RigState.ERROR:
-            self._rig_status_label.setText(_("Error"))
-            self._rig_status_label.setStyleSheet("color: red;")
-            self._connect_rig_btn.setText(_("Retry"))
+            self._rig1_status_label.setText(_("Error"))
+            self._rig1_status_label.setStyleSheet("color: red;")
+            self._connect_rig1_btn.setText(_("Retry"))
         else:
-            self._rig_status_label.setText(_("Disconnected"))
-            self._rig_status_label.setStyleSheet("color: gray;")
-            self._connect_rig_btn.setText(_("Connect Rig"))
+            self._rig1_status_label.setText(_("Disconnected"))
+            self._rig1_status_label.setStyleSheet("color: gray;")
+            self._connect_rig1_btn.setText(_("Connect Rig 1"))
+
+    def _update_rig2_status(self) -> None:
+        """Refresh the Rig 2 status row and button label."""
+        if self._rig2 is None:
+            self._rig2_status_label.setText(_("Not configured"))
+            self._rig2_status_label.setStyleSheet("color: gray;")
+            self._connect_rig2_btn.setEnabled(False)
+            return
+        self._connect_rig2_btn.setEnabled(True)
+        state = self._rig2.state
+        if state == RigState.CONNECTED:
+            info = self._rig2.get_rig_info()
+            name = info.model_name if info else "—"
+            self._rig2_status_label.setText(f"{_('Connected')}: {name}")
+            self._rig2_status_label.setStyleSheet("color: green;")
+            self._connect_rig2_btn.setText(_("Disconnect Rig 2"))
+        elif state == RigState.CONNECTING:
+            self._rig2_status_label.setText(_("Connecting..."))
+            self._rig2_status_label.setStyleSheet("color: orange;")
+            self._connect_rig2_btn.setText(_("Disconnect Rig 2"))
+        elif state == RigState.ERROR:
+            self._rig2_status_label.setText(_("Error"))
+            self._rig2_status_label.setStyleSheet("color: red;")
+            self._connect_rig2_btn.setText(_("Retry"))
+        else:
+            self._rig2_status_label.setText(_("Disconnected"))
+            self._rig2_status_label.setStyleSheet("color: gray;")
+            self._connect_rig2_btn.setText(_("Connect Rig 2"))
 
     def _update_rot_status(self) -> None:
         if self._rotator is None:
@@ -403,16 +453,27 @@ class RadioControlWidget(QWidget):
             self._rot_status_label.setStyleSheet("color: gray;")
             self._connect_rot_btn.setText(_("Connect Rotator"))
 
-    def _on_connect_rig(self) -> None:
-        if self._rig is None:
+    def _on_connect_rig1(self) -> None:
+        if self._rig1 is None:
             return
-        if self._rig.is_connected:
-            self._rig.disconnect()
+        if self._rig1.is_connected:
+            self._rig1.disconnect()
         else:
-            self._rig.connect()
-            if self._rig.is_connected:
+            self._rig1.connect()
+            if self._rig1.is_connected:
                 self.rig_connected.emit()
-        self._update_rig_status()
+        self._update_rig1_status()
+
+    def _on_connect_rig2(self) -> None:
+        if self._rig2 is None:
+            return
+        if self._rig2.is_connected:
+            self._rig2.disconnect()
+        else:
+            self._rig2.connect()
+            if self._rig2.is_connected:
+                self.rig2_connected.emit()
+        self._update_rig2_status()
 
     def _on_ctcss_send(self) -> None:
         if self._current_ctcss_hz is not None:
