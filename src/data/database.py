@@ -133,32 +133,54 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
             conn.execute(stmt)
     conn.commit()
 
-    # Add 'satnogs' to the tle_data.source CHECK constraint (requires table recreation)
+    # Add 'satnogs' to the tle_data.source CHECK constraint (requires table recreation).
+    # Also handles recovery when a previous migration was interrupted mid-flight
+    # (backup table still exists but the INSERT was not committed).
+    _TLE_DATA_COLS = (
+        "norad_cat_id, name, line1, line2, epoch, source, tle_group, fetched_at, quality_score"
+    )
     tle_row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tle_data'"
     ).fetchone()
-    if tle_row and "'satnogs'" not in tle_row[0]:
-        conn.execute("DROP TABLE IF EXISTS _tle_data_backup")
-        conn.execute("ALTER TABLE tle_data RENAME TO _tle_data_backup")
-        conn.execute("""
-            CREATE TABLE tle_data (
-                norad_cat_id    INTEGER PRIMARY KEY REFERENCES satellites(norad_cat_id)
-                                ON DELETE CASCADE,
-                name            TEXT,
-                line1           TEXT NOT NULL,
-                line2           TEXT NOT NULL,
-                epoch           DATETIME,
-                source          TEXT DEFAULT 'celestrak'
-                                CHECK(source IN (
-                                    'celestrak','space-track','amsat','manual','satnogs'
-                                )),
-                tle_group       TEXT DEFAULT 'amateur',
-                fetched_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-                quality_score   TEXT DEFAULT 'unknown'
-                                CHECK(quality_score IN ('excellent','good','fair','poor','unknown'))
-            )
-        """)
-        conn.execute("INSERT INTO tle_data SELECT * FROM _tle_data_backup")
+    backup_exists = (
+        conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='_tle_data_backup'"
+        ).fetchone()
+        is not None
+    )
+    needs_migration = tle_row and "'satnogs'" not in tle_row[0]
+    if needs_migration or backup_exists:
+        if needs_migration:
+            conn.execute("DROP TABLE IF EXISTS _tle_data_backup")
+            conn.execute("ALTER TABLE tle_data RENAME TO _tle_data_backup")
+            conn.execute("""
+                CREATE TABLE tle_data (
+                    norad_cat_id    INTEGER PRIMARY KEY REFERENCES satellites(norad_cat_id)
+                                    ON DELETE CASCADE,
+                    name            TEXT,
+                    line1           TEXT NOT NULL,
+                    line2           TEXT NOT NULL,
+                    epoch           DATETIME,
+                    source          TEXT DEFAULT 'celestrak'
+                                    CHECK(source IN (
+                                        'celestrak','space-track','amsat','manual','satnogs'
+                                    )),
+                    tle_group       TEXT DEFAULT 'amateur',
+                    fetched_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    quality_score   TEXT DEFAULT 'unknown'
+                                    CHECK(quality_score IN (
+                                        'excellent','good','fair','poor','unknown'
+                                    ))
+                )
+            """)
+        # Use explicit column list to avoid column-order mismatch between the
+        # old schema (tle_group appended last via ALTER TABLE) and the new schema
+        # (tle_group in its canonical position).  INSERT OR IGNORE skips any row
+        # that already exists in the target (safe for re-runs after a crash).
+        conn.execute(
+            f"INSERT OR IGNORE INTO tle_data ({_TLE_DATA_COLS})"
+            f" SELECT {_TLE_DATA_COLS} FROM _tle_data_backup"
+        )
         conn.execute("DROP TABLE _tle_data_backup")
         conn.commit()
 
