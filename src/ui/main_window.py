@@ -2187,12 +2187,12 @@ class MainWindow(QMainWindow):
                 f"<tr>"
                 f"<td style='padding:6px 8px; white-space:nowrap;'>"
                 f"{swatch}{label_html}</td>"
-                f"<td style='padding:6px 8px; color:#ccc;'>{desc}</td>"
+                f"<td style='padding:6px 8px; color:#111;'>{desc}</td>"
                 f"</tr>"
             )
 
         html = (
-            "<html><body style='background:#2b2b2b; color:#eee;'>"
+            "<html><body style='color:#111;'>"
             "<table cellspacing='0' cellpadding='0' style='border-collapse:collapse;'>"
             + table_rows
             + "</table></body></html>"
