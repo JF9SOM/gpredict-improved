@@ -741,7 +741,7 @@ GET https://db.satnogs.org/api/tle/?norad_cat_id={fake_id}&format=json
 | SatNOGS Team | 仮 ID | 独自生成TLE（精度低め・更新頻度低） |
 
 `fetch_provisional_tles()` は `is_hidden=0 AND norad_cat_id >= 90000` の全衛星を対象に
-このAPIを呼び出し、TLE を `source='satnogs'`, `tle_group='provisional'` として保存する。
+このAPIを呼び出し、TLE を `source='satnogs'`, `tle_group='amateur'` として保存する。
 
 - 起動時に `_refresh_satellite_names_sync()` 完了後に自動実行
 - APScheduler で 12 時間ごとに定期更新
@@ -816,3 +816,104 @@ satellites(norad_cat_id=98325):
 ```
 
 この衛星は既に最終状態にあり、移行パイプラインは冪等ルールにより何も変更しない。
+
+---
+
+## TLE 取り込みルール全体設計（2026-05-29 確定）
+
+### TLE ソース一覧と優先度
+
+| 関数 | ソース | 対象 NORAD 範囲 | 更新頻度 | source 値 | tle_group 値 |
+|---|---|---|---|---|---|
+| `fetch_and_update('celestrak-stations')` | CelesTrak STATIONS | ISS・CSS 等 | 1時間ごと | `celestrak` | `stations` |
+| `fetch_and_update('celestrak-amateur')` | CelesTrak AMATEUR | アマチュア衛星 | 2時間ごと | `celestrak` | `amateur` |
+| `fetch_and_update('celestrak-cubesat')` | CelesTrak CUBESAT | CubeSat | 4時間ごと | `celestrak` | `cubesat` |
+| `fetch_and_update('celestrak-weather')` | CelesTrak WEATHER | 気象衛星 | 6時間ごと | `celestrak` | `weather` |
+| `fetch_and_update('celestrak-earth-obs')` | CelesTrak RESOURCE | 地球観測 | 12時間ごと | `celestrak` | `earth-obs` |
+| `fetch_and_update('celestrak-science')` | CelesTrak SCIENCE | 科学衛星 | 12時間ごと | `celestrak` | `science` |
+| `fetch_active_tles()` | CelesTrak(複数グループ)+SATNOGS TLE API | 10000-89999・未収録 | 24時間ごと(起動時stale確認) | `celestrak` or `satnogs` | `amateur`(INSERT時) / 既存保持(UPDATE時) |
+| `fetch_provisional_tles()` | SATNOGS TLE API | NORAD ≥ 90000 | 12時間ごと | `satnogs` | `amateur` |
+| `fetch_legacy_tles()` | CelesTrak 個別照会 | NORAD < 10000 | 起動時1回のみ | `celestrak` | `legacy` |
+| `add_manual_tle()` | ユーザー手動入力 | 任意 | 手動 | `manual` | `amateur` |
+
+### 上書きルール（優先度）
+
+```
+manual（最高優先）> celestrak > satnogs > なし
+```
+
+- `source='manual'` の TLE は **いかなる自動同期でも上書きしない**
+- 既存 TLE が `celestrak` の場合、`satnogs` ソースの取得結果で上書きしない
+  （`fetch_provisional_tles()` は `INSERT OR REPLACE` だが `source='manual'` チェックで防御）
+- `fetch_active_tles()` の UPDATE では `tle_group` を保持（分類を劣化させない）
+
+### tle_group と UI フィルタの対応
+
+| tle_group 値 | UI フィルタ | 用途 |
+|---|---|---|
+| `amateur` | Amateur | アマチュア衛星全般（SATNOGS 登録衛星のデフォルト） |
+| `cubesat` | CubeSat | CelesTrak CUBESAT グループ由来 |
+| `weather` | Weather | 気象衛星 |
+| `earth-obs` | Earth Observation | 地球観測衛星 |
+| `science` | Science | 科学衛星 |
+| `stations` | Space Stations | ISS・CSS 等 |
+| `legacy` | Amateur | NORAD < 10000 の古い衛星（COALESCE で Amateur 扱い） |
+| `NULL` | Amateur | TLE なし衛星（`COALESCE(tle_group, 'amateur')` でデフォルト適用） |
+
+### TLE なし衛星の自動非表示ルール
+
+`fetch_provisional_tles()` および `fetch_active_tles()` の Phase 2 で適用：
+
+```
+TLE が取得できなかった場合:
+  status = 'unknown' or 'dead'  → 即時 is_hidden=2
+  status = 'alive'
+    tle_no_result_since が NULL  → 今日の日付を記録（猶予開始）
+    30日以内                     → 紫イタリックで表示継続
+    30日超過                     → is_hidden=2（自動非表示）
+
+TLE が取得できた場合:
+    tle_no_result_since を NULL にリセット（紫解除）
+```
+
+### fetch_active_tles() の2フェーズ設計
+
+CelesTrak `GROUP=active`（全15,000機）は 403 Forbidden で取得不可のため、代替の2フェーズ構成を採用：
+
+**Phase 1 — CelesTrak 複数グループ一括取得（高速）**
+アクセス可能なグループを順に取得し、DB にある衛星のみ保存：
+- `satnogs`（664機）・`last-30-days`（265機）・`argos`・`orbcomm`・`spire`
+- 約 470機分のマッチ → INSERT（`tle_group='amateur'`）または UPDATE（`tle_group` 保持）
+- 新規衛星レコードは作成しない
+
+**Phase 2 — SATNOGS TLE API 並列フォールバック（最大 20 並列）**
+Phase 1 後も TLE なしの `10000-89999` 衛星を個別照会：
+- `GET https://db.satnogs.org/api/tle/?norad_cat_id={norad}&format=json`
+- TLE あり → 保存（`source='satnogs'`, `tle_group='amateur'`）
+- TLE なし → 上記の自動非表示ルールを適用
+
+### 起動時の TLE 同期フロー
+
+```
+アプリ起動
+  │
+  ├─ APScheduler 開始（2h/4h/6h/12h/24h の定期ジョブを登録）
+  │
+  ├─ [バックグラウンド] _refresh_satellite_names_sync()
+  │     1. sync_satellite_names()    ← SATNOGS 衛星名・ステータス更新・移行パイプライン
+  │     2. fetch_provisional_tles()  ← NORAD ≥ 90000 衛星の TLE 取得
+  │     3. fetch_legacy_tles()       ← NORAD < 10000 衛星のクリーンアップ（初回のみ実質動作）
+  │
+  └─ [バックグラウンド・stale時のみ] _refresh_active_tle_sync()
+        fetch_active_tles()          ← NORAD 10000-89999 未収録衛星の TLE 補完（24h 経過時）
+```
+
+### DB マイグレーション注意事項（2026-05-29 バグ対応済み）
+
+`tle_data` テーブルの CHECK 制約変更時はテーブル再作成が必要（SQLite 制約）。
+過去に `SELECT *` による列順序不一致でデータロスが発生した。
+
+**現在の正しい実装**（`database.py _apply_migrations()`）：
+- 列名を明示した `INSERT OR IGNORE INTO tle_data (col1, col2, ...) SELECT col1, col2, ...`
+- `_tle_data_backup` テーブルが残存していれば（前回のマイグレーション中断の証拠）自動復旧
+- `SELECT *` は絶対に使用しないこと
