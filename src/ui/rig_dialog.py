@@ -377,9 +377,11 @@ class _RigPanel(QWidget):
             type_group = QGroupBox(_("Radio Type"))
             type_form = QFormLayout(type_group)
             self._radio_type_combo = QComboBox()
-            self._radio_type_combo.addItem(_("Full-duplex (F + I)"), "full_duplex")
-            self._radio_type_combo.addItem(_("RX only (F only)"), "rx_only")
-            self._radio_type_combo.addItem(_("TX only (I only)"), "tx_only")
+            self._radio_type_combo.addItem(
+                _("Duplex — Main: Downlink (RX) / Sub: Uplink (TX)"), "full_duplex"
+            )
+            self._radio_type_combo.addItem(_("Simplex — Downlink (RX) only"), "rx_only")
+            self._radio_type_combo.addItem(_("Simplex — Uplink (TX) only"), "tx_only")
             type_form.addRow(_("Radio Type:"), self._radio_type_combo)
             form.addWidget(type_group)
         else:
