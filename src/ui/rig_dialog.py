@@ -279,6 +279,10 @@ class _RigPanel(QWidget):
         self._all_models = all_models
         self._enable_cb: QCheckBox | None = None
         self._form_widget: QWidget
+        # Rig 1 only: manual Radio Type selector
+        self._radio_type_combo: QComboBox | None = None
+        # Rig 2 only: split-mode selector (determines radio_type for both rigs)
+        self._split_mode_combo: QComboBox | None = None
         self._setup_ui()
         self._on_scan_ports()
         self._on_ctcss_method_changed()
@@ -367,15 +371,33 @@ class _RigPanel(QWidget):
         form.addWidget(self._net_group)
         self._net_group.setVisible(False)
 
-        # --- Radio Type ---
-        type_group = QGroupBox(_("Radio Type"))
-        type_form = QFormLayout(type_group)
-        self._radio_type_combo = QComboBox()
-        self._radio_type_combo.addItem(_("Full-duplex (F + I)"), "full_duplex")
-        self._radio_type_combo.addItem(_("RX only (F only)"), "rx_only")
-        self._radio_type_combo.addItem(_("TX only (I only)"), "tx_only")
-        type_form.addRow(_("Radio Type:"), self._radio_type_combo)
-        form.addWidget(type_group)
+        # --- Radio Type (Rig 1) / Split Mode (Rig 2) ---
+        if self._rig_index == 1:
+            # Rig 1 running alone: choose full-duplex / RX-only / TX-only
+            type_group = QGroupBox(_("Radio Type"))
+            type_form = QFormLayout(type_group)
+            self._radio_type_combo = QComboBox()
+            self._radio_type_combo.addItem(_("Full-duplex (F + I)"), "full_duplex")
+            self._radio_type_combo.addItem(_("RX only (F only)"), "rx_only")
+            self._radio_type_combo.addItem(_("TX only (I only)"), "tx_only")
+            type_form.addRow(_("Radio Type:"), self._radio_type_combo)
+            form.addWidget(type_group)
+        else:
+            # Rig 2 enabled: describe how the two rigs share DL/UL duties.
+            # The selection automatically sets radio_type for both rigs when saving.
+            split_group = QGroupBox(_("Split Mode"))
+            split_form = QFormLayout(split_group)
+            self._split_mode_combo = QComboBox()
+            self._split_mode_combo.addItem(
+                _("Rig 1: Downlink (RX only) / Rig 2: Uplink (TX only)"),
+                "rig1_dl_rig2_ul",
+            )
+            self._split_mode_combo.addItem(
+                _("Rig 1: Uplink (TX only) / Rig 2: Downlink (RX only)"),
+                "rig1_ul_rig2_dl",
+            )
+            split_form.addRow(_("Split Mode:"), self._split_mode_combo)
+            form.addWidget(split_group)
 
         # --- CTCSS Tone Settings ---
         ctcss_group = QGroupBox(_("CTCSS Tone Settings"))
@@ -562,12 +584,19 @@ class _RigPanel(QWidget):
         self._host_edit.setText(str(s.get("host", "localhost")))
         self._net_port_spin.setValue(int(s.get("net_port", 4532 if self._rig_index == 1 else 4533)))
 
-        # Radio type
-        radio_type = str(s.get("radio_type", "full_duplex"))
-        for i in range(self._radio_type_combo.count()):
-            if self._radio_type_combo.itemData(i) == radio_type:
-                self._radio_type_combo.setCurrentIndex(i)
-                break
+        # Radio Type (Rig 1) or Split Mode (Rig 2)
+        if self._rig_index == 1 and self._radio_type_combo is not None:
+            radio_type = str(s.get("radio_type", "full_duplex"))
+            for i in range(self._radio_type_combo.count()):
+                if self._radio_type_combo.itemData(i) == radio_type:
+                    self._radio_type_combo.setCurrentIndex(i)
+                    break
+        elif self._rig_index == 2 and self._split_mode_combo is not None:
+            split_mode = str(s.get("split_mode", "rig1_dl_rig2_ul"))
+            for i in range(self._split_mode_combo.count()):
+                if self._split_mode_combo.itemData(i) == split_mode:
+                    self._split_mode_combo.setCurrentIndex(i)
+                    break
 
         # CTCSS
         ctcss_method = str(s.get("ctcss_method", "hamlib"))
@@ -600,13 +629,18 @@ class _RigPanel(QWidget):
             "model_id": model_id,
             "host": self._host_edit.text(),
             "net_port": self._net_port_spin.value(),
-            "radio_type": self._radio_type_combo.currentData() or "full_duplex",
             "ctcss_method": self._ctcss_method_combo.currentData() or "hamlib",
             "ctcss_cat_on": self._ctcss_cat_on_edit.text(),
             "ctcss_cat_off": self._ctcss_cat_off_edit.text(),
             "direct_cat_port": self._direct_cat_port_edit.text(),
             "direct_cat_baud": int(self._direct_cat_baud_combo.currentText()),
         }
+        # Rig 1: store its own radio_type (used when Rig 2 is disabled)
+        if self._rig_index == 1 and self._radio_type_combo is not None:
+            s["radio_type"] = self._radio_type_combo.currentData() or "full_duplex"
+        # Rig 2: store split_mode; radio_type is derived by RigSettingsDialog._save_settings()
+        if self._rig_index == 2 and self._split_mode_combo is not None:
+            s["split_mode"] = self._split_mode_combo.currentData() or "rig1_dl_rig2_ul"
         if self._enable_cb is not None:
             s["enabled"] = self._enable_cb.isChecked()
         return s
@@ -713,12 +747,31 @@ class RigSettingsDialog(QDialog):
                 self._panel2.load(json.loads(row2["value"]))
 
     def _save_settings(self) -> None:
-        """Save Rig 1 and Rig 2 settings to the DB."""
+        """Save Rig 1 and Rig 2 settings to the DB.
+
+        When Rig 2 is enabled, ``radio_type`` for both rigs is derived
+        automatically from Rig 2's split_mode selection so the caller
+        never has to set both manually:
+
+        * ``rig1_dl_rig2_ul`` → Rig 1 = rx_only, Rig 2 = tx_only
+        * ``rig1_ul_rig2_dl`` → Rig 1 = tx_only, Rig 2 = rx_only
+        """
         if not hasattr(self._conn, "execute"):
             return
 
         s1 = self._panel1.save()
         s2 = self._panel2.save()
+
+        # Derive radio_type for both rigs from the split-mode combo when Rig 2 is active
+        if s2.get("enabled", False):
+            split_mode = str(s2.get("split_mode", "rig1_dl_rig2_ul"))
+            if split_mode == "rig1_dl_rig2_ul":
+                s1["radio_type"] = "rx_only"
+                s2["radio_type"] = "tx_only"
+            else:  # rig1_ul_rig2_dl
+                s1["radio_type"] = "tx_only"
+                s2["radio_type"] = "rx_only"
+        # When Rig 2 is disabled, s1["radio_type"] comes from the Rig 1 panel as-is
 
         self._conn.execute(
             "INSERT OR REPLACE INTO app_settings (key, value, updated_at) "
