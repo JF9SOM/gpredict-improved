@@ -477,6 +477,9 @@ class TLEManager:
                     stats["errors"] += 1
                     continue
 
+                # The SATNOGS TLE API returns a JSON list; take the first element.
+                if isinstance(data, list):
+                    data = data[0] if data else {}
                 if not isinstance(data, dict) or "tle1" not in data:
                     stats["no_tle"] += 1
                     continue
