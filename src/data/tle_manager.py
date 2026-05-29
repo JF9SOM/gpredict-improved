@@ -76,7 +76,11 @@ _SOURCE_DB_VALUE: dict[str, str] = {
     "celestrak-earth-obs": "celestrak",
     "celestrak-science": "celestrak",
     "celestrak-single": "celestrak",
+    "satnogs-provisional": "satnogs",
 }
+
+# SATNOGS TLE API endpoint for per-satellite lookup
+SATNOGS_TLE_URL = "https://db.satnogs.org/api/tle/"
 
 
 def _to_db_source(source_name: str) -> str:
@@ -332,6 +336,117 @@ class TLEManager:
         except Exception as e:
             print(f"[TLEManager] invalid TLE: {e}")
             return False
+
+    async def fetch_provisional_tles(
+        self,
+        progress_callback: Any = None,
+    ) -> dict[str, int]:
+        """Fetch TLEs for provisional (NORAD >= 90000) satellites via the SATNOGS TLE API.
+
+        For each visible satellite with a provisional NORAD ID (>= 90000), this method
+        queries the SATNOGS TLE API which returns the best available TLE regardless of
+        whether norad_follow_id is set publicly.  The TLE is stored under the provisional
+        ID so the satellite's position can be shown on the map.
+
+        When the TLE line1 contains a *different* NORAD ID (i.e. SATNOGS internally knows
+        the official ID), the migration pipeline is triggered automatically if the official
+        satellite record already exists in our DB.
+
+        Returns:
+            {"inserted": N, "updated": N, "no_tle": N, "errors": N}
+        """
+        rows = self._conn.execute(
+            "SELECT norad_cat_id, name FROM satellites"
+            " WHERE norad_cat_id >= 90000 AND is_hidden = 0"
+        ).fetchall()
+
+        stats: dict[str, int] = {"inserted": 0, "updated": 0, "no_tle": 0, "errors": 0}
+        now = datetime.now(UTC).isoformat()
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for idx, row in enumerate(rows):
+                fake_id = int(row["norad_cat_id"])
+                sat_name = str(row["name"])
+
+                if progress_callback:
+                    progress_callback(idx + 1, len(rows))
+
+                try:
+                    r = await client.get(
+                        SATNOGS_TLE_URL,
+                        params={"norad_cat_id": fake_id, "format": "json"},
+                        timeout=10.0,
+                    )
+                    r.raise_for_status()
+                    data = r.json()
+                except httpx.HTTPError as exc:
+                    print(f"[TLEManager] provisional TLE fetch error for {fake_id}: {exc}")
+                    stats["errors"] += 1
+                    continue
+                except Exception as exc:
+                    print(f"[TLEManager] provisional TLE unexpected error for {fake_id}: {exc}")
+                    stats["errors"] += 1
+                    continue
+
+                if not isinstance(data, dict) or "tle1" not in data:
+                    stats["no_tle"] += 1
+                    continue
+
+                line1: str = str(data["tle1"])
+                line2: str = str(data["tle2"])
+                # Prefer the name already stored in our DB over Space-Track object names
+                name = sat_name
+
+                try:
+                    sat_obj = EarthSatellite(line1, line2, name, self._ts)
+                    epoch_dt = sat_obj.epoch.utc_datetime()
+                    quality = _calc_quality(epoch_dt)
+                except Exception as exc:
+                    print(f"[TLEManager] provisional TLE parse error for {fake_id}: {exc}")
+                    stats["errors"] += 1
+                    continue
+
+                # Check whether the TLE line1 encodes a different (official) NORAD ID
+                tle_norad = int(line1[2:7])
+                if tle_norad != fake_id:
+                    # SATNOGS internally resolved this provisional ID to an official one.
+                    # Trigger the migration pipeline if the official satellite is already
+                    # present in our DB (e.g. fetched earlier from CelesTrak).
+                    official_exists = self._conn.execute(
+                        "SELECT norad_cat_id FROM satellites WHERE norad_cat_id = ?",
+                        (tle_norad,),
+                    ).fetchone()
+                    if official_exists:
+                        # Import lazily to avoid a circular dependency at module level
+                        from data.transmitter_manager import TransmitterManager  # noqa: PLC0415
+
+                        TransmitterManager(self._conn)._run_migration_pipeline(fake_id, tle_norad)
+
+                # Never overwrite a manually entered TLE
+                existing = self._conn.execute(
+                    "SELECT source FROM tle_data WHERE norad_cat_id = ?",
+                    (fake_id,),
+                ).fetchone()
+                if existing and existing["source"] == "manual":
+                    continue
+
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO tle_data
+                        (norad_cat_id, name, line1, line2, epoch,
+                         source, tle_group, fetched_at, quality_score)
+                    VALUES (?, ?, ?, ?, ?, 'satnogs', 'provisional', ?, ?)
+                    """,
+                    (fake_id, name, line1, line2, epoch_dt.isoformat(), now, quality),
+                )
+                if existing:
+                    stats["updated"] += 1
+                else:
+                    stats["inserted"] += 1
+
+        self._conn.commit()
+        self._log_sync("satnogs-provisional", stats)
+        return stats
 
     def _log_sync(self, sync_type: str, stats: dict[str, int]) -> None:
         now = datetime.now(UTC).isoformat()

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS satellites (
                     CHECK(status IN ('alive','dead','unknown')),
     is_favorite     INTEGER DEFAULT 0,
     is_hidden       INTEGER DEFAULT 0,
+    satnogs_source_id INTEGER DEFAULT NULL,  -- provisional NORAD for SATNOGS transmitter query
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -60,7 +61,7 @@ CREATE TABLE IF NOT EXISTS tle_data (
     line2           TEXT NOT NULL,
     epoch           DATETIME,
     source          TEXT DEFAULT 'celestrak'
-                    CHECK(source IN ('celestrak','space-track','amsat','manual')),
+                    CHECK(source IN ('celestrak','space-track','amsat','manual','satnogs')),
     tle_group       TEXT DEFAULT 'amateur',
     fetched_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     quality_score   TEXT DEFAULT 'unknown'
@@ -123,11 +124,41 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         "ALTER TABLE satellites ADD COLUMN is_hidden INTEGER DEFAULT 0",
         "ALTER TABLE tle_data ADD COLUMN tle_group TEXT DEFAULT 'amateur'",
         "ALTER TABLE satellites ADD COLUMN satnogs_uuid TEXT DEFAULT NULL",
+        "ALTER TABLE satellites ADD COLUMN satnogs_source_id INTEGER DEFAULT NULL",
     ]
     for stmt in migrations:
         with contextlib.suppress(Exception):
             conn.execute(stmt)
     conn.commit()
+
+    # Add 'satnogs' to the tle_data.source CHECK constraint (requires table recreation)
+    tle_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tle_data'"
+    ).fetchone()
+    if tle_row and "'satnogs'" not in tle_row[0]:
+        conn.execute("DROP TABLE IF EXISTS _tle_data_backup")
+        conn.execute("ALTER TABLE tle_data RENAME TO _tle_data_backup")
+        conn.execute("""
+            CREATE TABLE tle_data (
+                norad_cat_id    INTEGER PRIMARY KEY REFERENCES satellites(norad_cat_id)
+                                ON DELETE CASCADE,
+                name            TEXT,
+                line1           TEXT NOT NULL,
+                line2           TEXT NOT NULL,
+                epoch           DATETIME,
+                source          TEXT DEFAULT 'celestrak'
+                                CHECK(source IN (
+                                    'celestrak','space-track','amsat','manual','satnogs'
+                                )),
+                tle_group       TEXT DEFAULT 'amateur',
+                fetched_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                quality_score   TEXT DEFAULT 'unknown'
+                                CHECK(quality_score IN ('excellent','good','fair','poor','unknown'))
+            )
+        """)
+        conn.execute("INSERT INTO tle_data SELECT * FROM _tle_data_backup")
+        conn.execute("DROP TABLE _tle_data_backup")
+        conn.commit()
 
     # Add 'Transceiver' to the transmitters.type CHECK constraint (requires table recreation)
     row = conn.execute(

@@ -769,6 +769,13 @@ class MainWindow(QMainWindow):
                 id="amsat_refresh",
                 misfire_grace_time=600,
             )
+            self._scheduler.add_job(
+                self._refresh_provisional_tle_sync,
+                "interval",
+                hours=12,
+                id="provisional_tle_refresh",
+                misfire_grace_time=600,
+            )
             self._scheduler.start()
             logger.debug("APScheduler started")
         except Exception as exc:
@@ -809,13 +816,22 @@ class MainWindow(QMainWindow):
             logger.warning("AMSAT status refresh failed: %s", exc)
 
     def _refresh_satellite_names_sync(self) -> None:
-        """Sync satellite names and status from SATNOGS in a background thread."""
+        """Sync satellite names and status from SATNOGS, then fetch provisional TLEs."""
         try:
             result = asyncio.run(self._transmitter_manager.sync_satellite_names())
             logger.info("SATNOGS satellite names sync completed: %s", result)
-            self._satellite_list_refresh.emit()
         except Exception as exc:
             logger.warning("SATNOGS satellite names sync failed: %s", exc)
+
+        # After names sync (which may have run migration pipelines), fetch TLEs for
+        # any remaining visible provisional satellites (NORAD >= 90000).
+        try:
+            prov = asyncio.run(self._tle_manager.fetch_provisional_tles())
+            logger.info("Provisional TLE fetch completed: %s", prov)
+        except Exception as exc:
+            logger.warning("Provisional TLE fetch failed: %s", exc)
+
+        self._satellite_list_refresh.emit()
 
     # ------------------------------------------------------------------ #
     # Timer callback (every 1 second)
@@ -1747,6 +1763,15 @@ class MainWindow(QMainWindow):
         sb = self.statusBar()
         if sb:
             sb.showMessage(_("Syncing transmitter frequencies from SATNOGS..."), 5000)
+
+    def _refresh_provisional_tle_sync(self) -> None:
+        """Fetch TLEs for provisional (NORAD >= 90000) satellites from a background thread."""
+        try:
+            result = asyncio.run(self._tle_manager.fetch_provisional_tles())
+            logger.info("Provisional TLE refresh completed: %s", result)
+            self._satellite_list_refresh.emit()
+        except Exception as exc:
+            logger.warning("Provisional TLE refresh failed: %s", exc)
 
     def _refresh_satnogs_sync(self) -> None:
         """Sync SATNOGS transponders from a background thread."""

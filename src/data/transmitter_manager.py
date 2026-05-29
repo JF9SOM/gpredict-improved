@@ -198,6 +198,129 @@ class TransmitterManager:
         self._conn.commit()
 
     # ------------------------------------------------------------------ #
+    # Provisional-ID migration pipeline
+    # ------------------------------------------------------------------ #
+
+    def _run_migration_pipeline(self, fake_id: int, real_id: int) -> None:
+        """Migrate a satellite from a provisional NORAD ID to the official NORAD ID.
+
+        Called when the official NORAD ID is confirmed (either via norad_follow_id in
+        the SATNOGS satellite API, or when the SATNOGS TLE API returns a TLE whose
+        line1 encodes a different NORAD than the provisional ID).
+
+        Idempotent: safe to call multiple times on the same satellite pair.
+
+        Steps executed in order:
+          1. Ensure the official satellite record exists in the DB.
+          2. Update the official satellite's name if it is a Space-Track placeholder.
+          3. Migrate the TLE from provisional → official (skipped when a manual TLE
+             already exists on the official side).
+          4. Migrate transmitters from provisional → official (skipped when the
+             official side already has transmitters).
+          5. Copy is_favorite from provisional → official.
+          6. Record satnogs_source_id = fake_id on the official satellite so that
+             future SATNOGS syncs query under the provisional ID.
+          7. Hide the provisional satellite (is_hidden = 2).
+        """
+        now = datetime.now(UTC).isoformat()
+
+        # --- Step 1: load provisional satellite info ---------------------------
+        fake_row = self._conn.execute(
+            "SELECT name, status, alt_names, is_favorite FROM satellites WHERE norad_cat_id = ?",
+            (fake_id,),
+        ).fetchone()
+        if not fake_row:
+            return  # Nothing to migrate
+
+        # Ensure the official satellite record exists
+        self._conn.execute(
+            "INSERT OR IGNORE INTO satellites (norad_cat_id, name, status, updated_at)"
+            " VALUES (?, ?, ?, ?)",
+            (real_id, fake_row["name"], fake_row["status"] or "unknown", now),
+        )
+
+        # --- Step 2: update placeholder name on the official satellite ----------
+        real_row = self._conn.execute(
+            "SELECT name FROM satellites WHERE norad_cat_id = ?",
+            (real_id,),
+        ).fetchone()
+        if real_row:
+            real_name = str(real_row["name"])
+            # Replace Space-Track generic object names or internal placeholder names
+            if real_name.upper().startswith("OBJECT ") or real_name.startswith("#"):
+                self._conn.execute(
+                    "UPDATE satellites SET name = ?, updated_at = ? WHERE norad_cat_id = ?",
+                    (fake_row["name"], now, real_id),
+                )
+
+        # --- Step 3: TLE migration ---------------------------------------------
+        real_tle = self._conn.execute(
+            "SELECT source FROM tle_data WHERE norad_cat_id = ?",
+            (real_id,),
+        ).fetchone()
+        if real_tle is None:
+            # No TLE on official side yet; try to copy from provisional side
+            fake_tle = self._conn.execute(
+                "SELECT * FROM tle_data WHERE norad_cat_id = ?",
+                (fake_id,),
+            ).fetchone()
+            if fake_tle and fake_tle["source"] != "manual":
+                self._conn.execute(
+                    """
+                    INSERT OR REPLACE INTO tle_data
+                        (norad_cat_id, name, line1, line2, epoch,
+                         source, tle_group, fetched_at, quality_score)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        real_id,
+                        fake_tle["name"],
+                        fake_tle["line1"],
+                        fake_tle["line2"],
+                        fake_tle["epoch"],
+                        fake_tle["source"],
+                        fake_tle["tle_group"],
+                        fake_tle["fetched_at"],
+                        fake_tle["quality_score"],
+                    ),
+                )
+        # If real_tle already exists (especially manual) → leave it untouched.
+
+        # --- Step 4: transmitter migration -------------------------------------
+        real_tx_count = self._conn.execute(
+            "SELECT COUNT(*) FROM transmitters WHERE norad_cat_id = ?",
+            (real_id,),
+        ).fetchone()[0]
+        if real_tx_count == 0:
+            # Migrate all provisional transmitters to the official ID
+            self._conn.execute(
+                "UPDATE transmitters SET norad_cat_id = ? WHERE norad_cat_id = ?",
+                (real_id, fake_id),
+            )
+        # If transmitters are already on the official side → leave them alone.
+
+        # --- Step 5: copy is_favorite -----------------------------------------
+        if fake_row["is_favorite"]:
+            self._conn.execute(
+                "UPDATE satellites SET is_favorite = 1 WHERE norad_cat_id = ?",
+                (real_id,),
+            )
+
+        # --- Step 6: record satnogs_source_id on the official satellite --------
+        self._conn.execute(
+            "UPDATE satellites SET satnogs_source_id = ?, updated_at = ? WHERE norad_cat_id = ?",
+            (fake_id, now, real_id),
+        )
+
+        # --- Step 7: hide the provisional satellite ----------------------------
+        self._conn.execute(
+            "UPDATE satellites SET is_hidden = 2, updated_at = ? WHERE norad_cat_id = ?",
+            (now, fake_id),
+        )
+
+        self._conn.commit()
+
+    # ------------------------------------------------------------------ #
     # SATNOGS sync
     # ------------------------------------------------------------------ #
 
@@ -261,6 +384,25 @@ class TransmitterManager:
             auto_storage = (
                 xpdr.get("norad_follow_id") or xpdr.get("satellite__norad_cat_id") or sat_id
             )
+
+            # satnogs_source_id routing: if any satellite in our DB has registered this
+            # SATNOGS provisional ID as its transmitter query key, route to that satellite.
+            # This handles post-migration satellites where SATNOGS still stores transmitters
+            # under the provisional ID even after norad_follow_id was not set in the API.
+            if target_norad_cat_id is None:
+                source_sat = self._conn.execute(
+                    "SELECT norad_cat_id FROM satellites WHERE satnogs_source_id = ?",
+                    (int(sat_id),),
+                ).fetchone()
+                if source_sat:
+                    auto_storage = source_sat["norad_cat_id"]
+                    # Ensure the provisional satellite stays hidden
+                    self._conn.execute(
+                        "UPDATE satellites SET is_hidden = 2"
+                        " WHERE norad_cat_id = ? AND is_hidden = 0",
+                        (int(sat_id),),
+                    )
+
             # Prefer target_norad_cat_id when explicitly specified (backward compatibility)
             storage_id = target_norad_cat_id if target_norad_cat_id is not None else auto_storage
 
@@ -465,6 +607,10 @@ class TransmitterManager:
                                         " WHERE norad_cat_id = ?",
                                         (json.dumps(merged, ensure_ascii=False), now, norad_follow),
                                     )
+                            # Run full migration pipeline: migrate TLE, transmitters,
+                            # is_favorite, and set satnogs_source_id on the official satellite.
+                            if norad_follow is not None:
+                                self._run_migration_pipeline(norad, norad_follow)
                         else:
                             self._conn.execute(
                                 "UPDATE satellites SET name = ?, status = ?,"
