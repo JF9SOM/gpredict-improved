@@ -492,6 +492,7 @@ sudo usermod -aG dialout $USER
 - SATNOGS周波数DB同期・手動追加
 - TLE自動更新（CelesTrak: Amateur/CubeSat/Weather/Earth-Obs/Science/Stations）
 - **SATNOGS仮ID（90000番台）衛星のTLE自動取得・仮ID→実ID移行パイプライン**
+- **超古い衛星（NORAD < 10000）の一括チェック：CelesTrak 未収録なら自動非表示**
 - AMSAT運用状況スクレイピング・色分け表示
 - お気に入り機能（デスクトップ・スマホ共通DB）
 - フットプリント表示
@@ -754,6 +755,23 @@ SATNOGS API に対して satellite__norad_cat_id=fake_id でクエリ
 |---|---|
 | **トリガー(C)：GUI手動設定** | 「この衛星の実 NORAD ID は〇〇」とユーザーが GUI から手動指定する機能。トリガー(A)(B) で自動カバーできるケースがほとんどのため現時点では不要。 |
 | **フォールバック検知** | SATNOGS 側がトランスポンダーデータを実 ID に移行した場合に `satnogs_source_id` を自動で NULL にリセットする機能。現状では設定されていても実害はなく、SATNOGS が `norad_follow_id` をトランスポンダーに設定した時点で自然に解決される。 |
+
+### 超古い衛星（NORAD < 10000）の自動クリーンアップ（src/data/tle_manager.py）
+
+`fetch_legacy_tles()` — **起動時一回限りのクリーンアップ（以降は高速 no-op）**
+
+対象：`norad_cat_id < 10000 AND is_hidden=0 AND TLEなし` の衛星（最大 21 機）
+
+```
+CelesTrak に個別照会（CATNR={norad}&FORMAT=TLE）
+  ┌─ TLE 返却あり → まだ軌道上に存在する
+  │   source='celestrak', tle_group='legacy' として保存・表示継続
+  └─ TLE 返却なし → 軌道離脱済みと判断
+      is_hidden=2（システム非表示）に設定
+```
+
+- 2回目以降の起動では対象行が 0 件 → 即リターン（API 呼び出しなし）
+- `_refresh_satellite_names_sync()` の末尾でプロビジョナルTLEフェッチの後に実行
 
 ### ORIGAMISAT-2（NORAD 68795 / 仮 ID 98325）の状態
 

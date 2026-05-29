@@ -337,6 +337,95 @@ class TLEManager:
             print(f"[TLEManager] invalid TLE: {e}")
             return False
 
+    async def fetch_legacy_tles(
+        self,
+        progress_callback: Any = None,
+    ) -> dict[str, int]:
+        """Check very old satellites (NORAD < 10000) against CelesTrak one by one.
+
+        For each visible satellite with NORAD ID < 10000 that has no TLE, queries
+        CelesTrak individually using the CATNR parameter.
+
+        - If CelesTrak returns a TLE → the satellite is still in orbit; store the TLE
+          with source='celestrak' and tle_group='legacy'.
+        - If CelesTrak returns nothing → the satellite has most likely re-entered;
+          set is_hidden=2 so it no longer appears in any list.
+
+        This method is designed as a one-time startup cleanup.  On subsequent calls
+        all targets are either hidden or already have a TLE, so the query returns
+        zero rows and the method returns immediately.
+
+        Returns:
+            {"found": N, "hidden": N, "errors": N}
+        """
+        rows = self._conn.execute(
+            """
+            SELECT s.norad_cat_id, s.name FROM satellites s
+            LEFT JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id
+            WHERE s.norad_cat_id < 10000
+              AND s.is_hidden = 0
+              AND t.norad_cat_id IS NULL
+            """
+        ).fetchall()
+
+        if not rows:
+            return {"found": 0, "hidden": 0, "errors": 0}
+
+        stats: dict[str, int] = {"found": 0, "hidden": 0, "errors": 0}
+        now = datetime.now(UTC).isoformat()
+        url = "https://celestrak.org/NORAD/elements/gp.php"
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for idx, row in enumerate(rows):
+                norad = int(row["norad_cat_id"])
+                if progress_callback:
+                    progress_callback(idx + 1, len(rows))
+
+                try:
+                    r = await client.get(
+                        url,
+                        params={"CATNR": str(norad), "FORMAT": "TLE"},
+                    )
+                    r.raise_for_status()
+                    lines = [ln.strip() for ln in r.text.splitlines() if ln.strip()]
+
+                    if len(lines) >= 3:
+                        # CelesTrak still tracks this satellite → save the TLE
+                        name, line1, line2 = lines[0], lines[1], lines[2]
+                        sat_obj = EarthSatellite(line1, line2, name, self._ts)
+                        epoch_dt = sat_obj.epoch.utc_datetime()
+                        quality = _calc_quality(epoch_dt)
+
+                        self._conn.execute(
+                            """
+                            INSERT OR REPLACE INTO tle_data
+                                (norad_cat_id, name, line1, line2, epoch,
+                                 source, tle_group, fetched_at, quality_score)
+                            VALUES (?, ?, ?, ?, ?, 'celestrak', 'legacy', ?, ?)
+                            """,
+                            (norad, name, line1, line2, epoch_dt.isoformat(), now, quality),
+                        )
+                        stats["found"] += 1
+                    else:
+                        # Not found in CelesTrak → presumed re-entered; hide it
+                        self._conn.execute(
+                            "UPDATE satellites SET is_hidden = 2, updated_at = ?"
+                            " WHERE norad_cat_id = ?",
+                            (now, norad),
+                        )
+                        stats["hidden"] += 1
+
+                except httpx.HTTPError as exc:
+                    print(f"[TLEManager] legacy TLE fetch error for {norad}: {exc}")
+                    stats["errors"] += 1
+                except Exception as exc:
+                    print(f"[TLEManager] legacy TLE parse error for {norad}: {exc}")
+                    stats["errors"] += 1
+
+        self._conn.commit()
+        self._log_sync("legacy-tle-check", stats)
+        return stats
+
     async def fetch_provisional_tles(
         self,
         progress_callback: Any = None,
