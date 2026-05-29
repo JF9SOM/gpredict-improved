@@ -87,6 +87,7 @@ class _SatData(TypedDict):
     status: str
     tle_group: str
     amsat_status: str | None
+    tle_no_result_since: str | None  # set when no TLE found; shown yellow in list
 
 
 # Regular expression to extract AMSAT designators like AO-91, FO-29, CAS-4A
@@ -496,6 +497,8 @@ class MainWindow(QMainWindow):
         # Help
         help_menu = mb.addMenu(_("Help"))
         if help_menu:
+            help_menu.addAction(_("Satellite Color"), self._on_satellite_color)
+            help_menu.addSeparator()
             help_menu.addAction(_("About"), self._on_about)
             help_menu.addAction(_("GitHub"), self._on_github)
 
@@ -559,7 +562,8 @@ class MainWindow(QMainWindow):
         rows = self._conn.execute(
             """
             SELECT s.norad_cat_id, s.name, s.alt_names, s.is_favorite, s.is_hidden, s.status,
-                   COALESCE(t.tle_group, 'amateur') AS tle_group
+                   COALESCE(t.tle_group, 'amateur') AS tle_group,
+                   s.tle_no_result_since
             FROM satellites s
             LEFT JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id
             ORDER BY s.name
@@ -610,6 +614,9 @@ class MainWindow(QMainWindow):
                     status=str(row["status"] or "unknown"),
                     tle_group=str(row["tle_group"]),
                     amsat_status=amsat_status,
+                    tle_no_result_since=(
+                        str(row["tle_no_result_since"]) if row["tle_no_result_since"] else None
+                    ),
                 )
             )
             self._all_norads.append(norad)
@@ -698,6 +705,12 @@ class MainWindow(QMainWindow):
                 item.setForeground(QColor("#f1c40f"))
             elif amsat_status == "non_operational":
                 item.setForeground(QColor("#7f8c8d"))
+                font = item.font()
+                font.setItalic(True)
+                item.setFont(font)
+            elif d["tle_no_result_since"] is not None:
+                # Alive satellite in 30-day TLE grace period → yellow caution
+                item.setForeground(QColor("#f1c40f"))
                 font = item.font()
                 font.setItalic(True)
                 item.setFont(font)
@@ -2104,6 +2117,100 @@ class MainWindow(QMainWindow):
             _("Language"),
             _("Please restart the application to apply the language change."),
         )
+
+    def _on_satellite_color(self) -> None:
+        """Show the satellite list color legend dialog."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(_("Satellite Color Legend"))
+        dialog.setMinimumWidth(480)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(0)
+
+        # Build the legend using an HTML table rendered in a QLabel
+        rows_html = [
+            (
+                "#2ecc71",
+                "bold",
+                _("Green (bold)"),
+                _("AMSAT status: Operational — confirmed working by AMSAT."),
+            ),
+            (
+                "#f1c40f",
+                "normal",
+                _("Yellow"),
+                _("AMSAT status: Partially operational — degraded but active."),
+            ),
+            (
+                "#7f8c8d",
+                "italic",
+                _("Gray (italic)"),
+                _("AMSAT status: Non-operational — confirmed failed by AMSAT."),
+            ),
+            (
+                "#e67e22",
+                "normal",
+                _("Orange"),
+                _("SATNOGS alive — reception reported, no AMSAT data available."),
+            ),
+            (
+                "#f1c40f",
+                "italic",
+                _("Yellow (italic)"),
+                _(
+                    "TLE pending — alive satellite awaiting TLE assignment "
+                    "(provisional NORAD ≥ 90000, within 30-day grace period). "
+                    "Position cannot be displayed yet."
+                ),
+            ),
+            (
+                "#7f8c8d",
+                "normal",
+                _("Gray"),
+                _("Status unknown — not confirmed operational by any source."),
+            ),
+        ]
+
+        table_rows = ""
+        for color, style, label, desc in rows_html:
+            weight = "bold" if style == "bold" else "normal"
+            fstyle = "italic" if style == "italic" else "normal"
+            swatch = (
+                f'<span style="display:inline-block; width:14px; height:14px;'
+                f" background:{color}; border:1px solid #555;"
+                f' vertical-align:middle; margin-right:6px;"></span>'
+            )
+            label_html = (
+                f'<span style="color:{color}; font-weight:{weight};'
+                f' font-style:{fstyle};">{label}</span>'
+            )
+            table_rows += (
+                f"<tr>"
+                f"<td style='padding:6px 8px; white-space:nowrap;'>"
+                f"{swatch}{label_html}</td>"
+                f"<td style='padding:6px 8px; color:#ccc;'>{desc}</td>"
+                f"</tr>"
+            )
+
+        html = (
+            "<html><body style='background:#2b2b2b; color:#eee;'>"
+            "<table cellspacing='0' cellpadding='0' style='border-collapse:collapse;'>"
+            + table_rows
+            + "</table></body></html>"
+        )
+
+        label = QLabel(html)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setContentsMargins(12, 12, 12, 12)
+        layout.addWidget(label)
+
+        from PySide6.QtWidgets import QDialogButtonBox  # noqa: PLC0415
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+
+        dialog.exec()
 
     def _on_about(self) -> None:
         QMessageBox.information(

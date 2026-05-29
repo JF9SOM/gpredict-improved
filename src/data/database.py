@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS satellites (
     is_favorite     INTEGER DEFAULT 0,
     is_hidden       INTEGER DEFAULT 0,
     satnogs_source_id INTEGER DEFAULT NULL,  -- provisional NORAD for SATNOGS transmitter query
+    tle_no_result_since DATETIME DEFAULT NULL,  -- set when no TLE found; auto-hide after 30 days
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -125,6 +126,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         "ALTER TABLE tle_data ADD COLUMN tle_group TEXT DEFAULT 'amateur'",
         "ALTER TABLE satellites ADD COLUMN satnogs_uuid TEXT DEFAULT NULL",
         "ALTER TABLE satellites ADD COLUMN satnogs_source_id INTEGER DEFAULT NULL",
+        "ALTER TABLE satellites ADD COLUMN tle_no_result_since DATETIME DEFAULT NULL",
     ]
     for stmt in migrations:
         with contextlib.suppress(Exception):

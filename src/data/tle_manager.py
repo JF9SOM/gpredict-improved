@@ -442,20 +442,32 @@ class TLEManager:
         satellite record already exists in our DB.
 
         Returns:
-            {"inserted": N, "updated": N, "no_tle": N, "errors": N}
+            {"inserted": N, "updated": N, "no_tle": N,
+             "hidden_unknown": N, "hidden_expired": N, "errors": N}
         """
         rows = self._conn.execute(
-            "SELECT norad_cat_id, name FROM satellites"
+            "SELECT norad_cat_id, name, status, tle_no_result_since FROM satellites"
             " WHERE norad_cat_id >= 90000 AND is_hidden = 0"
         ).fetchall()
 
-        stats: dict[str, int] = {"inserted": 0, "updated": 0, "no_tle": 0, "errors": 0}
+        stats: dict[str, int] = {
+            "inserted": 0,
+            "updated": 0,
+            "no_tle": 0,
+            "hidden_unknown": 0,
+            "hidden_expired": 0,
+            "errors": 0,
+        }
         now = datetime.now(UTC).isoformat()
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             for idx, row in enumerate(rows):
                 fake_id = int(row["norad_cat_id"])
                 sat_name = str(row["name"])
+                sat_status = str(row["status"] or "unknown")
+                no_result_since: str | None = (
+                    str(row["tle_no_result_since"]) if row["tle_no_result_since"] else None
+                )
 
                 if progress_callback:
                     progress_callback(idx + 1, len(rows))
@@ -481,6 +493,39 @@ class TLEManager:
                 if isinstance(data, list):
                     data = data[0] if data else {}
                 if not isinstance(data, dict) or "tle1" not in data:
+                    # ---- No TLE available from SATNOGS ----
+                    if sat_status == "unknown":
+                        # Nobody has confirmed reception → hide immediately
+                        self._conn.execute(
+                            "UPDATE satellites SET is_hidden = 2, updated_at = ?"
+                            " WHERE norad_cat_id = ?",
+                            (now, fake_id),
+                        )
+                        stats["hidden_unknown"] += 1
+                    else:
+                        # status='alive': start / check the 30-day grace period.
+                        # Use tle_no_result_since as a latch: set once, never reset
+                        # unless a TLE is actually found.
+                        if no_result_since is None:
+                            # First time no TLE → record the start of the grace period
+                            self._conn.execute(
+                                "UPDATE satellites SET tle_no_result_since = ?, updated_at = ?"
+                                " WHERE norad_cat_id = ?",
+                                (now, now, fake_id),
+                            )
+                        else:
+                            # Already in grace period → check if 30 days have elapsed
+                            since_dt = datetime.fromisoformat(no_result_since)
+                            if since_dt.tzinfo is None:
+                                since_dt = since_dt.replace(tzinfo=UTC)
+                            if datetime.now(UTC) - since_dt > timedelta(days=30):
+                                self._conn.execute(
+                                    "UPDATE satellites SET is_hidden = 2, updated_at = ?"
+                                    " WHERE norad_cat_id = ?",
+                                    (now, fake_id),
+                                )
+                                stats["hidden_expired"] += 1
+                            # else: still within grace period → leave visible (yellow in UI)
                     stats["no_tle"] += 1
                     continue
 
@@ -513,6 +558,13 @@ class TLEManager:
                         from data.transmitter_manager import TransmitterManager  # noqa: PLC0415
 
                         TransmitterManager(self._conn)._run_migration_pipeline(fake_id, tle_norad)
+
+                # TLE found → clear the no-result grace-period latch if it was set
+                if no_result_since is not None:
+                    self._conn.execute(
+                        "UPDATE satellites SET tle_no_result_since = NULL WHERE norad_cat_id = ?",
+                        (fake_id,),
+                    )
 
                 # Never overwrite a manually entered TLE
                 existing = self._conn.execute(
