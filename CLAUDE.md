@@ -599,16 +599,30 @@ set_language("ja")
 
 ## HamlibNetController 実装メモ（2026-05-20 確認済み）
 
-### FTX-1F + rigctld での動作確認済みプロトコル
+### rigctld 標準プロトコルと VFO 割り当て（全機種共通）
 
 **接続時（1回のみ）:**
-  S 1 Main → RPRT 0
+  S 1 Main → RPRT 0  （split ON。Main=RX(DL) / Sub=TX(UL) を確立）
 
 **毎サイクル（1秒間隔）:**
-  F {dl_hz} → RPRT 0  （前回から1Hz以上変化した場合のみ）
-  I {ul_hz} → RPRT 0  （前回から1Hz以上変化した場合のみ）
+  F {dl_hz} → RPRT 0  （Main=RX / ダウンリンク周波数。前回から1Hz以上変化した場合のみ）
+  I {ul_hz} → RPRT 0  （Sub=TX / アップリンク周波数。前回から1Hz以上変化した場合のみ）
 
-### FTX-1F固有の制約（Hamlibバックエンドが吸収）
+**VFO 割り当ての原則（Hamlib 全機種共通）:**
+- `S 1 Main` 送信後: **Main = RX（ダウンリンク）、Sub = TX（アップリンク）**
+- `F {hz}`: Main VFO（RX/ダウンリンク）の周波数を設定
+- `I {hz}`: Sub VFO（TX/アップリンク）の周波数を設定（split TX）
+- 各バックエンドがこの割り当てを実現する仕組みはリグ固有だが（下記参照）、結果は全機種共通
+
+**各リグでの実現メカニズム（Hamlib ソースで確認済み）:**
+| リグ | S 1 Main の動作 |
+|------|----------------|
+| FTX-1F | バックエンドが S コマンド引数に関わらず Main=RX を強制 |
+| IC-9700 | `S 1 Main`（tx_vfo=Main）が satmode を自動 ON → satmode 時は常に Main=RX, Sub=TX |
+| FT-991A | 標準 split 動作: Main(VFOA)=RX, Sub(VFOB)=TX（実機確認済み） |
+| その他 Hamlib 対応機 | 同様の split 動作で Main=RX, Sub=TX |
+
+### FTX-1F 固有の制約（Hamlib バックエンドが吸収）
 - S 1 Main 応答に約150ms かかる
 - F/I コマンド応答は約150ms
 - f/i（get_freq）コマンドはF/I送信直後に10秒以上かかる → 使用禁止
@@ -623,7 +637,7 @@ set_language("ja")
 
 ### send_mode_only() VFO順序の根拠
 
-FTX-1Fバックエンドの実動作: Sub=TX(UL), Main=RX(DL)
+全 Hamlib 対応機共通の VFO 割り当て: Sub=TX(UL), Main=RX(DL)
 
 send_mode_only()の正しい順序:
 ```
@@ -644,9 +658,9 @@ S 1 Mainはrigctld標準プロトコル。全機種共通。
 ## Rig-Specific Implementation Notes
 
 ### FTX-1F (Hamlib model 1051)
-- rigctld backend forces Sub=TX, Main=RX regardless of S command argument
-- `S 1 Main` is required for split (not `S 1 Sub`) — rigctld standard protocol
-- `F {hz}` → Main (RX/DL),  `I {hz}` → Sub (TX/UL) via rigctld
+- rigctld backend forces Sub=TX, Main=RX regardless of S command argument (FTX-1F specific quirk; other rigs achieve the same result through standard split or satmode mechanisms)
+- `S 1 Main` is required for split (not `S 1 Sub`) — rigctld standard protocol, universal across all rigs
+- `F {hz}` → Main (RX/DL),  `I {hz}` → Sub (TX/UL) via rigctld — universal VFO assignment
 - Mode setting: `V Sub → M {ul_mode} 0 → V Main → M {dl_mode} 0` via independent socket
 - `V` (active VFO switch) command causes TX LED to light → forbidden in Doppler cycle
 - CTCSS: Hamlib `L CTCSS_TONE` → `RPRT -11` (not supported by backend)
