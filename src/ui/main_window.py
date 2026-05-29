@@ -16,6 +16,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
@@ -380,7 +381,8 @@ class MainWindow(QMainWindow):
             ' style="color:#2980b9; font-size:10px;">'
             "↗ AMSAT Status Page</a>"
         )
-        self._amsat_link.setOpenExternalLinks(True)
+        self._amsat_link.setOpenExternalLinks(False)
+        self._amsat_link.linkActivated.connect(self._open_url_app_mode)
         self._amsat_link.setAlignment(Qt.AlignmentFlag.AlignRight)
         self._amsat_link.setVisible(False)
         left_layout.addWidget(self._amsat_link)
@@ -1503,6 +1505,77 @@ class MainWindow(QMainWindow):
         self._conn.commit()
         self._pass_list.set_use_utc(use_utc)
         self._pass_chart.set_use_utc(use_utc)
+
+    def _open_url_app_mode(self, url: str) -> None:
+        """Open *url* in Chrome/Chromium app mode (no browser chrome/tabs).
+
+        Searches for Chrome-family browsers in order of preference and launches
+        with the ``--app=URL`` flag.  Falls back to ``QDesktopServices.openUrl``
+        when no compatible browser is found.
+
+        Args:
+            url: the URL to open (may be passed as a raw string from QLabel.linkActivated)
+        """
+        _LINUX_CANDIDATES = [
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium-browser",
+            "chromium",
+            "brave-browser",
+            "microsoft-edge",
+        ]
+        _MAC_CANDIDATES = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ]
+        _WIN_CANDIDATES = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            str(
+                __import__("pathlib").Path.home()
+                / "AppData"
+                / "Local"
+                / "Google"
+                / "Chrome"
+                / "Application"
+                / "chrome.exe"
+            ),
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        ]
+
+        browser_exe: str | None = None
+
+        if sys.platform.startswith("linux"):
+            for candidate in _LINUX_CANDIDATES:
+                found = shutil.which(candidate)
+                if found:
+                    browser_exe = found
+                    break
+        elif sys.platform == "darwin":
+            for candidate in _MAC_CANDIDATES:
+                if shutil.which(candidate) or __import__("os.path").path.isfile(candidate):
+                    browser_exe = candidate
+                    break
+        elif sys.platform == "win32":
+            import os
+
+            for candidate in _WIN_CANDIDATES:
+                if os.path.isfile(candidate):
+                    browser_exe = candidate
+                    break
+
+        if browser_exe:
+            try:
+                subprocess.Popen([browser_exe, f"--app={url}"])
+                return
+            except OSError:
+                pass
+
+        # Fallback: open with the system default browser
+        QDesktopServices.openUrl(QUrl(url))
 
     def _on_settings_accepted(self) -> None:
         """After Settings OK, sync the enabled TLE sources and redraw the satellite list."""
