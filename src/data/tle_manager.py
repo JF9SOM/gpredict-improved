@@ -337,6 +337,266 @@ class TLEManager:
             print(f"[TLEManager] invalid TLE: {e}")
             return False
 
+    def is_active_tle_stale(self, max_age_hours: float = 24.0) -> bool:
+        """Return True if the celestrak-active TLE fetch is older than max_age_hours."""
+        row = self._conn.execute(
+            "SELECT finished_at FROM sync_log WHERE sync_type = 'celestrak-active'"
+            " ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return True
+        last = datetime.fromisoformat(str(row["finished_at"]))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        return datetime.now(UTC) - last > timedelta(hours=max_age_hours)
+
+    async def fetch_active_tles(self) -> dict[str, int]:
+        """Fill TLE gaps for SATNOGS-registered satellites (NORAD 10000-89999).
+
+        Two-phase approach:
+          Phase 1 — CelesTrak bulk groups (single request per group, fast):
+            Downloads several CelesTrak groups that collectively cover most
+            SATNOGS-registered satellites not already handled by the targeted
+            group fetches (amateur, cubesat, etc.).
+            Note: CelesTrak GROUP=active currently returns 403, so we use the
+            available subsets instead.
+
+          Phase 2 — SATNOGS TLE API fallback (individual requests, concurrent):
+            For each satellite in NORAD 10000-89999 that still has no TLE after
+            phase 1, queries the SATNOGS TLE API (/api/tle/?norad_cat_id=X).
+            Requests are issued concurrently (up to 20 at a time) to limit
+            total run time to a few minutes.
+            Same 30-day grace-period / auto-hide logic as fetch_provisional_tles().
+
+        New satellite records are never created; only existing satellites are updated.
+        Manual TLEs are never overwritten.
+        Existing tle_group values are preserved on UPDATE.
+
+        Returns:
+            {"inserted": N, "updated": N, "no_tle": N,
+             "hidden_unknown": N, "hidden_expired": N, "errors": N}
+        """
+        import asyncio as _asyncio  # noqa: PLC0415
+
+        # CelesTrak groups accessible without authentication that provide good coverage
+        # of SATNOGS-registered satellites (GROUP=active returns 403).
+        _BULK_GROUPS = [
+            "satnogs",  # ~664 satellites tracked by SatNOGS network
+            "last-30-days",  # recently launched satellites
+            "argos",  # data-collection / beacon satellites
+            "orbcomm",  # low-orbit messaging
+            "spire",  # commercial CubeSat constellation
+        ]
+        stats: dict[str, int] = {
+            "inserted": 0,
+            "updated": 0,
+            "no_tle": 0,
+            "hidden_unknown": 0,
+            "hidden_expired": 0,
+            "errors": 0,
+        }
+        now = datetime.now(UTC).isoformat()
+
+        # Visible satellites we care about (NORAD 10000-89999, excludes provisional)
+        wanted: set[int] = {
+            int(r["norad_cat_id"])
+            for r in self._conn.execute(
+                "SELECT norad_cat_id FROM satellites"
+                " WHERE is_hidden = 0"
+                "   AND norad_cat_id BETWEEN 10000 AND 89999"
+            ).fetchall()
+        }
+        # Current TLE map: {norad: (source, tle_group)}
+        existing_tles: dict[int, tuple[str, str]] = {
+            int(r["norad_cat_id"]): (
+                str(r["source"] or ""),
+                str(r["tle_group"] or "amateur"),
+            )
+            for r in self._conn.execute(
+                "SELECT norad_cat_id, source, tle_group FROM tle_data"
+            ).fetchall()
+        }
+
+        # ── Phase 1: CelesTrak bulk group fetches ────────────────────────────
+        def _process_tle_text(text: str, source_label: str) -> None:
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            i = 0
+            while i < len(lines) - 2:
+                if lines[i + 1].startswith("1 ") and lines[i + 2].startswith("2 "):
+                    name, line1, line2 = lines[i], lines[i + 1], lines[i + 2]
+                    i += 3
+                    try:
+                        norad = int(line1[2:7])
+                    except (ValueError, IndexError):
+                        continue
+                    if norad not in wanted:
+                        continue
+                    ex_src, _ex_grp = existing_tles.get(norad, ("", ""))
+                    if ex_src == "manual":
+                        continue
+                    try:
+                        sat_obj = EarthSatellite(line1, line2, name, self._ts)
+                        epoch_dt = sat_obj.epoch.utc_datetime()
+                        quality = _calc_quality(epoch_dt)
+                    except Exception:
+                        stats["errors"] += 1
+                        i += 1
+                        continue
+                    self._conn.execute(
+                        "INSERT INTO tle_history"
+                        " (norad_cat_id, name, line1, line2, epoch, source)"
+                        " VALUES (?, ?, ?, ?, ?, ?)",
+                        (norad, name, line1, line2, epoch_dt.isoformat(), source_label),
+                    )
+                    if ex_src:
+                        self._conn.execute(
+                            "UPDATE tle_data SET"
+                            " name=?, line1=?, line2=?, epoch=?,"
+                            " source='celestrak', fetched_at=?, quality_score=?"
+                            " WHERE norad_cat_id=?",
+                            (name, line1, line2, epoch_dt.isoformat(), now, quality, norad),
+                        )
+                        stats["updated"] += 1
+                    else:
+                        self._conn.execute(
+                            "INSERT INTO tle_data"
+                            " (norad_cat_id, name, line1, line2, epoch,"
+                            "  source, tle_group, fetched_at, quality_score)"
+                            " VALUES (?, ?, ?, ?, ?, 'celestrak', 'amateur', ?, ?)",
+                            (norad, name, line1, line2, epoch_dt.isoformat(), now, quality),
+                        )
+                        self._conn.execute(
+                            "UPDATE satellites SET tle_no_result_since = NULL"
+                            " WHERE norad_cat_id = ?",
+                            (norad,),
+                        )
+                        existing_tles[norad] = ("celestrak", "amateur")
+                        stats["inserted"] += 1
+                else:
+                    i += 1
+
+        url_ct = "https://celestrak.org/NORAD/elements/gp.php"
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for group in _BULK_GROUPS:
+                try:
+                    r = await client.get(url_ct, params={"GROUP": group, "FORMAT": "TLE"})
+                    r.raise_for_status()
+                    _process_tle_text(r.text, f"celestrak-{group}")
+                except httpx.HTTPError as exc:
+                    print(f"[TLEManager] active fetch error ({group}): {exc}")
+                    stats["errors"] += 1
+
+        self._conn.commit()
+
+        # ── Phase 2: SATNOGS TLE API fallback for still-missing satellites ───
+        still_missing = [
+            (
+                int(r["norad_cat_id"]),
+                str(r["name"]),
+                str(r["status"] or "unknown"),
+                str(r["tle_no_result_since"]) if r["tle_no_result_since"] else None,
+            )
+            for r in self._conn.execute(
+                """
+                SELECT s.norad_cat_id, s.name, s.status, s.tle_no_result_since
+                FROM satellites s
+                LEFT JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id
+                WHERE s.is_hidden = 0
+                  AND s.norad_cat_id BETWEEN 10000 AND 89999
+                  AND t.norad_cat_id IS NULL
+                """
+            ).fetchall()
+        ]
+
+        if still_missing:
+            semaphore = _asyncio.Semaphore(20)  # max 20 concurrent requests
+
+            async def _fetch_one(
+                norad: int, sat_name: str, sat_status: str, no_result_since: str | None
+            ) -> None:
+                async with semaphore:
+                    try:
+                        async with httpx.AsyncClient(timeout=10.0) as c:
+                            resp = await c.get(
+                                SATNOGS_TLE_URL,
+                                params={"norad_cat_id": norad, "format": "json"},
+                            )
+                            resp.raise_for_status()
+                            data = resp.json()
+                    except Exception as exc:
+                        print(f"[TLEManager] SATNOGS TLE fallback error {norad}: {exc}")
+                        stats["errors"] += 1
+                        return
+
+                    if isinstance(data, list):
+                        data = data[0] if data else {}
+                    if not isinstance(data, dict) or "tle1" not in data:
+                        # No TLE available — apply grace-period / hide logic
+                        if sat_status == "unknown":
+                            self._conn.execute(
+                                "UPDATE satellites SET is_hidden = 2, updated_at = ?"
+                                " WHERE norad_cat_id = ?",
+                                (now, norad),
+                            )
+                            stats["hidden_unknown"] += 1
+                        else:
+                            if no_result_since is None:
+                                self._conn.execute(
+                                    "UPDATE satellites"
+                                    " SET tle_no_result_since = ?, updated_at = ?"
+                                    " WHERE norad_cat_id = ?",
+                                    (now, now, norad),
+                                )
+                            else:
+                                since_dt = datetime.fromisoformat(no_result_since)
+                                if since_dt.tzinfo is None:
+                                    since_dt = since_dt.replace(tzinfo=UTC)
+                                if datetime.now(UTC) - since_dt > timedelta(days=30):
+                                    self._conn.execute(
+                                        "UPDATE satellites"
+                                        " SET is_hidden = 2, updated_at = ?"
+                                        " WHERE norad_cat_id = ?",
+                                        (now, norad),
+                                    )
+                                    stats["hidden_expired"] += 1
+                        stats["no_tle"] += 1
+                        return
+
+                    line1: str = str(data["tle1"])
+                    line2: str = str(data["tle2"])
+                    try:
+                        sat_obj = EarthSatellite(line1, line2, sat_name, self._ts)
+                        epoch_dt = sat_obj.epoch.utc_datetime()
+                        quality = _calc_quality(epoch_dt)
+                    except Exception as exc:
+                        print(f"[TLEManager] SATNOGS TLE parse error {norad}: {exc}")
+                        stats["errors"] += 1
+                        return
+
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO tle_data"
+                        " (norad_cat_id, name, line1, line2, epoch,"
+                        "  source, tle_group, fetched_at, quality_score)"
+                        " VALUES (?, ?, ?, ?, ?, 'satnogs', 'amateur', ?, ?)",
+                        (norad, sat_name, line1, line2, epoch_dt.isoformat(), now, quality),
+                    )
+                    self._conn.execute(
+                        "UPDATE satellites SET tle_no_result_since = NULL WHERE norad_cat_id = ?",
+                        (norad,),
+                    )
+                    stats["inserted"] += 1
+
+            await _asyncio.gather(
+                *[
+                    _fetch_one(norad, name, status, nrs)
+                    for norad, name, status, nrs in still_missing
+                ]
+            )
+            self._conn.commit()
+
+        self._log_sync("celestrak-active", stats)
+        return stats
+
     async def fetch_legacy_tles(
         self,
         progress_callback: Any = None,

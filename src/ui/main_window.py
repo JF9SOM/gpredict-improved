@@ -786,6 +786,13 @@ class MainWindow(QMainWindow):
                 id="provisional_tle_refresh",
                 misfire_grace_time=600,
             )
+            self._scheduler.add_job(
+                self._refresh_active_tle_sync,
+                "interval",
+                hours=24,
+                id="active_tle_refresh",
+                misfire_grace_time=1800,
+            )
             self._scheduler.start()
             logger.debug("APScheduler started")
         except Exception as exc:
@@ -795,6 +802,10 @@ class MainWindow(QMainWindow):
         # On startup, refresh AMSAT status in the background if stale
         if self._amsat_fetcher.is_stale():
             threading.Thread(target=self._refresh_amsat_sync, daemon=True).start()
+
+        # On startup, fetch CelesTrak active TLEs if last run was >24 hours ago
+        if self._tle_manager.is_active_tle_stale():
+            threading.Thread(target=self._refresh_active_tle_sync, daemon=True).start()
 
         # On startup, auto-sync if there are no transmitters yet
         count = self._conn.execute("SELECT COUNT(*) FROM transmitters").fetchone()[0]
@@ -1788,6 +1799,15 @@ class MainWindow(QMainWindow):
         sb = self.statusBar()
         if sb:
             sb.showMessage(_("Syncing transmitter frequencies from SATNOGS..."), 5000)
+
+    def _refresh_active_tle_sync(self) -> None:
+        """Fetch CelesTrak GROUP=active TLEs and fill gaps for SATNOGS satellites."""
+        try:
+            result = asyncio.run(self._tle_manager.fetch_active_tles())
+            logger.info("CelesTrak active TLE fetch completed: %s", result)
+            self._satellite_list_refresh.emit()
+        except Exception as exc:
+            logger.warning("CelesTrak active TLE fetch failed: %s", exc)
 
     def _refresh_provisional_tle_sync(self) -> None:
         """Fetch TLEs for provisional (NORAD >= 90000) satellites from a background thread."""
