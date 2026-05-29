@@ -531,8 +531,9 @@ class TLEManager:
                     if isinstance(data, list):
                         data = data[0] if data else {}
                     if not isinstance(data, dict) or "tle1" not in data:
-                        # No TLE available — apply grace-period / hide logic
-                        if sat_status == "unknown":
+                        # No TLE available — apply grace-period / hide logic.
+                        # 'dead' satellites are treated like 'unknown': hide immediately.
+                        if sat_status in ("unknown", "dead"):
                             self._conn.execute(
                                 "UPDATE satellites SET is_hidden = 2, updated_at = ?"
                                 " WHERE norad_cat_id = ?",
@@ -754,8 +755,8 @@ class TLEManager:
                     data = data[0] if data else {}
                 if not isinstance(data, dict) or "tle1" not in data:
                     # ---- No TLE available from SATNOGS ----
-                    if sat_status == "unknown":
-                        # Nobody has confirmed reception → hide immediately
+                    # 'dead' treated same as 'unknown': hide immediately.
+                    if sat_status in ("unknown", "dead"):
                         self._conn.execute(
                             "UPDATE satellites SET is_hidden = 2, updated_at = ?"
                             " WHERE norad_cat_id = ?",
