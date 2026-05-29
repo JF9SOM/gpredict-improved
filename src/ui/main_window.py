@@ -709,8 +709,8 @@ class MainWindow(QMainWindow):
                 font.setItalic(True)
                 item.setFont(font)
             elif d["tle_no_result_since"] is not None:
-                # Alive satellite in 30-day TLE grace period → yellow caution
-                item.setForeground(QColor("#f1c40f"))
+                # Alive satellite in 30-day TLE grace period → purple caution
+                item.setForeground(QColor("#9b59b6"))
                 font = item.font()
                 font.setItalic(True)
                 item.setFont(font)
@@ -2153,9 +2153,9 @@ class MainWindow(QMainWindow):
                 _("SATNOGS alive — reception reported, no AMSAT data available."),
             ),
             (
-                "#f1c40f",
+                "#9b59b6",
                 "italic",
-                _("Yellow (italic)"),
+                _("Purple (italic)"),
                 _(
                     "TLE pending — alive satellite awaiting TLE assignment "
                     "(provisional NORAD ≥ 90000, within 30-day grace period). "
@@ -2198,11 +2198,11 @@ class MainWindow(QMainWindow):
             + "</table></body></html>"
         )
 
-        label = QLabel(html)
-        label.setWordWrap(True)
-        label.setTextFormat(Qt.TextFormat.RichText)
-        label.setContentsMargins(12, 12, 12, 12)
-        layout.addWidget(label)
+        legend_label = QLabel(html)
+        legend_label.setWordWrap(True)
+        legend_label.setTextFormat(Qt.TextFormat.RichText)
+        legend_label.setContentsMargins(12, 12, 12, 12)
+        layout.addWidget(legend_label)
 
         from PySide6.QtWidgets import QDialogButtonBox  # noqa: PLC0415
 
