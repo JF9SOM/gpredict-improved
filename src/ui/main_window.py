@@ -704,10 +704,7 @@ class MainWindow(QMainWindow):
             elif amsat_status == "partial":
                 item.setForeground(QColor("#f1c40f"))
             elif amsat_status == "non_operational":
-                item.setForeground(QColor("#7f8c8d"))
-                font = item.font()
-                font.setItalic(True)
-                item.setFont(font)
+                item.setForeground(QColor("#e74c3c"))
             elif d["tle_no_result_since"] is not None:
                 # Alive satellite in 30-day TLE grace period → purple caution
                 item.setForeground(QColor("#9b59b6"))
@@ -2141,9 +2138,9 @@ class MainWindow(QMainWindow):
                 _("AMSAT status: Partially operational — degraded but active."),
             ),
             (
-                "#7f8c8d",
-                "italic",
-                _("Gray (italic)"),
+                "#e74c3c",
+                "normal",
+                _("Red"),
                 _("AMSAT status: Non-operational — confirmed failed by AMSAT."),
             ),
             (
