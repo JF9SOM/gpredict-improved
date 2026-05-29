@@ -374,6 +374,17 @@ class MainWindow(QMainWindow):
         self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
         left_layout.addWidget(self._filter_combo)
 
+        # Link to the AMSAT Live Oscar Status page — visible only for the AMSAT filter
+        self._amsat_link = QLabel(
+            '<a href="https://www.amsat.org/status/"'
+            ' style="color:#2980b9; font-size:10px;">'
+            "↗ AMSAT Status Page</a>"
+        )
+        self._amsat_link.setOpenExternalLinks(True)
+        self._amsat_link.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._amsat_link.setVisible(False)
+        left_layout.addWidget(self._amsat_link)
+
         self._search_box = QLineEdit()
         self._search_box.setPlaceholderText(_("Search satellites..."))
         self._search_box.setClearButtonEnabled(True)
@@ -524,6 +535,8 @@ class MainWindow(QMainWindow):
                     self._filter_combo.blockSignals(True)
                     self._filter_combo.setCurrentIndex(idx)
                     self._filter_combo.blockSignals(False)
+                    # Sync the AMSAT link visibility (signal was blocked)
+                    self._amsat_link.setVisible(row[0] == "Operational (AMSAT)")
         except Exception:
             pass
 
@@ -1035,8 +1048,9 @@ class MainWindow(QMainWindow):
     # Satellite selection callbacks
     # ------------------------------------------------------------------ #
 
-    def _on_filter_changed(self, _: str) -> None:
+    def _on_filter_changed(self, text: str) -> None:
         """Redraw the satellite list when the filter combo changes."""
+        self._amsat_link.setVisible(text == "Operational (AMSAT)")
         self._apply_filter()
 
     def _on_search_changed(self, _text: str) -> None:
