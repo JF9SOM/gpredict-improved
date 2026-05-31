@@ -1,0 +1,55 @@
+[
+  {
+    "_comment": "Community-established FT4/FT8 calling frequencies for amateur satellites.",
+    "_comment2": "These are NOT in the SATNOGS database. Source: JH1NHK @JH1NHK (https://x.com/JH1NHK/status/1882598594924212321)",
+    "_comment3": "Format: Rx=downlink, Tx=uplink. Frequencies may change as community conventions evolve. Last reviewed: 2026-06-01."
+  },
+  {
+    "uuid": "community-rs44-ft4",
+    "norad_cat_id": 44909,
+    "satellite_name": "RS-44 (DOSAAF-85)",
+    "description": "FT4 Calling — community standard (V/U inverting transponder)",
+    "type": "Transponder",
+    "uplink_low":   145993000,
+    "uplink_high":  null,
+    "downlink_low": 435612000,
+    "downlink_high": null,
+    "mode": "FT4",
+    "invert": true,
+    "baud": null,
+    "ctcss_tone": null,
+    "notes": "Community FT4 calling frequency within the V/U inverting transponder passband. Rx 435.612 / Tx 145.993. Not in SATNOGS. Ref: JH1NHK https://x.com/JH1NHK/status/1882598594924212321"
+  },
+  {
+    "uuid": "community-jo97-ft4",
+    "norad_cat_id": 43803,
+    "satellite_name": "JO-97 (JY1Sat)",
+    "description": "FT4 Calling — community standard (U/V transponder)",
+    "type": "Transponder",
+    "uplink_low":   435118000,
+    "uplink_high":  null,
+    "downlink_low": 145857000,
+    "downlink_high": null,
+    "mode": "FT4",
+    "invert": false,
+    "baud": null,
+    "ctcss_tone": null,
+    "notes": "Community FT4 calling frequency within the U/V transponder passband. Rx 145.857 / Tx 435.118. Not in SATNOGS. Ref: JH1NHK https://x.com/JH1NHK/status/1882598594924212321"
+  },
+  {
+    "uuid": "community-mo122-ft4",
+    "norad_cat_id": 60209,
+    "satellite_name": "MO-122 (MESAT-1)",
+    "description": "FT4 Calling — community standard",
+    "type": "Transponder",
+    "uplink_low":   145938000,
+    "uplink_high":  null,
+    "downlink_low": 435812000,
+    "downlink_high": null,
+    "mode": "FT4",
+    "invert": false,
+    "baud": null,
+    "ctcss_tone": null,
+    "notes": "Community FT4 calling frequency. Rx 435.812 / Tx 145.938. Not in SATNOGS. Ref: JH1NHK https://x.com/JH1NHK/status/1882598594924212321"
+  }
+]

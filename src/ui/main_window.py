@@ -867,6 +867,14 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             logger.warning("Legacy satellite TLE check failed: %s", exc)
 
+        # Load bundled community transmitters (FT4/FT8 calling freqs, etc.)
+        try:
+            comm = self._transmitter_manager.load_community_transmitters()
+            if comm["inserted"] + comm["updated"] > 0:
+                logger.info("Community transmitters loaded: %s", comm)
+        except Exception as exc:
+            logger.warning("Community transmitter load failed: %s", exc)
+
         self._satellite_list_refresh.emit()
 
     # ------------------------------------------------------------------ #

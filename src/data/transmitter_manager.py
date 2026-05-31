@@ -12,6 +12,7 @@ import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,6 +20,10 @@ import httpx
 SATNOGS_API_BASE = "https://db.satnogs.org/api"
 SATNOGS_TRANSMITTERS_URL = f"{SATNOGS_API_BASE}/transmitters/"
 SATNOGS_SATELLITES_URL = f"{SATNOGS_API_BASE}/satellites/"
+
+# Path to the bundled community transmitter frequency database.
+# Maintained in the repository and updated with each app release.
+_COMMUNITY_JSON = Path(__file__).parent / "community_transmitters.json"
 
 # Matches "CTCSS 67.0 Hz" or "CTCSS 100 Hz" in transmitter description text
 _CTCSS_RE = re.compile(r"CTCSS\s+([\d.]+)\s*Hz", re.IGNORECASE)
@@ -75,6 +80,119 @@ class TransmitterManager:
             ORDER BY s.name
         """).fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ #
+    # Community transmitter loader
+    # ------------------------------------------------------------------ #
+
+    def load_community_transmitters(self) -> dict[str, int]:
+        """
+        Load bundled community transmitters from community_transmitters.json
+        into the DB (source='community').
+
+        - Skips comment-only entries (no 'uuid' key).
+        - Does NOT overwrite records where source='manual'.
+        - On conflict (same uuid), updates all fields unless manual_override=1.
+        - Returns: {"inserted": N, "updated": N, "skipped": N}
+        """
+        if not _COMMUNITY_JSON.exists():
+            return {"inserted": 0, "updated": 0, "skipped": 0}
+
+        with open(_COMMUNITY_JSON, encoding="utf-8") as fh:
+            entries: list[dict[str, Any]] = json.load(fh)
+
+        stats = {"inserted": 0, "updated": 0, "skipped": 0}
+        now = datetime.now(UTC).isoformat()
+
+        for entry in entries:
+            if "uuid" not in entry:
+                continue  # skip comment-only objects
+
+            xpdr_uuid: str = entry["uuid"]
+            norad_cat_id: int = entry["norad_cat_id"]
+
+            existing = self._conn.execute(
+                "SELECT source, manual_override FROM transmitters WHERE uuid = ?",
+                (xpdr_uuid,),
+            ).fetchone()
+
+            if existing:
+                if existing["source"] == "manual" or existing["manual_override"]:
+                    stats["skipped"] += 1
+                    continue
+                self._conn.execute(
+                    """
+                    UPDATE transmitters SET
+                        norad_cat_id=?, description=?, type=?,
+                        uplink_low=?, uplink_high=?, downlink_low=?, downlink_high=?,
+                        mode=?, invert=?, baud=?,
+                        ctcss_tone=?, ctcss_tone_type=?,
+                        alive=1, source='community', updated_at=?
+                    WHERE uuid=?
+                    """,
+                    (
+                        norad_cat_id,
+                        entry.get("description", ""),
+                        entry.get("type", "Transponder"),
+                        entry.get("uplink_low"),
+                        entry.get("uplink_high"),
+                        entry.get("downlink_low"),
+                        entry.get("downlink_high"),
+                        entry.get("mode"),
+                        int(bool(entry.get("invert", False))),
+                        entry.get("baud"),
+                        entry.get("ctcss_tone"),
+                        None,
+                        now,
+                        xpdr_uuid,
+                    ),
+                )
+                stats["updated"] += 1
+            else:
+                # Ensure the satellite record exists
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO satellites (norad_cat_id, name, updated_at)"
+                    " VALUES (?, ?, ?)",
+                    (norad_cat_id, entry.get("satellite_name", f"#{norad_cat_id}"), now),
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO transmitters (
+                        uuid, norad_cat_id, description, type,
+                        uplink_low, uplink_high, downlink_low, downlink_high,
+                        mode, invert, baud,
+                        ctcss_tone, ctcss_tone_type,
+                        alive, source, manual_override, notes, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?,
+                        1, 'community', 0, ?, ?
+                    )
+                    """,
+                    (
+                        xpdr_uuid,
+                        norad_cat_id,
+                        entry.get("description", ""),
+                        entry.get("type", "Transponder"),
+                        entry.get("uplink_low"),
+                        entry.get("uplink_high"),
+                        entry.get("downlink_low"),
+                        entry.get("downlink_high"),
+                        entry.get("mode"),
+                        int(bool(entry.get("invert", False))),
+                        entry.get("baud"),
+                        entry.get("ctcss_tone"),
+                        None,
+                        entry.get("notes", ""),
+                        now,
+                    ),
+                )
+                stats["inserted"] += 1
+
+        self._conn.commit()
+        return stats
 
     # ------------------------------------------------------------------ #
     # Manual add / edit / delete
@@ -370,7 +488,9 @@ class TransmitterManager:
                 (xpdr_uuid,),
             ).fetchone()
 
-            if existing and existing["manual_override"]:
+            if existing and (
+                existing["manual_override"] or existing["source"] in ("manual", "community")
+            ):
                 stats["skipped"] += 1
                 continue
 

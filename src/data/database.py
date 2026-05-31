@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS transmitters (
                     CHECK(ctcss_tone_type IN ('CTCSS','DCS',NULL)),
     alive           INTEGER DEFAULT 1,
     source          TEXT DEFAULT 'satnogs'
-                    CHECK(source IN ('satnogs','manual')),
+                    CHECK(source IN ('satnogs','manual','community')),
     manual_override INTEGER DEFAULT 0,  -- If 1, will not be overwritten by SATNOGS sync
     notes           TEXT DEFAULT '',    -- User notes
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -184,11 +184,21 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE _tle_data_backup")
         conn.commit()
 
-    # Add 'Transceiver' to the transmitters.type CHECK constraint (requires table recreation)
-    row = conn.execute(
+    # Add 'Transceiver' and 'community' to the transmitters CHECK constraints
+    # (requires table recreation when either value is missing).
+    tx_row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='transmitters'"
     ).fetchone()
-    if row and "'Transceiver'" not in row[0]:
+    needs_tx_migration = tx_row and (
+        "'Transceiver'" not in tx_row[0] or "'community'" not in tx_row[0]
+    )
+    if needs_tx_migration:
+        _TX_COLS = (
+            "uuid, norad_cat_id, description, type,"
+            " uplink_low, uplink_high, downlink_low, downlink_high,"
+            " mode, invert, baud, ctcss_tone, ctcss_tone_type,"
+            " alive, source, manual_override, notes, updated_at"
+        )
         conn.execute("DROP TABLE IF EXISTS _transmitters_backup")
         conn.execute("ALTER TABLE transmitters RENAME TO _transmitters_backup")
         conn.execute("""
@@ -211,13 +221,16 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
                                 CHECK(ctcss_tone_type IN ('CTCSS','DCS',NULL)),
                 alive           INTEGER DEFAULT 1,
                 source          TEXT DEFAULT 'satnogs'
-                                CHECK(source IN ('satnogs','manual')),
+                                CHECK(source IN ('satnogs','manual','community')),
                 manual_override INTEGER DEFAULT 0,
                 notes           TEXT DEFAULT '',
                 updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        conn.execute("INSERT INTO transmitters SELECT * FROM _transmitters_backup")
+        conn.execute(
+            f"INSERT OR IGNORE INTO transmitters ({_TX_COLS})"
+            f" SELECT {_TX_COLS} FROM _transmitters_backup"
+        )
         conn.execute("DROP TABLE _transmitters_backup")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_transmitters_norad ON transmitters(norad_cat_id)"
