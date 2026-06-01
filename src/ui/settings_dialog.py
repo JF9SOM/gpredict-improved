@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QTabWidget,
@@ -161,7 +162,7 @@ class _DownloadThread(QThread):
 
 
 class SettingsDialog(QDialog):
-    """File > Settings dialog.  Tabs: TLE Sources, World Map."""
+    """File > Settings dialog.  Tabs: TLE Sources, World Map, Custom Groups."""
 
     def __init__(self, conn: sqlite3.Connection, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -177,6 +178,8 @@ class SettingsDialog(QDialog):
         self._status_label: QLabel
         self._download_thread: _DownloadThread | None = None
         self._selected_map_filename: str = _BUILTIN_SENTINEL
+        # Custom Groups tab state
+        self._groups_list: QListWidget
         self._setup_ui()
         self._load_settings()
 
@@ -190,6 +193,7 @@ class SettingsDialog(QDialog):
 
         tabs.addTab(self._build_tle_tab(), _("TLE Sources"))
         tabs.addTab(self._build_map_tab(), _("World Map"))
+        tabs.addTab(self._build_groups_tab(), _("Custom Groups"))
 
         layout.addWidget(tabs)
 
@@ -405,6 +409,111 @@ class SettingsDialog(QDialog):
                 break
 
     # ------------------------------------------------------------------ #
+    # Custom Groups tab
+    # ------------------------------------------------------------------ #
+
+    def _build_groups_tab(self) -> QWidget:
+        """Build the Custom Groups tab for managing favorite group names and count."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(
+            QLabel(
+                _(
+                    "Define favorite groups shown in the satellite filter.\n"
+                    "Each group can be assigned to satellites via right-click."
+                )
+            )
+        )
+
+        self._groups_list = QListWidget()
+        self._groups_list.setToolTip(_("Double-click a group name to rename it"))
+        layout.addWidget(self._groups_list)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton(_("Add Group"))
+        add_btn.clicked.connect(self._on_add_group)
+        remove_btn = QPushButton(_("Remove Last Group"))
+        remove_btn.clicked.connect(self._on_remove_group)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(remove_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        note = QLabel(_("Note: removing a group unassigns all satellites currently in that group."))
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        self._reload_groups_list()
+        return tab
+
+    def _reload_groups_list(self) -> None:
+        """Reload the groups list widget from the DB."""
+        self._groups_list.clear()
+        rows = self._conn.execute(
+            "SELECT id, name FROM custom_groups ORDER BY sort_order, id"
+        ).fetchall()
+        for row in rows:
+            item = QListWidgetItem(str(row["name"]))
+            item.setData(Qt.ItemDataRole.UserRole, int(row["id"]))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            self._groups_list.addItem(item)
+
+    def _on_add_group(self) -> None:
+        """Add a new custom group after the current last group."""
+        rows = self._conn.execute("SELECT MAX(id) as mx FROM custom_groups").fetchone()
+        next_id = int(rows["mx"] or 0) + 1
+        rows2 = self._conn.execute("SELECT MAX(sort_order) as ms FROM custom_groups").fetchone()
+        next_order = int(rows2["ms"] or 0) + 1
+        default_name = f"Favorite {next_id}"
+        self._conn.execute(
+            "INSERT INTO custom_groups (id, name, sort_order) VALUES (?, ?, ?)",
+            (next_id, default_name, next_order),
+        )
+        self._conn.commit()
+        self._reload_groups_list()
+
+    def _on_remove_group(self) -> None:
+        """Remove the last custom group, unassigning its satellites."""
+        row = self._conn.execute(
+            "SELECT id, name FROM custom_groups ORDER BY sort_order DESC, id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return
+        grp_id = int(row["id"])
+        grp_name = str(row["name"])
+        ans = QMessageBox.question(
+            self,
+            _("Remove Group"),
+            _("Remove group '{name}'? Satellites in this group will be unassigned.").format(
+                name=grp_name
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+        self._conn.execute("DELETE FROM custom_groups WHERE id = ?", (grp_id,))
+        self._conn.execute(
+            "UPDATE satellites SET favorite_group = 0, is_favorite = 0 WHERE favorite_group = ?",
+            (grp_id,),
+        )
+        self._conn.commit()
+        self._reload_groups_list()
+
+    def _save_group_names(self) -> None:
+        """Persist edited group names from the list widget back to the DB."""
+        for i in range(self._groups_list.count()):
+            item = self._groups_list.item(i)
+            if item is None:
+                continue
+            grp_id = int(item.data(Qt.ItemDataRole.UserRole))
+            new_name = item.text().strip()
+            if new_name:
+                self._conn.execute(
+                    "UPDATE custom_groups SET name = ? WHERE id = ?", (new_name, grp_id)
+                )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------ #
     # Settings persistence
     # ------------------------------------------------------------------ #
 
@@ -461,6 +570,9 @@ class SettingsDialog(QDialog):
             (self._selected_map_filename,),
         )
         self._conn.commit()
+
+        # Custom groups: persist inline edits
+        self._save_group_names()
 
     # ------------------------------------------------------------------ #
     # Static helpers

@@ -88,6 +88,7 @@ class _SatData(TypedDict):
     tle_group: str
     amsat_status: str | None
     tle_no_result_since: str | None  # set when no TLE found; shown yellow in list
+    favorite_group: int  # 0 = not in any group, 1..N = custom group id
 
 
 # Regular expression to extract AMSAT designators like AO-91, FO-29, CAS-4A
@@ -362,20 +363,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(QLabel(_("Satellites")))
 
         self._filter_combo = QComboBox()
-        self._filter_combo.addItems(
-            [
-                "All Satellites",
-                "★ Favorites",
-                "Amateur",
-                "CubeSat",
-                "Weather",
-                "Earth Observation",
-                "Science",
-                "Space Stations",
-                "Operational (AMSAT)",
-                "Hidden",
-            ]
-        )
+        self._rebuild_filter_combo()
         self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
         left_layout.addWidget(self._filter_combo)
 
@@ -563,7 +551,8 @@ class MainWindow(QMainWindow):
             """
             SELECT s.norad_cat_id, s.name, s.alt_names, s.is_favorite, s.is_hidden, s.status,
                    COALESCE(t.tle_group, 'amateur') AS tle_group,
-                   s.tle_no_result_since
+                   s.tle_no_result_since,
+                   COALESCE(s.favorite_group, 0) AS favorite_group
             FROM satellites s
             LEFT JOIN tle_data t ON s.norad_cat_id = t.norad_cat_id
             ORDER BY s.name
@@ -617,6 +606,7 @@ class MainWindow(QMainWindow):
                     tle_no_result_since=(
                         str(row["tle_no_result_since"]) if row["tle_no_result_since"] else None
                     ),
+                    favorite_group=int(row["favorite_group"] or 0),
                 )
             )
             self._all_norads.append(norad)
@@ -650,9 +640,14 @@ class MainWindow(QMainWindow):
                     continue
             elif d["is_hidden"] != 0:
                 continue
-            # Category filter
-            if filter_text == "★ Favorites" and not d["is_favorite"]:
-                continue
+            # Category filter — custom groups (e.g. "★ Favorite 1")
+            if filter_text.startswith("★ "):
+                group_name = filter_text[2:]  # strip leading "★ "
+                grp_row = self._conn.execute(
+                    "SELECT id FROM custom_groups WHERE name = ?", (group_name,)
+                ).fetchone()
+                if grp_row is None or d["favorite_group"] != grp_row["id"]:
+                    continue
             if filter_text == "Amateur" and d["tle_group"] != "amateur":
                 continue
             if filter_text == "CubeSat" and d["tle_group"] != "cubesat":
@@ -676,7 +671,7 @@ class MainWindow(QMainWindow):
                 if search_query not in alts_lower:
                     continue
 
-            prefix = "★ " if d["is_favorite"] else ""
+            prefix = "★ " if d["favorite_group"] > 0 else ""
             # Append Oscar designator (e.g. "(IO-86)") when not already in the name
             oscar_suffix = ""
             try:
@@ -1152,27 +1147,50 @@ class MainWindow(QMainWindow):
         norad = int(item.data(Qt.ItemDataRole.UserRole))
 
         row_data = self._conn.execute(
-            "SELECT name, is_favorite, is_hidden FROM satellites WHERE norad_cat_id = ?",
+            "SELECT name, is_favorite, is_hidden, favorite_group FROM satellites"
+            " WHERE norad_cat_id = ?",
             (norad,),
         ).fetchone()
         if row_data is None:
             return
 
         name = str(row_data["name"])
-        is_fav = bool(row_data["is_favorite"])
         is_hidden = bool(row_data["is_hidden"])
+        current_group: int = int(row_data["favorite_group"] or 0)
+
+        # Load custom groups for submenu
+        groups = self._conn.execute(
+            "SELECT id, name FROM custom_groups ORDER BY sort_order, id"
+        ).fetchall()
 
         menu = QMenu(self)
-        fav_label = "★ Remove from Favorites" if is_fav else "★ Add to Favorites"
-        fav_action = menu.addAction(fav_label)
+        fav_menu = menu.addMenu("★ Favorite Groups")
+        fav_actions: dict[int, QAction] = {}
+        for grp in groups:
+            grp_id = int(grp["id"])
+            grp_name = str(grp["name"])
+            act = fav_menu.addAction(f"★ {grp_name}")
+            act.setCheckable(True)
+            act.setChecked(current_group == grp_id)
+            fav_actions[grp_id] = act
+        if current_group > 0:
+            fav_menu.addSeparator()
+            remove_fav_action: QAction | None = fav_menu.addAction("Remove from Favorites")
+        else:
+            remove_fav_action = None
+
         hide_label = _("Unhide Satellite") if is_hidden else _("Hide Satellite")
         hide_action = menu.addAction(hide_label)
         info_action = menu.addAction("Satellite Info...")
         satnogs_action = menu.addAction("Open in SatNOGS")
 
         action = menu.exec(self._sat_list.mapToGlobal(pos))
-        if action == fav_action:
-            self._toggle_favorite(norad, not is_fav)
+        if action is not None and action in fav_actions.values():
+            chosen_id = next(k for k, v in fav_actions.items() if v == action)
+            new_group = 0 if current_group == chosen_id else chosen_id
+            self._set_favorite_group(norad, new_group)
+        elif action is not None and action == remove_fav_action:
+            self._set_favorite_group(norad, 0)
         elif action == hide_action:
             self._set_hidden(norad, not is_hidden)
         elif action == info_action:
@@ -1241,13 +1259,56 @@ class MainWindow(QMainWindow):
             self._satnogs_not_found.emit()
 
     def _toggle_favorite(self, norad: int, favorite: bool) -> None:
-        """Save the favorite state to the DB and reload the satellite list."""
+        """Save the favorite state to the DB and reload the satellite list (legacy)."""
         self._conn.execute(
             "UPDATE satellites SET is_favorite = ? WHERE norad_cat_id = ?",
             (1 if favorite else 0, norad),
         )
         self._conn.commit()
         self._load_satellites()
+
+    def _set_favorite_group(self, norad: int, group_id: int) -> None:
+        """Assign a satellite to a custom favorite group (0 = remove from all groups)."""
+        self._conn.execute(
+            "UPDATE satellites SET favorite_group = ?, is_favorite = ? WHERE norad_cat_id = ?",
+            (group_id, 1 if group_id > 0 else 0, norad),
+        )
+        self._conn.commit()
+        self._load_satellites()
+
+    def _rebuild_filter_combo(self) -> None:
+        """Rebuild the filter combo from DB custom_groups + fixed entries.
+
+        Preserves the current selection when possible.
+        """
+        prev = self._filter_combo.currentText() if self._filter_combo.count() > 0 else ""
+        self._filter_combo.blockSignals(True)
+        self._filter_combo.clear()
+
+        groups = self._conn.execute(
+            "SELECT name FROM custom_groups ORDER BY sort_order, id"
+        ).fetchall()
+
+        items = ["All Satellites"]
+        for grp in groups:
+            items.append(f"★ {grp['name']}")
+        items += [
+            "Amateur",
+            "CubeSat",
+            "Weather",
+            "Earth Observation",
+            "Science",
+            "Space Stations",
+            "Operational (AMSAT)",
+            "Hidden",
+        ]
+        self._filter_combo.addItems(items)
+
+        idx = self._filter_combo.findText(prev)
+        if idx >= 0:
+            self._filter_combo.setCurrentIndex(idx)
+
+        self._filter_combo.blockSignals(False)
 
     def _set_hidden(self, norad: int, hidden: bool) -> None:
         """Save the satellite hidden state to the DB and reload the satellite list."""
@@ -1665,6 +1726,9 @@ class MainWindow(QMainWindow):
     def _on_settings_accepted(self) -> None:
         """After Settings OK, sync the enabled TLE sources and redraw the satellite list."""
         from ui.settings_dialog import SettingsDialog
+
+        # Rebuild filter combo so any group additions/renames/removals are reflected
+        self._rebuild_filter_combo()
 
         self._apply_world_map()
 

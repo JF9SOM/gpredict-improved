@@ -88,6 +88,14 @@ CREATE TABLE IF NOT EXISTS app_settings (
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- User-defined favorite groups (Favorite 1, Favorite 2, Favorite 3, …)
+-- id 1..N maps to satellites.favorite_group values.
+CREATE TABLE IF NOT EXISTS custom_groups (
+    id          INTEGER PRIMARY KEY,  -- group number (1-based)
+    name        TEXT NOT NULL,        -- display name (e.g. "Favorite 1")
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
 -- Sync log
 CREATE TABLE IF NOT EXISTS sync_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,11 +135,26 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
         "ALTER TABLE satellites ADD COLUMN satnogs_uuid TEXT DEFAULT NULL",
         "ALTER TABLE satellites ADD COLUMN satnogs_source_id INTEGER DEFAULT NULL",
         "ALTER TABLE satellites ADD COLUMN tle_no_result_since DATETIME DEFAULT NULL",
+        # favorite_group: 0 = not in any favorite group, 1..N = group id
+        "ALTER TABLE satellites ADD COLUMN favorite_group INTEGER DEFAULT 0",
     ]
     for stmt in migrations:
         with contextlib.suppress(Exception):
             conn.execute(stmt)
     conn.commit()
+
+    # Seed default custom groups if the table is empty.
+    # Existing is_favorite=1 satellites are migrated to favorite_group=1.
+    if conn.execute("SELECT COUNT(*) FROM custom_groups").fetchone()[0] == 0:
+        conn.executemany(
+            "INSERT OR IGNORE INTO custom_groups (id, name, sort_order) VALUES (?, ?, ?)",
+            [(1, "Favorite 1", 1), (2, "Favorite 2", 2), (3, "Favorite 3", 3)],
+        )
+        # Migrate legacy is_favorite=1 → favorite_group=1
+        conn.execute(
+            "UPDATE satellites SET favorite_group = 1 WHERE is_favorite = 1 AND favorite_group = 0"
+        )
+        conn.commit()
 
     # Add 'satnogs' to the tle_data.source CHECK constraint (requires table recreation).
     # Also handles recovery when a previous migration was interrupted mid-flight
