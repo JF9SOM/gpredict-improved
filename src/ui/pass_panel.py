@@ -151,7 +151,8 @@ class _NowDateTimeEdit(QDateTimeEdit):
         self.setTimeSpec(Qt.TimeSpec.UTC)  # default: show UTC
         if show_now_button:
             self._cal: QCalendarWidget = _CalendarWithNow()
-            self._cal.now_requested.connect(self._apply_now)  # type: ignore[attr-defined]
+            assert isinstance(self._cal, _CalendarWithNow)
+            self._cal.now_requested.connect(self._apply_now)
         else:
             self._cal = QCalendarWidget()
         self.setCalendarWidget(self._cal)
