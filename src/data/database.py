@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS satellites (
     is_hidden       INTEGER DEFAULT 0,
     satnogs_source_id INTEGER DEFAULT NULL,  -- provisional NORAD for SATNOGS transmitter query
     tle_no_result_since DATETIME DEFAULT NULL,  -- set when no TLE found; auto-hide after 30 days
+    favorite_group  INTEGER DEFAULT 0,       -- 0=none, 1..N=custom_groups.id
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
