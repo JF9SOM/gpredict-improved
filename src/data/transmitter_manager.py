@@ -484,7 +484,7 @@ class TransmitterManager:
 
             # Skip records with manual_override=1
             existing = self._conn.execute(
-                "SELECT manual_override FROM transmitters WHERE uuid = ?",
+                "SELECT manual_override, source FROM transmitters WHERE uuid = ?",
                 (xpdr_uuid,),
             ).fetchone()
 
