@@ -67,7 +67,7 @@ from rig.controller import (
     RigController,
     RotatorController,
 )
-from ui.pass_chart import PassChartView
+from ui.pass_chart import GroupPassChartView, PassChartView
 from ui.pass_panel import PassPanel
 from ui.radar_view import SAT_COLORS, RadarView, SatTrackData
 from ui.radio_control_widget import RadioControlWidget
@@ -309,6 +309,7 @@ class MainWindow(QMainWindow):
         # Connect PassPanel signals
         self._pass_list.target_search_requested.connect(self._on_target_search_requested)
         self._pass_list.highlight_satellite.connect(self._on_highlight_satellite)
+        self._pass_list.group_results_ready.connect(self._on_group_results_ready)
         self._pass_list.set_pass_predictor(self._pass_predictor)
         # Connect signal that receives satellite list refresh requests from background threads
         self._satellite_list_refresh.connect(self._load_satellites)
@@ -394,16 +395,22 @@ class MainWindow(QMainWindow):
         left.setMaximumWidth(240)
         h_splitter.addWidget(left)
 
-        # Centre: tabs (World Map / Radar / Pass Chart / Radio Control)
+        # Centre: tabs (World Map / Radar / Pass Chart / Group Pass Chart / Radio Control)
         self._tab_widget = QTabWidget()
         self._world_map = WorldMapView()
         self._radar_view = RadarView()
         self._pass_chart = PassChartView()
+        self._group_pass_chart = GroupPassChartView()
         self._radio_control = RadioControlWidget()
         self._pass_chart.range_changed.connect(self._on_chart_range_changed)
         self._tab_widget.addTab(self._world_map, _("World Map"))
         self._tab_widget.addTab(self._radar_view, _("Radar"))
         self._tab_widget.addTab(self._pass_chart, _("Pass Chart"))
+        # Group Pass Chart tab — hidden until first group search completes
+        self._group_chart_tab_idx = self._tab_widget.addTab(
+            self._group_pass_chart, _("Group Pass Chart")
+        )
+        self._tab_widget.setTabVisible(self._group_chart_tab_idx, False)
         self._tab_widget.addTab(self._radio_control, _("Radio Control"))
         h_splitter.addWidget(self._tab_widget)
 
@@ -1576,6 +1583,11 @@ class MainWindow(QMainWindow):
                 self._sat_list.setCurrentRow(i)
                 break
 
+    def _on_group_results_ready(self, results: object) -> None:
+        """Populate the Group Pass Chart tab and make it visible on first group search."""
+        self._group_pass_chart.set_results(results)  # type: ignore[arg-type]
+        self._tab_widget.setTabVisible(self._group_chart_tab_idx, True)
+
     # ------------------------------------------------------------------ #
     # Menu handlers
     # ------------------------------------------------------------------ #
@@ -1637,6 +1649,7 @@ class MainWindow(QMainWindow):
 
         self._pass_list.set_use_utc(use_utc)
         self._pass_chart.set_use_utc(use_utc)
+        self._group_pass_chart.set_use_utc(use_utc)
 
     def _on_time_zone_changed(self, use_utc: bool) -> None:
         """Persist the time zone preference and propagate to all display widgets."""
@@ -1651,6 +1664,7 @@ class MainWindow(QMainWindow):
         self._conn.commit()
         self._pass_list.set_use_utc(use_utc)
         self._pass_chart.set_use_utc(use_utc)
+        self._group_pass_chart.set_use_utc(use_utc)
 
     def _open_url_app_mode(self, url: str) -> None:
         """Open *url* in Chrome/Chromium app mode (no browser chrome/tabs).

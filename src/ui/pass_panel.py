@@ -304,6 +304,7 @@ class PassPanel(QWidget):
     pass_selected: Signal = Signal(object)  # PassInfo
     target_search_requested: Signal = Signal(object, object)  # (start: datetime, end: datetime)
     highlight_satellite: Signal = Signal(int)  # norad_cat_id
+    group_results_ready: Signal = Signal(object)  # list[GroupPassResult]
 
     _PAGE_SIZE: int = 50
     _TARGET_COLS: tuple[str, ...] = (
@@ -681,6 +682,7 @@ class PassPanel(QWidget):
         self._group_search_btn.setEnabled(True)
         self._group_cancel_btn.setEnabled(False)
         self._refresh_group_page()
+        self.group_results_ready.emit(result_list)
 
     def _on_group_cell_clicked(self, row: int, col: int) -> None:
         if col == 0:

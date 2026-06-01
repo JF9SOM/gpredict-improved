@@ -466,3 +466,320 @@ class PassChartView(QWidget):
         sender = self.sender()
         if isinstance(sender, QSplineSeries) and sender in self._series_to_pass:
             self.pass_clicked.emit(self._series_to_pass[sender])
+
+
+# ---------------------------------------------------------------------------
+# GroupPassChartView — multi-satellite pass chart (satellite-colour coded)
+# ---------------------------------------------------------------------------
+
+# Palette of distinct colours for per-satellite colouring (cycles if >N sats)
+_GROUP_PALETTE: tuple[str, ...] = (
+    "#e74c3c",  # red
+    "#3498db",  # blue
+    "#2ecc71",  # green
+    "#f39c12",  # orange
+    "#9b59b6",  # purple
+    "#1abc9c",  # teal
+    "#e67e22",  # dark orange
+    "#2980b9",  # dark blue
+    "#27ae60",  # dark green
+    "#8e44ad",  # dark purple
+    "#16a085",  # dark teal
+    "#d35400",  # burnt orange
+)
+
+
+class GroupPassChartView(QWidget):
+    """
+    Multi-satellite pass elevation chart for Group search results.
+
+    Each satellite gets a distinct colour from the palette (cycles if >12 sats).
+    Satellite names are shown as tooltips on hover rather than permanent legend entries.
+
+    Usage::
+
+        chart = GroupPassChartView()
+        chart.set_results(group_results)   # list[GroupPassResult]
+        layout.addWidget(chart)
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._results: list[object] = []  # list[GroupPassResult]
+        self._use_utc: bool = True
+        self._overlay: list[tuple[QSplineSeries, float, QColor, str]] = []
+        self._peak_label_items: list[QGraphicsTextItem] = []
+        self._series_to_info: dict[QSplineSeries, tuple[str, float]] = {}
+        self._setup_ui()
+
+    # ------------------------------------------------------------------ #
+    # UI construction
+    # ------------------------------------------------------------------ #
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        header = QWidget()
+        h_layout = QHBoxLayout(header)
+        h_layout.setContentsMargins(6, 2, 6, 2)
+        h_layout.addWidget(QLabel("Range:"))
+        self._range_combo = QComboBox()
+        for label, _ in _RANGE_OPTIONS:
+            self._range_combo.addItem(label)
+        self._range_combo.setCurrentIndex(len(_RANGE_OPTIONS) - 1)
+        self._range_combo.currentIndexChanged.connect(self._rebuild)
+        h_layout.addWidget(self._range_combo)
+        h_layout.addStretch()
+        layout.addWidget(header)
+
+        self._chart = QChart()
+        self._chart.setAnimationOptions(QChart.AnimationOption.NoAnimation)
+        self._chart.legend().setVisible(False)  # hidden — names shown as tooltips
+
+        self._chart_view = QChartView(self._chart)
+        self._chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._chart_view.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        # Enable mouse tracking so hovered() signal fires
+        self._chart_view.setMouseTracking(True)
+        layout.addWidget(self._chart_view)
+
+    # ------------------------------------------------------------------ #
+    # Public API
+    # ------------------------------------------------------------------ #
+
+    def set_results(self, results: list[object]) -> None:
+        """Set group search results and redraw.
+
+        Args:
+            results: list[GroupPassResult] from PassPanel.group_results_ready
+        """
+        self._results = results
+        self._rebuild()
+
+    def set_use_utc(self, use_utc: bool) -> None:
+        """Switch time axis between UTC and local time."""
+        if use_utc == self._use_utc:
+            return
+        self._use_utc = use_utc
+        self._rebuild()
+
+    def clear(self) -> None:
+        """Clear all chart content."""
+        self._results = []
+        self._clear_peak_labels()
+        self._chart.removeAllSeries()
+        for axis in self._chart.axes():
+            self._chart.removeAxis(axis)
+        self._chart.setTitle("")
+        self._series_to_info = {}
+        self._overlay = []
+
+    # ------------------------------------------------------------------ #
+    # Chart construction
+    # ------------------------------------------------------------------ #
+
+    def _selected_hours(self) -> float:
+        return _RANGE_OPTIONS[self._range_combo.currentIndex()][1]
+
+    def _rebuild(self) -> None:
+        """Rebuild the chart from the current result list."""
+        self._clear_peak_labels()
+        self._chart.removeAllSeries()
+        for axis in self._chart.axes():
+            self._chart.removeAxis(axis)
+        self._series_to_info = {}
+        self._overlay = []
+
+        if not self._results:
+            self._chart.setTitle("No group results")
+            return
+
+        hours = self._selected_hours()
+        now = datetime.now(UTC)
+        cutoff = now + timedelta(hours=hours)
+
+        # Filter to passes within range
+        filtered = [
+            r
+            for r in self._results
+            if r.pass_info.los >= now and r.pass_info.aos <= cutoff  # type: ignore[attr-defined]
+        ]
+        if not filtered:
+            self._chart.setTitle("No passes in range")
+            return
+
+        self._chart.setTitle("Group Pass Prediction")
+
+        dt_axis = self._make_time_axis()
+        el_axis = self._make_elevation_axis()
+        self._chart.addAxis(dt_axis, Qt.AlignmentFlag.AlignBottom)
+        self._chart.addAxis(el_axis, Qt.AlignmentFlag.AlignLeft)
+
+        # Assign colours per satellite name (stable mapping within this render)
+        sat_color: dict[str, QColor] = {}
+        palette_idx = 0
+        overlay: list[tuple[QSplineSeries, float, QColor, str]] = []
+
+        for r in filtered:
+            sat_name: str = r.sat_name  # type: ignore[attr-defined]
+            p = r.pass_info  # type: ignore[attr-defined]
+
+            if sat_name not in sat_color:
+                sat_color[sat_name] = QColor(_GROUP_PALETTE[palette_idx % len(_GROUP_PALETTE)])
+                palette_idx += 1
+
+            color = sat_color[sat_name]
+            series = QSplineSeries()
+            series.setName(sat_name)
+
+            pen = QPen(color)
+            pen.setWidth(2)
+            series.setPen(pen)
+
+            pts = elevation_points(p.aos, p.tca, p.los, p.max_elevation_deg)
+            for ms, el in pts:
+                series.append(QPointF(ms, el))
+
+            self._chart.addSeries(series)
+            series.attachAxis(dt_axis)
+            series.attachAxis(el_axis)
+
+            # Tooltip on hover
+            series.hovered.connect(self._on_series_hovered)
+            self._series_to_info[series] = (sat_name, p.max_elevation_deg)
+
+            overlay.append((series, p.max_elevation_deg, color, sat_name))
+
+        # Current-time line
+        t_end = max(
+            r.pass_info.los
+            for r in filtered  # type: ignore[attr-defined]
+        )
+        if now <= t_end:
+            now_series = self._build_now_line(now)
+            self._chart.addSeries(now_series)
+            now_series.attachAxis(dt_axis)
+            now_series.attachAxis(el_axis)
+
+        dt_axis.setRange(
+            self._epoch_ms_to_qdatetime(now.timestamp() * 1000),
+            self._epoch_ms_to_qdatetime(cutoff.timestamp() * 1000),
+        )
+        el_axis.setRange(0.0, 90.0)
+
+        self._overlay = overlay
+        QTimer.singleShot(150, self._add_peak_labels)
+
+    def _clear_peak_labels(self) -> None:
+        scene = self._chart.scene()
+        if scene is not None:
+            for item in self._peak_label_items:
+                scene.removeItem(item)
+        self._peak_label_items.clear()
+
+    def showEvent(self, event: object) -> None:  # noqa: ANN001
+        super().showEvent(event)  # type: ignore[arg-type]
+        if self._overlay:
+            QTimer.singleShot(50, self._add_peak_labels)
+
+    def _add_peak_labels(self, retry: int = 0) -> None:
+        """Place satellite-name labels at each pass peak."""
+        self._clear_peak_labels()
+        if not self.isVisible():
+            return
+
+        plot_area = self._chart.plotArea()
+        if plot_area.width() <= 1 or plot_area.height() <= 1:
+            if retry < 5:
+                QTimer.singleShot(150, lambda: self._add_peak_labels(retry + 1))
+            return
+
+        scene = self._chart.scene()
+        if scene is None:
+            return
+
+        label_font = QFont()
+        label_font.setPointSize(7)
+
+        for series, max_el, color, _sat_name in self._overlay:
+            best: QPointF | None = None
+            for i in range(series.count()):
+                pt = series.at(i)
+                if best is None or pt.y() > best.y():
+                    best = QPointF(pt.x(), pt.y())
+            if best is None:
+                continue
+
+            try:
+                chart_pt = self._chart.mapToPosition(best, series)
+                if not plot_area.contains(chart_pt):
+                    continue
+                scene_pos = self._chart.mapToScene(chart_pt)
+
+                lbl = f"{max_el:.0f}°"
+                item = QGraphicsTextItem(lbl)
+                item.setDefaultTextColor(color)
+                item.setFont(label_font)
+                bw = item.boundingRect().width()
+                item.setPos(scene_pos.x() - bw / 2.0, scene_pos.y() - 16.0)
+                scene.addItem(item)
+                self._peak_label_items.append(item)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _epoch_ms_to_qdatetime(self, epoch_ms: float) -> QDateTime:
+        if self._use_utc:
+            return QDateTime.fromMSecsSinceEpoch(int(epoch_ms), Qt.TimeSpec.UTC)
+        return QDateTime.fromMSecsSinceEpoch(int(epoch_ms))
+
+    def _make_time_axis(self) -> QDateTimeAxis:
+        axis = QDateTimeAxis()
+        axis.setFormat("HH:mm")
+        axis.setTitleText("Time (UTC)" if self._use_utc else "Time (Local)")
+        axis.setTickCount(7)
+        return axis
+
+    def _make_elevation_axis(self) -> QValueAxis:
+        axis = QValueAxis()
+        axis.setRange(0.0, 90.0)
+        axis.setTitleText("Elevation (°)")
+        axis.setTickCount(10)
+        axis.setLabelFormat("%d")
+        return axis
+
+    def _build_now_line(self, now: datetime) -> QLineSeries:
+        now_ms = now.timestamp() * 1000.0
+        series = QLineSeries()
+        series.setName("Now")
+        pen = QPen(QColor("#e74c3c"))
+        pen.setWidth(2)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        series.setPen(pen)
+        series.append(QPointF(now_ms, 0.0))
+        series.append(QPointF(now_ms, 90.0))
+        return series
+
+    # ------------------------------------------------------------------ #
+    # Signal handlers
+    # ------------------------------------------------------------------ #
+
+    def _on_series_hovered(self, point: QPointF, state: bool) -> None:
+        """Show satellite name + elevation as tooltip when hovering over a series."""
+        sender = self.sender()
+        if not isinstance(sender, QSplineSeries):
+            return
+        if state and sender in self._series_to_info:
+            sat_name, max_el = self._series_to_info[sender]
+            from PySide6.QtWidgets import QToolTip  # noqa: PLC0415
+
+            chart_pt = self._chart.mapToPosition(point, sender)
+            scene_pt = self._chart.mapToScene(chart_pt)
+            global_pt = self._chart_view.mapToGlobal(
+                self._chart_view.mapFromScene(scene_pt).toPoint()
+            )
+            QToolTip.showText(global_pt, f"{sat_name}\nMax El: {max_el:.1f}°")
