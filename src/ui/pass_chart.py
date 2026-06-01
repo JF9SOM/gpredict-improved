@@ -571,7 +571,7 @@ class GroupPassChartView(QWidget):
 
     def clear(self) -> None:
         """Clear all chart content."""
-        self._results = []  # type: ignore[assignment]
+        self._results = []
         self._clear_peak_labels()
         self._chart.removeAllSeries()
         for axis in self._chart.axes():
