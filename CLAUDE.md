@@ -482,22 +482,57 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## 実装済み機能一覧（2026年5月29日時点）
+## 実装済み機能一覧（2026年6月1日時点）
 
 - 衛星追尾エンジン（Skyfield）
-- Qt6デスクトップUI（世界地図・レーダー・Pass Chart・Radio Control）
+- Qt6デスクトップUI（世界地図・レーダー・Pass Chart・Group Pass Chart・Radio Control）
 - FastAPI内蔵Webサーバー（ポート8080）
 - スマホブラウザUI（グループフィルター・Favorites・Group Pass・レーダー）
 - Hamlib内蔵リグ制御（Direct/NET Control）・Rig 1 / Rig 2 デュアルリグ対応
 - SATNOGS周波数DB同期・手動追加
+- **コミュニティ周波数DB**（`src/data/community_transmitters.json`）— FT4コーリング周波数など、SATNOGSにない慣習周波数を `source='community'` として管理。SATNOGS同期で上書きされない
 - TLE自動更新（CelesTrak: Amateur/CubeSat/Weather/Earth-Obs/Science/Stations）
 - **SATNOGS仮ID（90000番台）衛星のTLE自動取得・仮ID→実ID移行パイプライン**
 - **超古い衛星（NORAD < 10000）の一括チェック：CelesTrak 未収録なら自動非表示**
 - AMSAT運用状況スクレイピング・色分け表示
-- お気に入り機能（デスクトップ・スマホ共通DB）
+- **カスタムFavoriteグループ**（Favorite 1/2/3 デフォルト、Settings > Custom Groups で追加/削除/改名可能）
 - フットプリント表示
 - Upcoming Passes（Target/Groupタブ・カレンダー選択・CSV出力）
-- 409テスト全パス・CI緑
+- **Group Pass Chart** — グループ検索結果を衛星別カラーで描画（ホバーでツールチップ表示）
+- カレンダーポップアップ改善（英語ロケール固定・週番号列非表示・To欄はCurrent Timeボタンなし）
+- CI緑（mypy strict + pytest）
+
+### カスタムFavoriteグループ設計（src/data/database.py）
+
+```sql
+CREATE TABLE custom_groups (
+    id          INTEGER PRIMARY KEY,  -- 1-based group number
+    name        TEXT NOT NULL,        -- display name (e.g. "Favorite 1")
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+-- satellites テーブルに favorite_group INTEGER DEFAULT 0 カラムを追加
+-- 0=未所属, 1..N=custom_groups.id
+```
+
+- デフォルトで Favorite 1/2/3 を作成（既存 is_favorite=1 は Favorite 1 に移行）
+- 右クリック → 「★ Favorite Groups」サブメニューでグループ割当・解除
+- Settings > Custom Groups タブでグループ名インライン編集・追加・削除
+
+### コミュニティ周波数（src/data/community_transmitters.json）
+
+| 衛星 | Rx (DL) | Tx (UL) | Mode | 出典 |
+|------|---------|---------|------|------|
+| RS-44 (NORAD 44909) | 435.612 MHz | 145.993 MHz | FT4 | JH1NHK |
+| JO-97 (NORAD 43803) | 145.857 MHz | 435.118 MHz | FT4 | JH1NHK |
+| MO-122 (NORAD 60209) | 435.812 MHz | 145.938 MHz | FT4 | JH1NHK |
+
+### Group Pass Chart（src/ui/pass_chart.py — GroupPassChartView）
+
+- Group タブで検索実行後に自動表示（それまでタブ非表示）
+- 衛星ごとに12色パレットから自動割り当て（>12衛星は循環）
+- 凡例は非表示。マウスホバーでツールチップ（衛星名＋最大仰角）
+- Range選択: 4h / 8h / 12h / 24h（Target Pass Chartと同じ）
+- UTC/Local 切り替えに連動
 
 ## 次回の作業候補
 
@@ -506,32 +541,30 @@ sudo usermod -aG dialout $USER
 2. **ローテーター設定ダイアログ** — GUI から rotctld 接続・設定を可能にする
 
 ### UI・表示機能
-3. **グループ Pass Chart 表示** — Favorite・Operational(AMSAT) などの選択グループ内の全衛星パスを一覧表示（現状はTarget衛星1機のみ）
-4. **グループ自動追尾** — グループ内衛星を飛来順に自動でリグ・ローテーター制御に引き継ぐ機能（衛星Aの追尾終了 → 次に飛来する衛星Bへ自動切替）
-5. **AOS/LOS デスクトップ通知** — 指定衛星の飛来が近づいたときにOSのプッシュ通知を送る
-6. **ユーザー定義グループ** — 衛星リストにユーザーが任意の衛星をまとめたカスタムグループを作成・保存できる機能
+3. **グループ自動追尾** — グループ内衛星を飛来順に自動でリグ・ローテーター制御に引き継ぐ機能（衛星Aの追尾終了 → 次に飛来する衛星Bへ自動切替）
+4. **AOS/LOS デスクトップ通知** — 指定衛星の飛来が近づいたときにOSのプッシュ通知を送る
 
 ### モバイル・Web UI
-7. **スマホ・タブレット画面の確認と調整** — 各種端末・ブラウザでの表示確認、レスポンシブ対応の修正
+5. **スマホ・タブレット画面の確認と調整** — 各種端末・ブラウザでの表示確認、レスポンシブ対応の修正
 
 ### SDR・デジタルモード
-8. **SDR機能の追加（段階的）**
+6. **SDR機能の追加（段階的）**
    - フェーズ1: SSB・CWソフトウェアデモジュレーター（Pythonモジュール）
    - フェーズ2: SSTV / SSDV デコーダー
    - フェーズ3: APRS デコーダー・位置情報表示
    - 各フェーズは独立した拡張モジュールとして追加
 
 ### 配布・ビルド
-9. **Windows・macOS AppImage / インストーラー作成試験** — GitHub Actions CI でのクロスプラットフォームビルド検証
+7. **Windows・macOS AppImage / インストーラー作成試験** — GitHub Actions CI でのクロスプラットフォームビルド検証
 
 ### データ・連携
-10. **Space-Track.org 正式連携** — 認証ありの完全TLEカタログ取得（現状はCelesTrakのみ）
-11. **観測ログ機能** — 実際に追尾・通信した衛星パスを記録・集計・エクスポートする機能
-12. **多言語対応（日本語）** — フェーズ2として日本語UIの追加（翻訳ファイルは準備済み）
+8. **Space-Track.org 正式連携** — 認証ありの完全TLEカタログ取得（現状はCelesTrakのみ）
+9. **観測ログ機能** — 実際に追尾・通信した衛星パスを記録・集計・エクスポートする機能
+10. **多言語対応（日本語）** — フェーズ2として日本語UIの追加（翻訳ファイルは準備済み）
 
 ### ハードウェア連携
-13. **追加リグの実機テスト** — IC-9700・TS-2000・FT-817ND 等でのドップラー制御動作確認（satmode含む）
-14. **WSJT-X / JS8Call 連携** — デジタルモード運用ソフトとの周波数・モード連動（将来）
+11. **追加リグの実機テスト** — IC-9700・TS-2000・FT-817ND 等でのドップラー制御動作確認（satmode含む）
+12. **WSJT-X / JS8Call 連携** — デジタルモード運用ソフトとの周波数・モード連動（将来）
 
 ---
 
