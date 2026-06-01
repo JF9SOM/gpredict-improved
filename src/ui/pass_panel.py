@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from PySide6.QtCore import QDate, QDateTime, Qt, QThread, QTime, Signal
+from PySide6.QtCore import QDate, QDateTime, QLocale, Qt, QThread, QTime, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCalendarWidget,
@@ -158,6 +158,9 @@ class _NowDateTimeEdit(QDateTimeEdit):
             self._cal.now_requested.connect(self._apply_now)
         else:
             self._cal = QCalendarWidget()
+        # Force English locale so month/day names display in English
+        # regardless of the system locale.
+        self._cal.setLocale(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
         # Hide the week-number column on the left side of the calendar grid.
         self._cal.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.setCalendarWidget(self._cal)
