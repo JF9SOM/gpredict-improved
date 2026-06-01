@@ -158,6 +158,8 @@ class _NowDateTimeEdit(QDateTimeEdit):
             self._cal.now_requested.connect(self._apply_now)
         else:
             self._cal = QCalendarWidget()
+        # Hide the week-number column on the left side of the calendar grid.
+        self._cal.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
         self.setCalendarWidget(self._cal)
 
     def set_use_utc(self, use_utc: bool) -> None:
