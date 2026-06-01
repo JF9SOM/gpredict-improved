@@ -131,11 +131,11 @@ class _CalendarWithNow(QCalendarWidget):
         now_btn.clicked.connect(self.now_requested)
         # QCalendarWidget creates a QVBoxLayout internally during __init__;
         # appending our button here places it below the month grid.
-        # A top margin of 4 px prevents the button from overlapping the last week row.
+        # Apply top margin via stylesheet so the button stays separated from the
+        # last week row without shrinking the calendar grid itself.
+        now_btn.setStyleSheet("margin-top: 4px;")
         cal_layout = self.layout()
         if cal_layout is not None:
-            cal_layout.setContentsMargins(4, 4, 4, 4)
-            cal_layout.setSpacing(4)
             cal_layout.addWidget(now_btn)
 
 
