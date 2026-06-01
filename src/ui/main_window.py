@@ -1585,6 +1585,7 @@ class MainWindow(QMainWindow):
 
     def _on_group_results_ready(self, results: object) -> None:
         """Populate the Group Pass Chart tab and make it visible on first group search."""
+
         self._group_pass_chart.set_results(results)  # type: ignore[arg-type]
         self._tab_widget.setTabVisible(self._group_chart_tab_idx, True)
 

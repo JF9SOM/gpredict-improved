@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 
 if TYPE_CHECKING:
     from core.engine import PassInfo
+    from ui.pass_panel import GroupPassResult
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -505,7 +506,7 @@ class GroupPassChartView(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._results: list[object] = []  # list[GroupPassResult]
+        self._results: list[GroupPassResult] = []
         self._use_utc: bool = True
         self._overlay: list[tuple[QSplineSeries, float, QColor, str]] = []
         self._peak_label_items: list[QGraphicsTextItem] = []
@@ -552,7 +553,7 @@ class GroupPassChartView(QWidget):
     # Public API
     # ------------------------------------------------------------------ #
 
-    def set_results(self, results: list[object]) -> None:
+    def set_results(self, results: list[GroupPassResult]) -> None:
         """Set group search results and redraw.
 
         Args:
@@ -570,7 +571,7 @@ class GroupPassChartView(QWidget):
 
     def clear(self) -> None:
         """Clear all chart content."""
-        self._results = []
+        self._results = []  # type: ignore[assignment]
         self._clear_peak_labels()
         self._chart.removeAllSeries()
         for axis in self._chart.axes():
@@ -605,9 +606,7 @@ class GroupPassChartView(QWidget):
 
         # Filter to passes within range
         filtered = [
-            r
-            for r in self._results
-            if r.pass_info.los >= now and r.pass_info.aos <= cutoff  # type: ignore[attr-defined]
+            r for r in self._results if r.pass_info.los >= now and r.pass_info.aos <= cutoff
         ]
         if not filtered:
             self._chart.setTitle("No passes in range")
@@ -626,8 +625,8 @@ class GroupPassChartView(QWidget):
         overlay: list[tuple[QSplineSeries, float, QColor, str]] = []
 
         for r in filtered:
-            sat_name: str = r.sat_name  # type: ignore[attr-defined]
-            p = r.pass_info  # type: ignore[attr-defined]
+            sat_name: str = r.sat_name
+            p = r.pass_info
 
             if sat_name not in sat_color:
                 sat_color[sat_name] = QColor(_GROUP_PALETTE[palette_idx % len(_GROUP_PALETTE)])
@@ -656,10 +655,7 @@ class GroupPassChartView(QWidget):
             overlay.append((series, p.max_elevation_deg, color, sat_name))
 
         # Current-time line
-        t_end = max(
-            r.pass_info.los
-            for r in filtered  # type: ignore[attr-defined]
-        )
+        t_end = max(r.pass_info.los for r in filtered)
         if now <= t_end:
             now_series = self._build_now_line(now)
             self._chart.addSeries(now_series)
@@ -775,11 +771,11 @@ class GroupPassChartView(QWidget):
             return
         if state and sender in self._series_to_info:
             sat_name, max_el = self._series_to_info[sender]
+            from PySide6.QtCore import QPoint  # noqa: PLC0415
             from PySide6.QtWidgets import QToolTip  # noqa: PLC0415
 
             chart_pt = self._chart.mapToPosition(point, sender)
             scene_pt = self._chart.mapToScene(chart_pt)
-            global_pt = self._chart_view.mapToGlobal(
-                self._chart_view.mapFromScene(scene_pt).toPoint()
-            )
+            view_pt = self._chart_view.mapFromScene(scene_pt)
+            global_pt = self._chart_view.mapToGlobal(QPoint(int(view_pt.x()), int(view_pt.y())))
             QToolTip.showText(global_pt, f"{sat_name}\nMax El: {max_el:.1f}°")
