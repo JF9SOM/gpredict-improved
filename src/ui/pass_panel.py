@@ -137,19 +137,24 @@ class _CalendarWithNow(QCalendarWidget):
 
 
 class _NowDateTimeEdit(QDateTimeEdit):
-    """QDateTimeEdit whose calendar popup includes a 'Current Time' reset button.
+    """QDateTimeEdit whose calendar popup optionally includes a 'Current Time' button.
 
+    Pass ``show_now_button=True`` (default) to include the button (for "From" fields).
+    Pass ``show_now_button=False`` to omit it (for "To" fields).
     Supports switching between UTC and local time display via ``set_use_utc()``.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, show_now_button: bool = True) -> None:
         super().__init__(parent)
         self._use_utc: bool = True
         self.setCalendarPopup(True)
         self.setTimeSpec(Qt.TimeSpec.UTC)  # default: show UTC
-        self._cal = _CalendarWithNow()
+        if show_now_button:
+            self._cal: QCalendarWidget = _CalendarWithNow()
+            self._cal.now_requested.connect(self._apply_now)  # type: ignore[attr-defined]
+        else:
+            self._cal = QCalendarWidget()
         self.setCalendarWidget(self._cal)
-        self._cal.now_requested.connect(self._apply_now)
 
     def set_use_utc(self, use_utc: bool) -> None:
         """Switch the display between UTC and local time.
@@ -246,9 +251,14 @@ class _GroupSearchWorker(QThread):
 # ---------------------------------------------------------------------------
 
 
-def _make_dt_edit() -> _NowDateTimeEdit:
-    """Return a _NowDateTimeEdit with a UTC calendar popup and a 'Current Time' button."""
-    edit = _NowDateTimeEdit()
+def _make_dt_edit(*, show_now_button: bool = True) -> _NowDateTimeEdit:
+    """Return a _NowDateTimeEdit with a UTC calendar popup.
+
+    Args:
+        show_now_button: If True (default), include the 'Current Time' button.
+                         Pass False for 'To' fields where the button is not needed.
+    """
+    edit = _NowDateTimeEdit(show_now_button=show_now_button)
     edit.setDisplayFormat("yyyy-MM-dd HH:mm")
     return edit
 
@@ -351,7 +361,7 @@ class PassPanel(QWidget):
         row.addWidget(self._target_from)
 
         row.addWidget(QLabel(_("To:")))
-        self._target_to = _make_dt_edit()
+        self._target_to = _make_dt_edit(show_now_button=False)
         self._target_to.setMaximumWidth(130)
         row.addWidget(self._target_to)
 
@@ -400,7 +410,7 @@ class PassPanel(QWidget):
         row.addWidget(self._group_from)
 
         row.addWidget(QLabel(_("To:")))
-        self._group_to = _make_dt_edit()
+        self._group_to = _make_dt_edit(show_now_button=False)
         self._group_to.setMaximumWidth(130)
         row.addWidget(self._group_to)
 
