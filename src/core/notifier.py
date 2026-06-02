@@ -64,7 +64,7 @@ def _send_notification(title: str, body: str) -> None:
 def _send_windows_notification(title: str, body: str) -> None:
     """Send a Windows 10/11 toast notification via plyer or PowerShell fallback."""
     try:
-        from plyer import notification  # type: ignore[import-not-found]  # noqa: PLC0415
+        from plyer import notification  # noqa: PLC0415
 
         notification.notify(
             title=title,
@@ -97,7 +97,7 @@ def _send_windows_notification(title: str, body: str) -> None:
 def _send_plyer(title: str, body: str) -> None:
     """Universal fallback via plyer (optional dependency)."""
     try:
-        from plyer import notification  # type: ignore[import-not-found]  # noqa: PLC0415
+        from plyer import notification  # noqa: PLC0415
 
         notification.notify(title=title, message=body, app_name="GPredict-Improved", timeout=8)
     except Exception:  # noqa: BLE001
