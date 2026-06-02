@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -180,6 +182,11 @@ class SettingsDialog(QDialog):
         self._selected_map_filename: str = _BUILTIN_SENTINEL
         # Custom Groups tab state
         self._groups_list: QListWidget
+        # Notifications tab state
+        self._notif_enabled_cb: QCheckBox
+        self._notif_warn_spin: QSpinBox
+        self._notif_los_cb: QCheckBox
+        self._notif_los_spin: QSpinBox
         self._setup_ui()
         self._load_settings()
 
@@ -194,6 +201,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_tle_tab(), _("TLE Sources"))
         tabs.addTab(self._build_map_tab(), _("World Map"))
         tabs.addTab(self._build_groups_tab(), _("Custom Groups"))
+        tabs.addTab(self._build_notifications_tab(), _("Notifications"))
 
         layout.addWidget(tabs)
 
@@ -514,6 +522,89 @@ class SettingsDialog(QDialog):
         self._conn.commit()
 
     # ------------------------------------------------------------------ #
+    # Notifications tab
+    # ------------------------------------------------------------------ #
+
+    def _build_notifications_tab(self) -> QWidget:
+        """Build the Notifications settings tab."""
+        from core.notifier import (  # noqa: PLC0415
+            _DEFAULT_ENABLED,
+            _DEFAULT_LOS_WARN_ENABLED,
+            _DEFAULT_LOS_WARN_MINUTES,
+            _DEFAULT_WARN_MINUTES,
+        )
+
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # --- AOS notifications ---
+        aos_group = QGroupBox(_("AOS Notifications"))
+        aos_form = QFormLayout(aos_group)
+
+        self._notif_enabled_cb = QCheckBox(_("Enable AOS notifications"))
+        self._notif_enabled_cb.setChecked(bool(_DEFAULT_ENABLED))
+        aos_form.addRow(self._notif_enabled_cb)
+
+        self._notif_warn_spin = QSpinBox()
+        self._notif_warn_spin.setRange(1, 60)
+        self._notif_warn_spin.setValue(int(_DEFAULT_WARN_MINUTES))
+        self._notif_warn_spin.setSuffix(_(" min before AOS"))
+        aos_form.addRow(_("Notify:"), self._notif_warn_spin)
+
+        layout.addWidget(aos_group)
+
+        # --- LOS notifications ---
+        los_group = QGroupBox(_("LOS Notifications"))
+        los_form = QFormLayout(los_group)
+
+        self._notif_los_cb = QCheckBox(_("Enable LOS notifications"))
+        self._notif_los_cb.setChecked(bool(_DEFAULT_LOS_WARN_ENABLED))
+        los_form.addRow(self._notif_los_cb)
+
+        self._notif_los_spin = QSpinBox()
+        self._notif_los_spin.setRange(1, 30)
+        self._notif_los_spin.setValue(int(_DEFAULT_LOS_WARN_MINUTES))
+        self._notif_los_spin.setSuffix(_(" min before LOS"))
+        los_form.addRow(_("Notify:"), self._notif_los_spin)
+
+        layout.addWidget(los_group)
+
+        note = QLabel(
+            _(
+                "Notifications are shown when a pass is imminent for the selected\n"
+                "satellite (Target tab) or any satellite in the last Group search."
+            )
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        layout.addStretch()
+        return tab
+
+    def _load_notification_settings(self) -> None:
+        """Load notification preferences from DB into the Notifications tab widgets."""
+        from core.notifier import load_notification_settings  # noqa: PLC0415
+
+        s = load_notification_settings(self._conn)
+        self._notif_enabled_cb.setChecked(bool(s.get("enabled", True)))
+        self._notif_warn_spin.setValue(int(s.get("warn_minutes", 5)))
+        self._notif_los_cb.setChecked(bool(s.get("los_enabled", False)))
+        self._notif_los_spin.setValue(int(s.get("los_warn_minutes", 2)))
+
+    def _save_notification_settings(self) -> None:
+        """Persist notification preferences from the tab widgets to the DB."""
+        from core.notifier import save_notification_settings  # noqa: PLC0415
+
+        save_notification_settings(
+            self._conn,
+            {
+                "enabled": self._notif_enabled_cb.isChecked(),
+                "warn_minutes": self._notif_warn_spin.value(),
+                "los_enabled": self._notif_los_cb.isChecked(),
+                "los_warn_minutes": self._notif_los_spin.value(),
+            },
+        )
+
+    # ------------------------------------------------------------------ #
     # Settings persistence
     # ------------------------------------------------------------------ #
 
@@ -549,6 +640,9 @@ class SettingsDialog(QDialog):
                 break
         self._map_list.setCurrentRow(target_index)
 
+        # Notifications
+        self._load_notification_settings()
+
     def _save_settings(self) -> None:
         """Persist TLE source enablement and world map selection to the DB."""
         # TLE sources
@@ -573,6 +667,9 @@ class SettingsDialog(QDialog):
 
         # Custom groups: persist inline edits
         self._save_group_names()
+
+        # Notifications
+        self._save_notification_settings()
 
     # ------------------------------------------------------------------ #
     # Static helpers

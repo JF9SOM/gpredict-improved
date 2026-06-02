@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 
 from core.engine import DopplerCalculator, Observation, PassPredictor, SatelliteEngine
 from core.location import LocationManager
+from core.notifier import PassNotifier
 from data.amsat_status import AMSATStatusFetcher
 from data.ctcss_db import get_ctcss
 from data.tle_manager import TLEManager
@@ -299,6 +300,11 @@ class MainWindow(QMainWindow):
         self._ctcss_tone_hz: float | None = None
         # Activation tone for the current satellite (from CTCSS_DB; None if not applicable).
         self._ctcss_activation_hz: float | None = None
+
+        # AOS/LOS desktop notifier
+        self._notifier = PassNotifier(conn)
+        # Group pass results cache for notifier
+        self._group_pass_results: list[object] = []
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
@@ -888,6 +894,22 @@ class MainWindow(QMainWindow):
         self._update_world_map()
         self._update_selected_satellite()
         self._update_statusbar()
+        self._check_notifications()
+
+    def _check_notifications(self) -> None:
+        """Fire AOS/LOS desktop notifications for Target and Group passes."""
+        # Target satellite passes
+        if self._current_passes and self._selected_norad is not None:
+            name_row = self._conn.execute(
+                "SELECT name FROM satellites WHERE norad_cat_id = ?",
+                (self._selected_norad,),
+            ).fetchone()
+            sat_name = str(name_row["name"]) if name_row else str(self._selected_norad)
+            self._notifier.check(self._current_passes, sat_name)
+
+        # Group search passes
+        if self._group_pass_results:
+            self._notifier.check_group(self._group_pass_results)
 
     def _update_world_map(self) -> None:
         """Fetch all satellite subpoints and observer position, then update the world map."""
@@ -1585,9 +1607,10 @@ class MainWindow(QMainWindow):
 
     def _on_group_results_ready(self, results: object) -> None:
         """Populate the Group Pass Chart tab and make it visible on first group search."""
-
         self._group_pass_chart.set_results(results)  # type: ignore[arg-type]
         self._tab_widget.setTabVisible(self._group_chart_tab_idx, True)
+        # Cache for AOS/LOS notification checks
+        self._group_pass_results = results  # type: ignore[assignment]
 
     # ------------------------------------------------------------------ #
     # Menu handlers
@@ -1744,6 +1767,9 @@ class MainWindow(QMainWindow):
 
         # Rebuild filter combo so any group additions/renames/removals are reflected
         self._rebuild_filter_combo()
+
+        # Reload notification settings (warn_minutes / los_enabled etc. may have changed)
+        self._notifier.reload_settings()
 
         self._apply_world_map()
 
