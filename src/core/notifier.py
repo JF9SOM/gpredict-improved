@@ -64,7 +64,7 @@ def _send_notification(title: str, body: str) -> None:
 def _send_windows_notification(title: str, body: str) -> None:
     """Send a Windows 10/11 toast notification via plyer or PowerShell fallback."""
     try:
-        from plyer import notification  # type: ignore[import-untyped]  # noqa: PLC0415
+        from plyer import notification  # type: ignore[import-not-found]  # noqa: PLC0415
 
         notification.notify(
             title=title,
@@ -97,7 +97,7 @@ def _send_windows_notification(title: str, body: str) -> None:
 def _send_plyer(title: str, body: str) -> None:
     """Universal fallback via plyer (optional dependency)."""
     try:
-        from plyer import notification  # type: ignore[import-untyped]  # noqa: PLC0415
+        from plyer import notification  # type: ignore[import-not-found]  # noqa: PLC0415
 
         notification.notify(title=title, message=body, app_name="GPredict-Improved", timeout=8)
     except Exception:  # noqa: BLE001
@@ -114,7 +114,10 @@ _DEFAULT_LOS_WARN_MINUTES = 2
 _DEFAULT_ENABLED = True
 
 
-def load_notification_settings(conn: sqlite3.Connection) -> dict[str, object]:
+NotificationSettings = dict[str, int | bool]
+
+
+def load_notification_settings(conn: sqlite3.Connection) -> NotificationSettings:
     """Load notification preferences from app_settings.
 
     Returns a dict with keys:
@@ -126,7 +129,7 @@ def load_notification_settings(conn: sqlite3.Connection) -> dict[str, object]:
     ).fetchone()
     import json  # noqa: PLC0415
 
-    defaults: dict[str, object] = {
+    defaults: NotificationSettings = {
         "enabled": _DEFAULT_ENABLED,
         "warn_minutes": _DEFAULT_WARN_MINUTES,
         "los_enabled": _DEFAULT_LOS_WARN_ENABLED,
@@ -134,14 +137,14 @@ def load_notification_settings(conn: sqlite3.Connection) -> dict[str, object]:
     }
     if row and row["value"]:
         try:
-            stored = json.loads(str(row["value"]))
+            stored: dict[str, int | bool] = json.loads(str(row["value"]))
             defaults.update(stored)
         except Exception:  # noqa: BLE001
             pass
     return defaults
 
 
-def save_notification_settings(conn: sqlite3.Connection, settings: dict[str, object]) -> None:
+def save_notification_settings(conn: sqlite3.Connection, settings: NotificationSettings) -> None:
     """Persist notification preferences to app_settings."""
     import json  # noqa: PLC0415
 
@@ -173,7 +176,7 @@ class PassNotifier:
         self._conn = conn
         self._notified_aos: set[str] = set()  # "{norad}_{aos_iso}"
         self._notified_los: set[str] = set()  # "{norad}_{los_iso}"
-        self._settings: dict[str, object] = load_notification_settings(conn)
+        self._settings: NotificationSettings = load_notification_settings(conn)
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -190,15 +193,15 @@ class PassNotifier:
             passes:   upcoming passes for one satellite (from _current_passes)
             sat_name: human-readable satellite name for the notification title
         """
-        if not self._settings.get("enabled", True):
+        if not self._settings["enabled"]:
             return
 
         now = datetime.now(UTC)
-        warn_min = int(self._settings.get("warn_minutes", _DEFAULT_WARN_MINUTES))
+        warn_min = int(self._settings["warn_minutes"])
         warn_delta = timedelta(minutes=warn_min)
 
-        los_enabled = bool(self._settings.get("los_enabled", _DEFAULT_LOS_WARN_ENABLED))
-        los_min = int(self._settings.get("los_warn_minutes", _DEFAULT_LOS_WARN_MINUTES))
+        los_enabled = bool(self._settings["los_enabled"])
+        los_min = int(self._settings["los_warn_minutes"])
         los_delta = timedelta(minutes=los_min)
 
         for p in passes:
@@ -229,15 +232,15 @@ class PassNotifier:
             group_results: list[GroupPassResult] from PassPanel
             use_utc:       True → times shown in UTC, False → local time
         """
-        if not self._settings.get("enabled", True):
+        if not self._settings["enabled"]:
             return
 
         now = datetime.now(UTC)
-        warn_min = int(self._settings.get("warn_minutes", _DEFAULT_WARN_MINUTES))
+        warn_min = int(self._settings["warn_minutes"])
         warn_delta = timedelta(minutes=warn_min)
 
-        los_enabled = bool(self._settings.get("los_enabled", _DEFAULT_LOS_WARN_ENABLED))
-        los_min = int(self._settings.get("los_warn_minutes", _DEFAULT_LOS_WARN_MINUTES))
+        los_enabled = bool(self._settings["los_enabled"])
+        los_min = int(self._settings["los_warn_minutes"])
         los_delta = timedelta(minutes=los_min)
 
         for r in group_results:

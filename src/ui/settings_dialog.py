@@ -585,10 +585,10 @@ class SettingsDialog(QDialog):
         from core.notifier import load_notification_settings  # noqa: PLC0415
 
         s = load_notification_settings(self._conn)
-        self._notif_enabled_cb.setChecked(bool(s.get("enabled", True)))
-        self._notif_warn_spin.setValue(int(s.get("warn_minutes", 5)))
-        self._notif_los_cb.setChecked(bool(s.get("los_enabled", False)))
-        self._notif_los_spin.setValue(int(s.get("los_warn_minutes", 2)))
+        self._notif_enabled_cb.setChecked(bool(s["enabled"]))
+        self._notif_warn_spin.setValue(int(s["warn_minutes"]))
+        self._notif_los_cb.setChecked(bool(s["los_enabled"]))
+        self._notif_los_spin.setValue(int(s["los_warn_minutes"]))
 
     def _save_notification_settings(self) -> None:
         """Persist notification preferences from the tab widgets to the DB."""
