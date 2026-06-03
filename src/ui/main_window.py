@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.autotrack import AutotrackManager
 from core.engine import DopplerCalculator, Observation, PassPredictor, SatelliteEngine
 from core.location import LocationManager
 from core.notifier import PassNotifier
@@ -305,6 +306,9 @@ class MainWindow(QMainWindow):
         self._notifier = PassNotifier(conn)
         # Group pass results cache for notifier
         self._group_pass_results: list[object] = []
+        # Sequential autotrack engine
+        self._autotrack = AutotrackManager(conn)
+        self._autotrack_enabled: bool = False
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
@@ -316,6 +320,8 @@ class MainWindow(QMainWindow):
         self._pass_list.target_search_requested.connect(self._on_target_search_requested)
         self._pass_list.highlight_satellite.connect(self._on_highlight_satellite)
         self._pass_list.group_results_ready.connect(self._on_group_results_ready)
+        self._radio_control.autotrack_toggled.connect(self._on_autotrack_toggled)
+        self._radio_control.autotrack_list_changed.connect(self._on_autotrack_list_changed)
         self._pass_list.set_pass_predictor(self._pass_predictor)
         # Connect signal that receives satellite list refresh requests from background threads
         self._satellite_list_refresh.connect(self._load_satellites)
@@ -338,6 +344,7 @@ class MainWindow(QMainWindow):
         self._load_satellites()
         self._load_rig_settings()
         self._load_rotator_settings()
+        self._reload_autotrack_lists()
         self._apply_world_map()
         self._apply_time_zone()
 
@@ -895,6 +902,7 @@ class MainWindow(QMainWindow):
         self._update_selected_satellite()
         self._update_statusbar()
         self._check_notifications()
+        self._check_autotrack()
 
     def _check_notifications(self) -> None:
         """Fire AOS/LOS desktop notifications for Target and Group passes."""
@@ -910,6 +918,84 @@ class MainWindow(QMainWindow):
         # Group search passes
         if self._group_pass_results:
             self._notifier.check_group(self._group_pass_results)
+
+    def _check_autotrack(self) -> None:
+        """Run one autotrack evaluation cycle (called every second from _on_tick)."""
+        if not self._autotrack_enabled or self._engine is None:
+            return
+        if not self._autotrack.is_ready:
+            return
+
+        result = self._autotrack.check(self._engine)
+        if result is None:
+            # Update status label with next satellite info
+            info = self._autotrack.next_satellite_info(self._engine)
+            if info is not None:
+                next_name, next_aos = info
+                if next_aos is not None:
+                    from datetime import UTC  # noqa: PLC0415
+
+                    now = datetime.now(UTC)
+                    mins = int((next_aos - now).total_seconds() / 60)
+                    self._radio_control.set_autotrack_status(
+                        f"Next: {next_name} in {mins} min", ok=True
+                    )
+            return
+
+        next_norad, xpdr_uuid = result
+
+        # Switch satellite in the UI
+        self._select_satellite_by_norad(next_norad)
+
+        # Switch transponder to the registered one
+        xpdr_row = self._conn.execute(
+            "SELECT * FROM transmitters WHERE uuid = ?", (xpdr_uuid,)
+        ).fetchone()
+        if xpdr_row:
+            # Find the index in the current transmitter list
+            transmitters = self._transmitter_manager.get_transmitters(next_norad)
+            try:
+                idx = next(i for i, t in enumerate(transmitters) if t["uuid"] == xpdr_uuid)
+            except StopIteration:
+                idx = 0
+            self._radio_control.set_transmitters(transmitters, default_index=idx)
+
+        name_row = self._conn.execute(
+            "SELECT name FROM satellites WHERE norad_cat_id = ?", (next_norad,)
+        ).fetchone()
+        sat_name = str(name_row["name"]) if name_row else str(next_norad)
+        self._radio_control.set_autotrack_status(f"Tracking: {sat_name}", ok=True)
+
+    def _select_satellite_by_norad(self, norad: int) -> None:
+        """Select a satellite in the list widget by NORAD id (autotrack helper)."""
+        for i in range(self._sat_list.count()):
+            item = self._sat_list.item(i)
+            if item is not None and int(item.data(Qt.ItemDataRole.UserRole)) == norad:
+                self._sat_list.setCurrentRow(i)
+                return
+
+    def _reload_autotrack_lists(self) -> None:
+        """Reload Autotrack Lists from DB and refresh the Radio Control combo."""
+        lists = AutotrackManager.get_all_lists(self._conn)
+        self._radio_control.populate_autotrack_lists(lists)
+
+    def _on_autotrack_toggled(self, enabled: bool) -> None:
+        """Called when the user toggles the Autotrack checkbox."""
+        self._autotrack_enabled = enabled
+        if not enabled:
+            self._autotrack.reset()
+            self._radio_control.set_autotrack_status("—")
+        else:
+            if not self._autotrack.is_ready:
+                self._radio_control.set_autotrack_status(_("Run a pass search first"), ok=False)
+
+    def _on_autotrack_list_changed(self, list_id: object) -> None:
+        """Called when the user selects a different Autotrack List."""
+        lid = int(list_id) if list_id is not None else None
+        self._autotrack.set_list(lid)
+        self._autotrack_enabled = False
+        self._radio_control.set_autotrack_enabled(False)
+        self._radio_control.set_autotrack_status("—")
 
     def _update_world_map(self) -> None:
         """Fetch all satellite subpoints and observer position, then update the world map."""
@@ -1611,6 +1697,8 @@ class MainWindow(QMainWindow):
         self._tab_widget.setTabVisible(self._group_chart_tab_idx, True)
         # Cache for AOS/LOS notification checks
         self._group_pass_results = results  # type: ignore[assignment]
+        # Pass search is now done — autotrack may proceed
+        self._autotrack.mark_searches_ready()
 
     # ------------------------------------------------------------------ #
     # Menu handlers
@@ -1770,6 +1858,9 @@ class MainWindow(QMainWindow):
 
         # Reload notification settings (warn_minutes / los_enabled etc. may have changed)
         self._notifier.reload_settings()
+
+        # Reload autotrack lists (user may have added/removed lists in Settings)
+        self._reload_autotrack_lists()
 
         self._apply_world_map()
 

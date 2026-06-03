@@ -97,6 +97,25 @@ CREATE TABLE IF NOT EXISTS custom_groups (
     sort_order  INTEGER NOT NULL DEFAULT 0
 );
 
+-- Autotrack lists — user-defined ordered lists of (satellite, transponder) pairs
+-- for automatic sequential tracking via the Radio Control panel.
+CREATE TABLE IF NOT EXISTS autotrack_lists (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+-- Entries within an Autotrack list (ordered by sort_order).
+-- Each entry links a satellite to a specific transponder UUID.
+CREATE TABLE IF NOT EXISTS autotrack_entries (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id       INTEGER NOT NULL REFERENCES autotrack_lists(id) ON DELETE CASCADE,
+    norad_cat_id  INTEGER NOT NULL,
+    xpdr_uuid     TEXT NOT NULL,   -- transmitters.uuid for the chosen transponder
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    notes         TEXT DEFAULT ''
+);
+
 -- Sync log
 CREATE TABLE IF NOT EXISTS sync_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

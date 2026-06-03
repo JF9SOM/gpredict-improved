@@ -49,6 +49,8 @@ class RadioControlWidget(QWidget):
     south_init_changed: Signal = Signal(bool)
     ctcss_send_requested: Signal = Signal(float)
     ctcss_activate_requested: Signal = Signal()  # activation-tone button pressed
+    autotrack_toggled: Signal = Signal(bool)  # autotrack on/off
+    autotrack_list_changed: Signal = Signal(object)  # selected list_id (int | None)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -200,6 +202,27 @@ class RadioControlWidget(QWidget):
         si_row.addStretch()
         layout.addLayout(si_row)
 
+        # ── Autotrack ──────────────────────────────────────────────────
+        at_group = QGroupBox(_("Autotrack"))
+        at_form = QFormLayout(at_group)
+        at_form.setContentsMargins(4, 4, 4, 4)
+
+        self._at_list_combo = QComboBox()
+        self._at_list_combo.setEnabled(False)
+        self._at_list_combo.currentIndexChanged.connect(self._on_at_list_changed)
+        at_form.addRow(_("List:"), self._at_list_combo)
+
+        self._at_enable_cb = QCheckBox(_("Enable Autotrack"))
+        self._at_enable_cb.setEnabled(False)
+        self._at_enable_cb.toggled.connect(self._on_at_toggled)
+        at_form.addRow(self._at_enable_cb)
+
+        self._at_status_label = QLabel(_("—"))
+        self._at_status_label.setWordWrap(True)
+        at_form.addRow(_("Status:"), self._at_status_label)
+
+        layout.addWidget(at_group)
+
         layout.addStretch()
 
         self._update_rig1_status()
@@ -315,6 +338,50 @@ class RadioControlWidget(QWidget):
         """Set the rotator controller."""
         self._rotator = rotator
         self._update_rot_status()
+
+    # ------------------------------------------------------------------ #
+    # Autotrack public API
+    # ------------------------------------------------------------------ #
+
+    def populate_autotrack_lists(self, lists: list[dict[str, object]]) -> None:
+        """Populate the Autotrack list combo from DB data.
+
+        Args:
+            lists: list of dicts with keys 'id' and 'name'.
+        """
+        self._at_list_combo.blockSignals(True)
+        self._at_list_combo.clear()
+        if lists:
+            for lst in lists:
+                self._at_list_combo.addItem(str(lst["name"]), userData=int(lst["id"]))  # type: ignore[arg-type]
+            self._at_list_combo.setEnabled(True)
+        else:
+            self._at_list_combo.setEnabled(False)
+            self._at_enable_cb.setEnabled(False)
+        self._at_list_combo.blockSignals(False)
+
+    def set_autotrack_enabled(self, enabled: bool) -> None:
+        """Programmatically set the Autotrack checkbox."""
+        self._at_enable_cb.blockSignals(True)
+        self._at_enable_cb.setChecked(enabled)
+        self._at_enable_cb.blockSignals(False)
+
+    def set_autotrack_status(self, text: str, ok: bool = True) -> None:
+        """Update the Autotrack status label text and colour."""
+        self._at_status_label.setText(text)
+        color = "#2ecc71" if ok else "#e74c3c"
+        self._at_status_label.setStyleSheet(f"color: {color};")
+
+    def _on_at_list_changed(self, _idx: int) -> None:
+        list_id = self._at_list_combo.currentData()
+        has_list = list_id is not None
+        self._at_enable_cb.setEnabled(has_list)
+        if not has_list:
+            self._at_enable_cb.setChecked(False)
+        self.autotrack_list_changed.emit(list_id)
+
+    def _on_at_toggled(self, checked: bool) -> None:
+        self.autotrack_toggled.emit(checked)
 
     def set_south_init(self, checked: bool) -> None:
         """Set the South Init checkbox without emitting south_init_changed."""
