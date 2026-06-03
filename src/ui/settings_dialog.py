@@ -608,10 +608,10 @@ class SettingsDialog(QDialog):
         if self._at_selected_list_id is None:
             return
 
-        def _fmt_mhz(hz: object) -> str:
-            if hz is None:
+        def _fmt_mhz(hz: int | str | None) -> str:
+            if not isinstance(hz, int):
                 return "—"
-            return f"{int(hz) / 1_000_000:.3f}"
+            return f"{hz / 1_000_000:.3f}"
 
         for entry in AutotrackManager.get_entries(self._conn, self._at_selected_list_id):
             item = QTreeWidgetItem(
@@ -623,7 +623,7 @@ class SettingsDialog(QDialog):
                     str(entry.get("mode") or ""),
                 ]
             )
-            item.setData(0, 0x0100, int(entry["id"]))  # entry_id in UserRole
+            item.setData(0, 0x0100, entry["id"])  # entry_id in UserRole
             self._at_entry_tree.addTopLevelItem(item)
 
     def _on_at_list_selected(self, row: int) -> None:
@@ -729,8 +729,10 @@ class SettingsDialog(QDialog):
         item = self._at_entry_tree.currentItem()
         if item is None:
             return
-        entry_id = int(item.data(0, 0x0100))
-        AutotrackManager.remove_entry(self._conn, entry_id)
+        raw = item.data(0, 0x0100)
+        if not isinstance(raw, int):
+            return
+        AutotrackManager.remove_entry(self._conn, raw)
         self._reload_at_entries()
 
     def _on_at_move_up(self) -> None:
@@ -739,7 +741,9 @@ class SettingsDialog(QDialog):
         item = self._at_entry_tree.currentItem()
         if item is None:
             return
-        AutotrackManager.move_entry_up(self._conn, int(item.data(0, 0x0100)))
+        raw = item.data(0, 0x0100)
+        if isinstance(raw, int):
+            AutotrackManager.move_entry_up(self._conn, raw)
         self._reload_at_entries()
 
     def _on_at_move_down(self) -> None:
@@ -748,7 +752,9 @@ class SettingsDialog(QDialog):
         item = self._at_entry_tree.currentItem()
         if item is None:
             return
-        AutotrackManager.move_entry_down(self._conn, int(item.data(0, 0x0100)))
+        raw = item.data(0, 0x0100)
+        if isinstance(raw, int):
+            AutotrackManager.move_entry_down(self._conn, raw)
         self._reload_at_entries()
 
     def _save_group_names(self) -> None:

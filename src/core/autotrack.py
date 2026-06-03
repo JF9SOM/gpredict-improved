@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -277,7 +277,8 @@ class AutotrackManager:
         now: datetime,
     ) -> datetime | None:
         """Return the next AOS for a satellite, or None if unavailable."""
-        passes = predictor.get_passes(norad, start=now, duration_hours=24.0)
+        end = now + timedelta(hours=24)
+        passes = predictor.get_passes(norad, start=now, end=end)
         for p in passes:
             if p.aos >= now:
                 return p.aos
