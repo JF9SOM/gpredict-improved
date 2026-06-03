@@ -263,9 +263,18 @@ class MainWindow(QMainWindow):
         self._pass_predictor = pass_predictor
         self._location_manager = location_manager
         self._selected_norad: int | None = None
-        self._all_norads: list[int] = []
+        self._all_norads: list[int] = []  # ALL non-hidden norads (for pass predictor)
+        self._visible_norads: list[int] = []  # norads currently shown in the list widget
         self._all_sat_data: list[_SatData] = []
         self._current_passes: list[Any] = []
+        # Satellite name cache — rebuilt in _load_satellites, used every tick
+        self._sat_name_cache: dict[int, str] = {}
+        # World-map update throttle: only redraw every N ticks (default 5 s at 1 Hz)
+        self._map_tick_counter: int = 0
+        _MAP_UPDATE_INTERVAL: int = 5
+        self._MAP_UPDATE_INTERVAL = _MAP_UPDATE_INTERVAL
+        # Latest elevations computed in _update_world_map, reused by _check_autotrack
+        self._last_elevations: dict[int, float] = {}
         self._current_transmitter: dict[str, Any] | None = None
         self._web_server: Any | None = None
         self._web_server_url: str = ""
@@ -581,10 +590,12 @@ class MainWindow(QMainWindow):
 
         self._all_sat_data = []
         self._all_norads = []
+        self._sat_name_cache = {}
 
         for row in rows:
             norad: int = int(row["norad_cat_id"])
             name: str = str(row["name"])
+            self._sat_name_cache[norad] = name
 
             # Parse alt_names once; used for both AMSAT matching and display
             try:
@@ -750,13 +761,13 @@ class MainWindow(QMainWindow):
 
         self._pass_list.set_satellites(filtered_sats)
 
-        # Sync World Map with current filter:
-        # "All Satellites" with no search -> show all satellites (None)
-        # otherwise -> show only the filtered NORAD set
+        # Update the visible norads list (used for world-map computation)
         if filter_text == "All Satellites" and not search_query:
+            self._visible_norads = list(self._all_norads)
             self._world_map.set_visible_norads(None)
         else:
-            self._world_map.set_visible_norads({n for n, _ in filtered_sats})
+            self._visible_norads = [n for n, _ in filtered_sats]
+            self._world_map.set_visible_norads(set(self._visible_norads))
 
     # ------------------------------------------------------------------ #
     # Background processing
@@ -898,7 +909,13 @@ class MainWindow(QMainWindow):
 
     def _on_tick(self) -> None:
         """Timer callback that updates satellite positions and the status bar."""
-        self._update_world_map()
+        # World map position update is throttled to every MAP_UPDATE_INTERVAL ticks
+        # (default 5 seconds) to reduce Skyfield SGP4 computation load.
+        self._map_tick_counter += 1
+        if self._map_tick_counter >= self._MAP_UPDATE_INTERVAL:
+            self._map_tick_counter = 0
+            self._update_world_map()
+
         self._update_selected_satellite()
         self._update_statusbar()
         self._check_notifications()
@@ -908,11 +925,7 @@ class MainWindow(QMainWindow):
         """Fire AOS/LOS desktop notifications for Target and Group passes."""
         # Target satellite passes
         if self._current_passes and self._selected_norad is not None:
-            name_row = self._conn.execute(
-                "SELECT name FROM satellites WHERE norad_cat_id = ?",
-                (self._selected_norad,),
-            ).fetchone()
-            sat_name = str(name_row["name"]) if name_row else str(self._selected_norad)
+            sat_name = self._sat_name_cache.get(self._selected_norad, str(self._selected_norad))
             self._notifier.check(self._current_passes, sat_name)
 
         # Group search passes
@@ -928,7 +941,11 @@ class MainWindow(QMainWindow):
 
         if self._pass_predictor is None:
             return
-        result = self._autotrack.check(self._engine, self._pass_predictor)
+        result = self._autotrack.check(
+            self._engine,
+            self._pass_predictor,
+            cached_elevations=self._last_elevations,
+        )
         if result is None:
             # Update status label with next satellite info
             info = self._autotrack.next_satellite_info(self._engine, self._pass_predictor)
@@ -962,10 +979,7 @@ class MainWindow(QMainWindow):
                 idx = 0
             self._radio_control.set_transmitters(transmitters, default_index=idx)
 
-        name_row = self._conn.execute(
-            "SELECT name FROM satellites WHERE norad_cat_id = ?", (next_norad,)
-        ).fetchone()
-        sat_name = str(name_row["name"]) if name_row else str(next_norad)
+        sat_name = self._sat_name_cache.get(next_norad, str(next_norad))
         self._radio_control.set_autotrack_status(f"Tracking: {sat_name}", ok=True)
 
     def _select_satellite_by_norad(self, norad: int) -> None:
@@ -1000,26 +1014,39 @@ class MainWindow(QMainWindow):
         self._radio_control.set_autotrack_status("—")
 
     def _update_world_map(self) -> None:
-        """Fetch all satellite subpoints and observer position, then update the world map."""
+        """Fetch satellite subpoints for visible satellites and update the world map.
+
+        Only computes positions for the satellites currently shown in the list widget
+        (_visible_norads) instead of all non-hidden satellites, reducing SGP4 load
+        significantly when a filter is active.  Uses _sat_name_cache to avoid a DB
+        round-trip every 5 seconds.
+        """
         # Update the observer location star marker (regardless of whether the engine is set)
         if self._location_manager is not None and self._location_manager.current is not None:
             loc = self._location_manager.current
             self._world_map.set_observer_location(loc.latitude_deg, loc.longitude_deg)
 
-        if self._engine is None or not self._all_norads:
+        if self._engine is None or not self._visible_norads:
             return
 
-        rows = self._conn.execute("SELECT norad_cat_id, name FROM satellites").fetchall()
-        name_map: dict[int, str] = {int(r["norad_cat_id"]): str(r["name"]) for r in rows}
+        # Use cached name map — rebuilt in _load_satellites, no DB hit here
+        name_map = self._sat_name_cache
 
-        subpoints = self._engine.subpoints(self._all_norads)
+        subpoints = self._engine.subpoints(self._visible_norads)
         sat_data: dict[int, tuple[str, float, float, QColor]] = {}
-        for i, norad in enumerate(self._all_norads):
+        new_elevations: dict[int, float] = {}
+
+        for i, norad in enumerate(self._visible_norads):
             if norad in subpoints:
                 lat, lon = subpoints[norad]
                 color = SAT_COLORS[i % len(SAT_COLORS)]
                 sat_data[norad] = (name_map.get(norad, str(norad)), lat, lon, color)
+            # Cache elevation for autotrack reuse (observe is cheap after subpoint)
+            obs = self._engine.observe(norad)
+            if obs is not None:
+                new_elevations[norad] = obs.elevation_deg
 
+        self._last_elevations = new_elevations
         self._world_map.set_satellites(sat_data)
 
         # Update the selected satellite's footprint (moves dynamically every second)

@@ -138,15 +138,19 @@ class AutotrackManager:
         engine: SatelliteEngine,
         predictor: PassPredictor,
         min_el: float = 5.0,
+        cached_elevations: dict[int, float] | None = None,
     ) -> tuple[int, str] | None:
         """Evaluate whether to switch to a different satellite.
 
         Called every second from the main timer tick.
 
         Args:
-            engine:    SatelliteEngine for current elevation queries.
-            predictor: PassPredictor for AOS prediction.
-            min_el:    Minimum elevation threshold (degrees).
+            engine:            SatelliteEngine for current elevation queries.
+            predictor:         PassPredictor for AOS prediction.
+            min_el:            Minimum elevation threshold (degrees).
+            cached_elevations: Pre-computed {norad: elevation_deg} dict from the
+                               world-map update cycle.  When supplied, avoids
+                               redundant Skyfield calls for the same tick.
 
         Returns:
             (norad_cat_id, xpdr_uuid) if a switch should happen, else None.
@@ -157,8 +161,14 @@ class AutotrackManager:
         now = datetime.now(UTC)
         norads = [e.norad_cat_id for e in self._entries]
 
-        # Get current elevations for all entries
-        elevations = self._get_elevations(engine, norads)
+        # Use cached elevations when available; fall back to live queries
+        if cached_elevations is not None:
+            elevations = {n: cached_elevations[n] for n in norads if n in cached_elevations}
+            missing = [n for n in norads if n not in elevations]
+            if missing:
+                elevations.update(self._get_elevations(engine, missing))
+        else:
+            elevations = self._get_elevations(engine, norads)
 
         current = self._state.current_norad
 
