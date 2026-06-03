@@ -79,10 +79,12 @@ class RadioControlWidget(QWidget):
 
         # Name + NORAD on one row
         self._sat_name_label = QLabel("—")
+        self._sat_name_label.setMinimumWidth(120)
         self._norad_label = QLabel("—")
         name_norad_row = QHBoxLayout()
-        name_norad_row.setSpacing(8)
+        name_norad_row.setSpacing(4)
         name_norad_row.addWidget(self._sat_name_label)
+        name_norad_row.addSpacing(20)
         name_norad_row.addWidget(QLabel("NORAD:"))
         name_norad_row.addWidget(self._norad_label)
         name_norad_row.addStretch()
@@ -126,8 +128,10 @@ class RadioControlWidget(QWidget):
 
         # DL freq + Doppler on one row
         dl_row = QHBoxLayout()
-        dl_row.setSpacing(8)
+        dl_row.setSpacing(4)
+        self._downlink_label.setMinimumWidth(110)
         dl_row.addWidget(self._downlink_label)
+        dl_row.addSpacing(20)
         dl_row.addWidget(QLabel("Doppler:"))
         dl_row.addWidget(self._downlink_doppler_label)
         dl_row.addStretch()
@@ -135,8 +139,10 @@ class RadioControlWidget(QWidget):
 
         # UL freq + Doppler on one row
         ul_row = QHBoxLayout()
-        ul_row.setSpacing(8)
+        ul_row.setSpacing(4)
+        self._uplink_label.setMinimumWidth(110)
         ul_row.addWidget(self._uplink_label)
+        ul_row.addSpacing(20)
         ul_row.addWidget(QLabel("Doppler:"))
         ul_row.addWidget(self._uplink_doppler_label)
         ul_row.addStretch()
@@ -146,8 +152,10 @@ class RadioControlWidget(QWidget):
         mode_ctcss_row = QWidget()
         mode_ctcss_layout = QHBoxLayout(mode_ctcss_row)
         mode_ctcss_layout.setContentsMargins(0, 0, 0, 0)
-        mode_ctcss_layout.setSpacing(8)
+        mode_ctcss_layout.setSpacing(4)
+        self._mode_label.setMinimumWidth(40)
         mode_ctcss_layout.addWidget(self._mode_label)
+        mode_ctcss_layout.addSpacing(20)
         mode_ctcss_layout.addWidget(QLabel("CTCSS:"))
         self._ctcss_send_btn = QPushButton("—")
         self._ctcss_send_btn.setToolTip(_("Send current CTCSS tone to rig"))
@@ -174,8 +182,10 @@ class RadioControlWidget(QWidget):
         self._rot_el_label = QLabel("—")
         # AZ + EL on one row
         az_el_row = QHBoxLayout()
-        az_el_row.setSpacing(8)
+        az_el_row.setSpacing(4)
+        self._rot_az_label.setMinimumWidth(60)
         az_el_row.addWidget(self._rot_az_label)
+        az_el_row.addSpacing(20)
         az_el_row.addWidget(QLabel("EL:"))
         az_el_row.addWidget(self._rot_el_label)
         az_el_row.addStretch()
