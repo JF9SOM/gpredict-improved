@@ -926,10 +926,12 @@ class MainWindow(QMainWindow):
         if not self._autotrack.is_ready:
             return
 
-        result = self._autotrack.check(self._engine)
+        if self._pass_predictor is None:
+            return
+        result = self._autotrack.check(self._engine, self._pass_predictor)
         if result is None:
             # Update status label with next satellite info
-            info = self._autotrack.next_satellite_info(self._engine)
+            info = self._autotrack.next_satellite_info(self._engine, self._pass_predictor)
             if info is not None:
                 next_name, next_aos = info
                 if next_aos is not None:
@@ -991,7 +993,7 @@ class MainWindow(QMainWindow):
 
     def _on_autotrack_list_changed(self, list_id: object) -> None:
         """Called when the user selects a different Autotrack List."""
-        lid = int(list_id) if list_id is not None else None
+        lid = int(list_id) if isinstance(list_id, int) else None
         self._autotrack.set_list(lid)
         self._autotrack_enabled = False
         self._radio_control.set_autotrack_enabled(False)

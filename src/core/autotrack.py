@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.engine import SatelliteEngine
+    from core.engine import PassPredictor, SatelliteEngine
 
 
 @dataclass
@@ -136,6 +136,7 @@ class AutotrackManager:
     def check(
         self,
         engine: SatelliteEngine,
+        predictor: PassPredictor,
         min_el: float = 5.0,
     ) -> tuple[int, str] | None:
         """Evaluate whether to switch to a different satellite.
@@ -143,8 +144,9 @@ class AutotrackManager:
         Called every second from the main timer tick.
 
         Args:
-            engine:   SatelliteEngine for elevation queries and pass prediction.
-            min_el:   Minimum elevation threshold (degrees).
+            engine:    SatelliteEngine for current elevation queries.
+            predictor: PassPredictor for AOS prediction.
+            min_el:    Minimum elevation threshold (degrees).
 
         Returns:
             (norad_cat_id, xpdr_uuid) if a switch should happen, else None.
@@ -183,7 +185,7 @@ class AutotrackManager:
         best_aos: datetime | None = None
 
         for entry in self._entries:
-            aos = self._get_next_aos(engine, entry.norad_cat_id, now)
+            aos = self._get_next_aos(predictor, entry.norad_cat_id, now)
             if aos is None:
                 continue
             if best_aos is None or aos < best_aos:
@@ -200,7 +202,10 @@ class AutotrackManager:
         return None
 
     def next_satellite_info(
-        self, engine: SatelliteEngine, min_el: float = 5.0
+        self,
+        engine: SatelliteEngine,
+        predictor: PassPredictor,
+        min_el: float = 5.0,
     ) -> tuple[str, datetime | None] | None:
         """Return (sat_name, next_aos) for the status label in Radio Control.
 
@@ -227,7 +232,7 @@ class AutotrackManager:
                 best_entry = entry
                 best_aos = now
                 break
-            aos = self._get_next_aos(engine, entry.norad_cat_id, now)
+            aos = self._get_next_aos(predictor, entry.norad_cat_id, now)
             if aos is None:
                 continue
             if best_aos is None or aos < best_aos:
@@ -267,12 +272,12 @@ class AutotrackManager:
 
     @staticmethod
     def _get_next_aos(
-        engine: SatelliteEngine,
+        predictor: PassPredictor,
         norad: int,
         now: datetime,
     ) -> datetime | None:
         """Return the next AOS for a satellite, or None if unavailable."""
-        passes = engine.get_passes(norad, start=now, duration_hours=24.0)
+        passes = predictor.get_passes(norad, start=now, duration_hours=24.0)
         for p in passes:
             if p.aos >= now:
                 return p.aos
@@ -283,15 +288,18 @@ class AutotrackManager:
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def get_all_lists(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    def get_all_lists(conn: sqlite3.Connection) -> list[dict[str, int | str]]:
         """Return all Autotrack Lists ordered by sort_order."""
         rows = conn.execute(
             "SELECT id, name, sort_order FROM autotrack_lists ORDER BY sort_order, id"
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [
+            {"id": int(r["id"]), "name": str(r["name"]), "sort_order": int(r["sort_order"])}
+            for r in rows
+        ]
 
     @staticmethod
-    def get_entries(conn: sqlite3.Connection, list_id: int) -> list[dict[str, object]]:
+    def get_entries(conn: sqlite3.Connection, list_id: int) -> list[dict[str, int | str | None]]:
         """Return entries for a list with satellite name and transponder description."""
         rows = conn.execute(
             """
@@ -307,7 +315,23 @@ class AutotrackManager:
             """,
             (list_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        result: list[dict[str, int | str | None]] = []
+        for r in rows:
+            result.append(
+                {
+                    "id": int(r["id"]),
+                    "norad_cat_id": int(r["norad_cat_id"]),
+                    "xpdr_uuid": str(r["xpdr_uuid"]),
+                    "sort_order": int(r["sort_order"]),
+                    "notes": str(r["notes"] or ""),
+                    "sat_name": str(r["sat_name"]) if r["sat_name"] else None,
+                    "xpdr_desc": str(r["xpdr_desc"]) if r["xpdr_desc"] else None,
+                    "downlink_low": int(r["downlink_low"]) if r["downlink_low"] else None,
+                    "uplink_low": int(r["uplink_low"]) if r["uplink_low"] else None,
+                    "mode": str(r["mode"]) if r["mode"] else None,
+                }
+            )
+        return result
 
     @staticmethod
     def create_list(conn: sqlite3.Connection, name: str) -> int:

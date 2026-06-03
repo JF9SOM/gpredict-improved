@@ -343,7 +343,7 @@ class RadioControlWidget(QWidget):
     # Autotrack public API
     # ------------------------------------------------------------------ #
 
-    def populate_autotrack_lists(self, lists: list[dict[str, object]]) -> None:
+    def populate_autotrack_lists(self, lists: list[dict[str, int | str]]) -> None:
         """Populate the Autotrack list combo from DB data.
 
         Args:
@@ -353,7 +353,7 @@ class RadioControlWidget(QWidget):
         self._at_list_combo.clear()
         if lists:
             for lst in lists:
-                self._at_list_combo.addItem(str(lst["name"]), userData=int(lst["id"]))  # type: ignore[arg-type]
+                self._at_list_combo.addItem(str(lst["name"]), userData=lst["id"])
             self._at_list_combo.setEnabled(True)
         else:
             self._at_list_combo.setEnabled(False)
