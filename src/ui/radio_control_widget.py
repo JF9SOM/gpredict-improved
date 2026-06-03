@@ -69,41 +69,54 @@ class RadioControlWidget(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
-        # Satellite info + transponder selection
+        # ── Satellite ──────────────────────────────────────────────────
         sat_group = QGroupBox(_("Satellite"))
         sat_form = QFormLayout(sat_group)
-        sat_form.setContentsMargins(4, 4, 4, 4)
+        sat_form.setContentsMargins(4, 2, 4, 2)
+        sat_form.setSpacing(3)
+
+        # Name + NORAD on one row
         self._sat_name_label = QLabel("—")
         self._norad_label = QLabel("—")
+        name_norad_row = QHBoxLayout()
+        name_norad_row.setSpacing(8)
+        name_norad_row.addWidget(self._sat_name_label)
+        name_norad_row.addWidget(QLabel("NORAD:"))
+        name_norad_row.addWidget(self._norad_label)
+        name_norad_row.addStretch()
+        sat_form.addRow(_("Name:"), name_norad_row)
+
         self._xpdr_combo = QComboBox()
         self._xpdr_combo.setEnabled(False)
         self._xpdr_combo.currentIndexChanged.connect(self._on_xpdr_changed)
-        sat_form.addRow(_("Name:"), self._sat_name_label)
-        sat_form.addRow(_("NORAD:"), self._norad_label)
-        sat_form.addRow(_("Transponder:"), self._xpdr_combo)
 
-        # T / L button row
-        tl_row = QHBoxLayout()
+        # Transponder combo + T/L buttons on one row
+        xpdr_tl_row = QHBoxLayout()
+        xpdr_tl_row.setSpacing(4)
+        xpdr_tl_row.addWidget(self._xpdr_combo, stretch=1)
         self._tune_btn = QPushButton(_("T"))
+        self._tune_btn.setFixedWidth(28)
         self._tune_btn.setToolTip(_("Tune: reset downlink/uplink to center of transponder band"))
         self._tune_btn.clicked.connect(self.tune_requested.emit)
         self._lock_btn = QPushButton(_("L"))
+        self._lock_btn.setFixedWidth(28)
         self._lock_btn.setToolTip(_("Lock: link uplink to downlink (inverting transponder aware)"))
         self._lock_btn.setCheckable(True)
         self._lock_btn.toggled.connect(self.lock_changed.emit)
-        tl_row.addWidget(self._tune_btn)
-        tl_row.addWidget(self._lock_btn)
-        tl_row.addStretch()
-        sat_form.addRow("", tl_row)
+        xpdr_tl_row.addWidget(self._tune_btn)
+        xpdr_tl_row.addWidget(self._lock_btn)
+        sat_form.addRow(_("Transponder:"), xpdr_tl_row)
 
         layout.addWidget(sat_group)
 
-        # Frequency / Doppler
+        # ── Frequency ──────────────────────────────────────────────────
         freq_group = QGroupBox(_("Frequency"))
         freq_form = QFormLayout(freq_group)
-        freq_form.setContentsMargins(4, 4, 4, 4)
+        freq_form.setContentsMargins(4, 2, 4, 2)
+        freq_form.setSpacing(3)
+
         self._downlink_label = QLabel("—")
         self._downlink_doppler_label = QLabel("—")
         self._uplink_label = QLabel("—")
@@ -111,11 +124,31 @@ class RadioControlWidget(QWidget):
         self._mode_label = QLabel("—")
         self._ctcss_label = QLabel("—")
 
-        # CTCSS row: label + Send + Activate buttons
-        ctcss_row = QWidget()
-        ctcss_row_layout = QHBoxLayout(ctcss_row)
-        ctcss_row_layout.setContentsMargins(0, 0, 0, 0)
-        ctcss_row_layout.setSpacing(4)
+        # DL freq + Doppler on one row
+        dl_row = QHBoxLayout()
+        dl_row.setSpacing(8)
+        dl_row.addWidget(self._downlink_label)
+        dl_row.addWidget(QLabel("Doppler:"))
+        dl_row.addWidget(self._downlink_doppler_label)
+        dl_row.addStretch()
+        freq_form.addRow(_("Downlink:"), dl_row)
+
+        # UL freq + Doppler on one row
+        ul_row = QHBoxLayout()
+        ul_row.setSpacing(8)
+        ul_row.addWidget(self._uplink_label)
+        ul_row.addWidget(QLabel("Doppler:"))
+        ul_row.addWidget(self._uplink_doppler_label)
+        ul_row.addStretch()
+        freq_form.addRow(_("Uplink:"), ul_row)
+
+        # Mode + CTCSS on one row
+        mode_ctcss_row = QWidget()
+        mode_ctcss_layout = QHBoxLayout(mode_ctcss_row)
+        mode_ctcss_layout.setContentsMargins(0, 0, 0, 0)
+        mode_ctcss_layout.setSpacing(8)
+        mode_ctcss_layout.addWidget(self._mode_label)
+        mode_ctcss_layout.addWidget(QLabel("CTCSS:"))
         self._ctcss_send_btn = QPushButton("—")
         self._ctcss_send_btn.setToolTip(_("Send current CTCSS tone to rig"))
         self._ctcss_send_btn.clicked.connect(self._on_ctcss_send)
@@ -124,40 +157,80 @@ class RadioControlWidget(QWidget):
         self._ctcss_activate_btn.setToolTip(_("SO-50: activate 10-minute timer with 74.4 Hz tone"))
         self._ctcss_activate_btn.clicked.connect(self._on_ctcss_activate)
         self._ctcss_activate_btn.setVisible(False)
-        ctcss_row_layout.addWidget(self._ctcss_label)
-        ctcss_row_layout.addWidget(self._ctcss_send_btn)
-        ctcss_row_layout.addWidget(self._ctcss_activate_btn)
-        ctcss_row_layout.addStretch()
+        mode_ctcss_layout.addWidget(self._ctcss_label)
+        mode_ctcss_layout.addWidget(self._ctcss_send_btn)
+        mode_ctcss_layout.addWidget(self._ctcss_activate_btn)
+        mode_ctcss_layout.addStretch()
+        freq_form.addRow(_("Mode:"), mode_ctcss_row)
 
-        freq_form.addRow(_("Downlink:"), self._downlink_label)
-        freq_form.addRow(_("  Doppler:"), self._downlink_doppler_label)
-        freq_form.addRow(_("Uplink:"), self._uplink_label)
-        freq_form.addRow(_("  Doppler:"), self._uplink_doppler_label)
-        freq_form.addRow(_("Mode:"), self._mode_label)
-        freq_form.addRow(_("CTCSS:"), ctcss_row)
         layout.addWidget(freq_group)
 
-        # Rotator position
+        # ── Rotator ────────────────────────────────────────────────────
         rot_group = QGroupBox(_("Rotator"))
         rot_form = QFormLayout(rot_group)
-        rot_form.setContentsMargins(4, 4, 4, 4)
+        rot_form.setContentsMargins(4, 2, 4, 2)
+        rot_form.setSpacing(3)
         self._rot_az_label = QLabel("—")
         self._rot_el_label = QLabel("—")
-        rot_form.addRow(_("AZ:"), self._rot_az_label)
-        rot_form.addRow(_("EL:"), self._rot_el_label)
+        # AZ + EL on one row
+        az_el_row = QHBoxLayout()
+        az_el_row.setSpacing(8)
+        az_el_row.addWidget(self._rot_az_label)
+        az_el_row.addWidget(QLabel("EL:"))
+        az_el_row.addWidget(self._rot_el_label)
+        az_el_row.addStretch()
+        rot_form.addRow(_("AZ:"), az_el_row)
         layout.addWidget(rot_group)
 
-        # Connection status — one row per rig plus rotator
+        # ── Status ─────────────────────────────────────────────────────
         status_group = QGroupBox(_("Status"))
         status_form = QFormLayout(status_group)
-        status_form.setContentsMargins(4, 4, 4, 4)
+        status_form.setContentsMargins(4, 2, 4, 2)
+        status_form.setSpacing(3)
         self._rig1_status_label = QLabel(_("Not configured"))
         self._rig2_status_label = QLabel(_("Not configured"))
         self._rot_status_label = QLabel(_("Not configured"))
-        status_form.addRow(_("Rig 1:"), self._rig1_status_label)
-        status_form.addRow(_("Rig 2:"), self._rig2_status_label)
-        status_form.addRow(_("Rotator:"), self._rot_status_label)
 
+        # Rig 1 status + Connect Rig 1 on same row
+        rig1_row = QHBoxLayout()
+        rig1_row.setSpacing(6)
+        self._connect_rig1_btn = QPushButton(_("Connect Rig 1"))
+        self._connect_rig1_btn.clicked.connect(self._on_connect_rig1)
+        rig1_row.addWidget(self._rig1_status_label)
+        rig1_row.addStretch()
+        rig1_row.addWidget(self._connect_rig1_btn)
+        status_form.addRow(_("Rig 1:"), rig1_row)
+
+        # Rig 2 status + Connect Rig 2 on same row
+        rig2_row = QHBoxLayout()
+        rig2_row.setSpacing(6)
+        self._connect_rig2_btn = QPushButton(_("Connect Rig 2"))
+        self._connect_rig2_btn.clicked.connect(self._on_connect_rig2)
+        rig2_row.addWidget(self._rig2_status_label)
+        rig2_row.addStretch()
+        rig2_row.addWidget(self._connect_rig2_btn)
+        status_form.addRow(_("Rig 2:"), rig2_row)
+
+        # Rotator status + Connect Rotator + South Init on same row
+        rot_ctrl_row = QHBoxLayout()
+        rot_ctrl_row.setSpacing(6)
+        self._connect_rot_btn = QPushButton(_("Connect Rotator"))
+        self._connect_rot_btn.clicked.connect(self._on_connect_rotator)
+        self._south_init_cb = QCheckBox(_("South Init"))
+        self._south_init_cb.setToolTip(
+            _(
+                "Rotator starts facing south (180°). "
+                "AZ is offset by 180° so the 0/360° wrap is avoided."
+            )
+        )
+        self._south_init_cb.toggled.connect(self.south_init_changed.emit)
+        rot_ctrl_row.addWidget(self._rot_status_label)
+        rot_ctrl_row.addStretch()
+        rot_ctrl_row.addWidget(self._connect_rot_btn)
+        rot_ctrl_row.addWidget(self._south_init_cb)
+        status_form.addRow(_("Rotator:"), rot_ctrl_row)
+
+        # Cycle
         cycle_row = QHBoxLayout()
         self._cycle_spin = QSpinBox()
         self._cycle_spin.setRange(10, 10000)
@@ -170,37 +243,6 @@ class RadioControlWidget(QWidget):
         status_form.addRow(_("Cycle:"), cycle_row)
 
         layout.addWidget(status_group)
-
-        # Button rows: Rig 1 / Rig 2 on first row, Rotator on second row
-        rig_btn_row = QHBoxLayout()
-        self._connect_rig1_btn = QPushButton(_("Connect Rig 1"))
-        self._connect_rig1_btn.clicked.connect(self._on_connect_rig1)
-        self._connect_rig2_btn = QPushButton(_("Connect Rig 2"))
-        self._connect_rig2_btn.clicked.connect(self._on_connect_rig2)
-        rig_btn_row.addWidget(self._connect_rig1_btn)
-        rig_btn_row.addWidget(self._connect_rig2_btn)
-        layout.addLayout(rig_btn_row)
-
-        rot_btn_row = QHBoxLayout()
-        self._connect_rot_btn = QPushButton(_("Connect Rotator"))
-        self._connect_rot_btn.clicked.connect(self._on_connect_rotator)
-        rot_btn_row.addWidget(self._connect_rot_btn)
-        rot_btn_row.addStretch()
-        layout.addLayout(rot_btn_row)
-
-        # South Init option
-        si_row = QHBoxLayout()
-        self._south_init_cb = QCheckBox(_("South Init"))
-        self._south_init_cb.setToolTip(
-            _(
-                "Rotator starts facing south (180°). "
-                "AZ is offset by 180° so the 0/360° wrap is avoided."
-            )
-        )
-        self._south_init_cb.toggled.connect(self.south_init_changed.emit)
-        si_row.addWidget(self._south_init_cb)
-        si_row.addStretch()
-        layout.addLayout(si_row)
 
         # ── Autotrack ──────────────────────────────────────────────────
         at_group = QGroupBox(_("Autotrack"))
