@@ -577,6 +577,7 @@ class SettingsDialog(QDialog):
         entry_btn_row.addWidget(down_btn)
         right.addLayout(entry_btn_row)
 
+        note_row = QHBoxLayout()
         note = QLabel(
             _(
                 "Each entry specifies a satellite and the transponder to use for\n"
@@ -584,7 +585,35 @@ class SettingsDialog(QDialog):
             )
         )
         note.setWordWrap(True)
-        right.addWidget(note)
+        note_row.addWidget(note)
+
+        _RULES_TOOLTIP = (
+            "Satellite switching rules:\n"
+            "\n"
+            "1. Current satellite is above Min El → keep tracking.\n"
+            "\n"
+            "2. Current satellite drops below Min El:\n"
+            "   a. Another satellite is already visible\n"
+            "      → switch immediately (list order as tiebreak).\n"
+            "   b. No satellite is visible yet\n"
+            "      → switch to the one with the earliest AOS\n"
+            "        (list order as tiebreak on equal AOS).\n"
+            "\n"
+            "3. Overlapping passes: never interrupt a pass in\n"
+            "   progress. Wait for the current satellite's LOS\n"
+            "   before switching."
+        )
+        info_btn = QPushButton("?")
+        info_btn.setFixedSize(22, 22)
+        info_btn.setFlat(True)
+        info_btn.setToolTip(_RULES_TOOLTIP)
+        info_btn.setStyleSheet(
+            "QPushButton { border: 1px solid gray; border-radius: 11px; font-weight: bold; }"
+        )
+        note_row.addWidget(info_btn)
+        note_row.addStretch()
+
+        right.addLayout(note_row)
         outer.addLayout(right)
 
         self._reload_at_lists()
