@@ -482,7 +482,7 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## 実装済み機能一覧（2026年6月1日時点）
+## 実装済み機能一覧（2026年6月4日時点）
 
 - 衛星追尾エンジン（Skyfield）
 - Qt6デスクトップUI（世界地図・レーダー・Pass Chart・Group Pass Chart・Radio Control）
@@ -500,6 +500,21 @@ sudo usermod -aG dialout $USER
 - Upcoming Passes（Target/Groupタブ・カレンダー選択・CSV出力）
 - **Group Pass Chart** — グループ検索結果を衛星別カラーで描画（ホバーでツールチップ表示）
 - カレンダーポップアップ改善（英語ロケール固定・週番号列非表示・To欄はCurrent Timeボタンなし）
+- **AOS/LOS デスクトップ通知**（Linux: notify-send / macOS: osascript / Windows: plyer+PowerShell）
+  - Settings > Notifications タブ: AOS通知ON/OFF・何分前か・LOS通知ON/OFF
+  - Target衛星・Group検索結果の両方に対応
+- **Autotrack（自動順次追尾）**（src/core/autotrack.py）
+  - Settings > Autotrack Lists タブ: リスト作成・衛星＋トランスポンダー登録・並び替え
+  - Radio Control に Autotrack セクション追加（リスト選択・Enable チェック・ステータス表示）
+  - 切り替えロジック: 現在衛星が Min El 以下になったら次の衛星へ自動切替
+  - 同一AOS時はリスト順優先、パス途中の切り替えなし
+  - 使い方説明ツールチップ（?ボタン）付き
+- **CPU負荷最適化**
+  - 世界地図更新を5秒ごとに変更（毎秒→5秒）
+  - `_visible_norads`（フィルター表示中の衛星のみ）で Skyfield 計算
+  - `_sat_name_cache` で毎秒の DB SELECT を排除
+  - `_last_elevations` で仰角データを Autotrack と共有
+- Radio Control レイアウト縦幅圧縮（Name/NORAD・DL/Doppler・UL/Doppler・Mode/CTCSS・AZ/EL を各1行に）
 - CI緑（mypy strict + pytest）
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -534,37 +549,63 @@ CREATE TABLE custom_groups (
 - Range選択: 4h / 8h / 12h / 24h（Target Pass Chartと同じ）
 - UTC/Local 切り替えに連動
 
+### Autotrack 設計（src/core/autotrack.py）
+
+```sql
+CREATE TABLE autotrack_lists (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE autotrack_entries (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id       INTEGER NOT NULL REFERENCES autotrack_lists(id) ON DELETE CASCADE,
+    norad_cat_id  INTEGER NOT NULL,
+    xpdr_uuid     TEXT NOT NULL,   -- 使用するトランスポンダーのUUID
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    notes         TEXT DEFAULT ''
+);
+```
+
+#### 切り替えロジック（AutotrackManager.check()）
+1. 現在衛星が Min El 以上 → 継続追尾
+2. 現在衛星が Min El 以下:
+   a. 別の衛星がすでに可視 → 即座に切り替え（リスト順タイブレーク）
+   b. 可視衛星なし → AOS が最も近い衛星に切り替え（リスト順タイブレーク）
+3. パス途中は切り替えしない（LOS を待つ）
+
+#### 使用前提条件
+1. Settings > Autotrack Lists でリスト作成・衛星登録
+2. Upcoming Passes > Group タブでパス検索実施
+3. Radio Control でリスト選択 → Enable Autotrack をオン
+
 ## 次回の作業候補
 
 ### 継続中・優先度高
 1. **ドップラー補正の実動作確認** — 実機（FTX-1F / FT-991A）での実衛星追尾テスト
-2. **ローテーター設定ダイアログ** — GUI から rotctld 接続・設定を可能にする
-
-### UI・表示機能
-3. **グループ自動追尾** — グループ内衛星を飛来順に自動でリグ・ローテーター制御に引き継ぐ機能（衛星Aの追尾終了 → 次に飛来する衛星Bへ自動切替）
-4. **AOS/LOS デスクトップ通知** — 指定衛星の飛来が近づいたときにOSのプッシュ通知を送る
+2. **ローテーター設定ダイアログの改善** — 接続テストボタン・AZ/ELリミット設定
 
 ### モバイル・Web UI
-5. **スマホ・タブレット画面の確認と調整** — 各種端末・ブラウザでの表示確認、レスポンシブ対応の修正
+3. **スマホ・タブレット画面の確認と調整** — 各種端末・ブラウザでの表示確認、レスポンシブ対応の修正
 
 ### SDR・デジタルモード
-6. **SDR機能の追加（段階的）**
+4. **SDR機能の追加（段階的）**
    - フェーズ1: SSB・CWソフトウェアデモジュレーター（Pythonモジュール）
    - フェーズ2: SSTV / SSDV デコーダー
    - フェーズ3: APRS デコーダー・位置情報表示
    - 各フェーズは独立した拡張モジュールとして追加
 
 ### 配布・ビルド
-7. **Windows・macOS AppImage / インストーラー作成試験** — GitHub Actions CI でのクロスプラットフォームビルド検証
+5. **Windows・macOS AppImage / インストーラー作成試験** — GitHub Actions CI でのクロスプラットフォームビルド検証
 
 ### データ・連携
-8. **Space-Track.org 正式連携** — 認証ありの完全TLEカタログ取得（現状はCelesTrakのみ）
-9. **観測ログ機能** — 実際に追尾・通信した衛星パスを記録・集計・エクスポートする機能
-10. **多言語対応（日本語）** — フェーズ2として日本語UIの追加（翻訳ファイルは準備済み）
+6. **Space-Track.org 正式連携** — 認証ありの完全TLEカタログ取得（現状はCelesTrakのみ）
+7. **観測ログ機能** — 実際に追尾・通信した衛星パスを記録・集計・エクスポートする機能
+8. **多言語対応（日本語）** — フェーズ2として日本語UIの追加（翻訳ファイルは準備済み）
 
 ### ハードウェア連携
-11. **追加リグの実機テスト** — IC-9700・TS-2000・FT-817ND 等でのドップラー制御動作確認（satmode含む）
-12. **WSJT-X / JS8Call 連携** — デジタルモード運用ソフトとの周波数・モード連動（将来）
+9. **追加リグの実機テスト** — IC-9700・TS-2000・FT-817ND 等でのドップラー制御動作確認（satmode含む）
+10. **WSJT-X / JS8Call 連携** — デジタルモード運用ソフトとの周波数・モード連動（将来）
 
 ---
 
