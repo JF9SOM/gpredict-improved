@@ -255,9 +255,55 @@ class RadioControlWidget(QWidget):
         layout.addWidget(status_group)
 
         # ── Autotrack ──────────────────────────────────────────────────
-        at_group = QGroupBox(_("Autotrack"))
-        at_form = QFormLayout(at_group)
-        at_form.setContentsMargins(4, 4, 4, 4)
+        _AUTOTRACK_HELP = (
+            "Autotrack — Sequential Satellite Tracking\n"
+            "\n"
+            "Autotrack automatically switches the rig's Doppler correction\n"
+            "from one satellite to the next as passes begin and end.\n"
+            "\n"
+            "How to use:\n"
+            "  1. Open File > Settings > Autotrack Lists.\n"
+            "  2. Create a list and add satellites, selecting the specific\n"
+            "     transponder (frequency + mode) for each one.\n"
+            "  3. In the Upcoming Passes > Group tab, run a pass search.\n"
+            "     (Autotrack requires a completed search to know AOS times.)\n"
+            "  4. Back here, select your list in the 'List' combo and\n"
+            "     check 'Enable Autotrack'.\n"
+            "\n"
+            "Switching rules:\n"
+            "  • Current satellite above Min El → keep tracking.\n"
+            "  • Current satellite drops below Min El → switch to the\n"
+            "    next visible satellite, or the one with the earliest AOS.\n"
+            "  • List order is used as tiebreak (top = highest priority).\n"
+            "  • A pass already in progress is never interrupted."
+        )
+        at_group = QGroupBox()
+        # Custom title row: "Autotrack" label + "?" help button
+        at_title_row = QHBoxLayout()
+        at_title_row.setContentsMargins(0, 0, 0, 0)
+        at_title_row.setSpacing(4)
+        at_title_lbl = QLabel(f"<b>{_('Autotrack')}</b>")
+        at_help_btn = QPushButton("?")
+        at_help_btn.setFixedSize(18, 18)
+        at_help_btn.setFlat(True)
+        at_help_btn.setToolTip(_AUTOTRACK_HELP)
+        at_help_btn.setStyleSheet(
+            "QPushButton { border: 1px solid gray; border-radius: 9px;"
+            " font-weight: bold; color: #e74c3c; }"
+        )
+        at_title_row.addWidget(at_title_lbl)
+        at_title_row.addWidget(at_help_btn)
+        at_title_row.addStretch()
+        at_group.setLayout(QVBoxLayout())
+        at_group.layout().setContentsMargins(4, 4, 4, 4)  # type: ignore[union-attr]
+        at_group.layout().setSpacing(4)  # type: ignore[union-attr]
+        at_group.layout().addLayout(at_title_row)  # type: ignore[union-attr]
+
+        at_inner = QWidget()
+        at_form = QFormLayout(at_inner)
+        at_form.setContentsMargins(0, 0, 0, 0)
+        at_form.setSpacing(3)
+        at_group.layout().addWidget(at_inner)  # type: ignore[union-attr]
 
         self._at_list_combo = QComboBox()
         self._at_list_combo.setEnabled(False)
