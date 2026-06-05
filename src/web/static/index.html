@@ -149,11 +149,36 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
 .radar-wrap {
   flex: 1;
   display: flex;
+  flex-direction: column;
   justify-content: center;
   align-items: center;
   min-width: 200px;
   min-height: 200px;
   padding: 8px;
+}
+.radar-toolbar {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 4px 4px;
+}
+.compass-btn {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid #30363d;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.compass-btn.north-up {
+  background: #21262d;
+  color: #8b949e;
+}
+.compass-btn.compass-on {
+  background: #2ecc71;
+  color: #0d1117;
+  font-weight: bold;
+  border-color: #2ecc71;
 }
 canvas#radar { background: transparent; }
 
@@ -338,6 +363,11 @@ canvas#radar { background: transparent; }
         </div>
       </div>
       <div class="radar-wrap">
+        <div class="radar-toolbar">
+          <button id="compass-btn" class="compass-btn north-up" onclick="toggleCompass()" title="Toggle North-Up / Compass">
+            <span id="compass-label">N↑ North Up</span>
+          </button>
+        </div>
         <canvas id="radar" width="280" height="280"></canvas>
       </div>
     </div>
@@ -782,6 +812,48 @@ function computePassTrack(p, nPoints = 20) {
     points.push({ az: ((aosAz + t * azDiff) + 360) % 360, el: Math.max(0, el) });
   }
   return points;
+}
+
+/* ── Compass toggle ── */
+let _compassMode = false;
+
+async function toggleCompass() {
+  const btn = document.getElementById('compass-btn');
+  const lbl = document.getElementById('compass-label');
+
+  if (_compassMode) {
+    // Switch back to North-Up
+    _compassMode = false;
+    if (radarView) radarView.setNorthUp(true);
+    btn.className = 'compass-btn north-up';
+    lbl.textContent = 'N↑ North Up';
+    return;
+  }
+
+  // iOS 13+ requires explicit permission for DeviceOrientationEvent
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const perm = await DeviceOrientationEvent.requestPermission();
+      if (perm !== 'granted') {
+        alert('Compass access was denied. Please allow motion & orientation in Settings.');
+        return;
+      }
+      // Register the listener now that permission is granted
+      if (radarView) radarView.activateCompassListener();
+    } catch (e) {
+      alert('Could not request compass permission: ' + e);
+      return;
+    }
+  } else if (typeof DeviceOrientationEvent === 'undefined') {
+    alert('This device does not support compass orientation.');
+    return;
+  }
+
+  _compassMode = true;
+  if (radarView) radarView.setNorthUp(false);
+  btn.className = 'compass-btn compass-on';
+  lbl.textContent = '🧭 Compass';
 }
 
 /* ── Init ── */

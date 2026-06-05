@@ -144,8 +144,8 @@ class RadarView {
 
         const handler = (/** @type {DeviceOrientationEvent} */ e) => {
             if (this._northUp) return;
-            // iOS: webkitCompassHeading (0=北)
-            // Android: alpha は真北からの角度（座標系が逆）
+            // iOS: webkitCompassHeading (0=North, clockwise)
+            // Android: alpha is degrees from north (counter-clockwise), invert it
             const heading = e.webkitCompassHeading != null
                 ? e.webkitCompassHeading
                 : (360 - (e.alpha ?? 0)) % 360;
@@ -153,20 +153,24 @@ class RadarView {
             this._compassAvailable = true;
         };
 
-        // iOS 13+ は許可が必要
-        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-            document.addEventListener('click', () => {
-                DeviceOrientationEvent.requestPermission()
-                    .then(state => {
-                        if (state === 'granted') {
-                            window.addEventListener('deviceorientation', handler, true);
-                            this._compassAvailable = true;
-                        }
-                    })
-                    .catch(() => {});
-            }, { once: true });
-        } else {
+        // iOS 13+ requires explicit permission (requested via the Compass button in index.html).
+        // For non-iOS browsers just register the listener unconditionally.
+        if (typeof DeviceOrientationEvent.requestPermission !== 'function') {
             window.addEventListener('deviceorientation', handler, true);
+        } else {
+            // Store handler so it can be registered after permission is granted
+            this._compassHandler = handler;
+        }
+    }
+
+    /**
+     * Register the deviceorientation listener after iOS permission has been granted.
+     * Called by index.html after DeviceOrientationEvent.requestPermission() succeeds.
+     */
+    activateCompassListener() {
+        if (this._compassHandler) {
+            window.addEventListener('deviceorientation', this._compassHandler, true);
+            this._compassAvailable = true;
         }
     }
 
