@@ -482,12 +482,12 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## 実装済み機能一覧（2026年6月4日時点）
+## 実装済み機能一覧（2026年6月5日時点）
 
 - 衛星追尾エンジン（Skyfield）
 - Qt6デスクトップUI（世界地図・レーダー・Pass Chart・Group Pass Chart・Radio Control）
 - FastAPI内蔵Webサーバー（ポート8080）
-- スマホブラウザUI（グループフィルター・Favorites・Group Pass・レーダー）
+- **スマホブラウザUI**（グループフィルター・Favorites・Group Pass・レーダー・Antenna タブ）
 - Hamlib内蔵リグ制御（Direct/NET Control）・Rig 1 / Rig 2 デュアルリグ対応
 - SATNOGS周波数DB同期・手動追加
 - **コミュニティ周波数DB**（`src/data/community_transmitters.json`）— FT4コーリング周波数など、SATNOGSにない慣習周波数を `source='community'` として管理。SATNOGS同期で上書きされない
@@ -515,6 +515,7 @@ sudo usermod -aG dialout $USER
   - `_sat_name_cache` で毎秒の DB SELECT を排除
   - `_last_elevations` で仰角データを Autotrack と共有
 - Radio Control レイアウト縦幅圧縮（Name/NORAD・DL/Doppler・UL/Doppler・Mode/CTCSS・AZ/EL を各1行に）
+- **スマホ Web UI 大幅強化**（Antenna タブ・コンパス切り替え・RIG 遠隔制御）
 - CI緑（mypy strict + pytest）
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -579,6 +580,62 @@ CREATE TABLE autotrack_entries (
 2. Upcoming Passes > Group タブでパス検索実施
 3. Radio Control でリスト選択 → Enable Autotrack をオン
 
+### スマホブラウザ Web UI（src/web/static/）
+
+#### タブ構成
+| タブ | 内容 |
+|---|---|
+| **Tracking** | 衛星リスト・EL/AZ・Range・レーダー |
+| **Antenna** | AZ/EL 大表示・周波数・トランスポンダー選択・RIG接続 |
+| **Pass Prediction** | パス予測一覧 |
+| **Group Pass** | グループ検索・パス一覧 |
+
+#### Antenna タブ（手動アンテナ追尾用途に特化）
+
+想定ユースケース: スマホで AZ/EL を見ながら八木アンテナを手動で向け、PCでドップラー補正する運用
+
+| 機能 | 詳細 |
+|---|---|
+| **AZ/EL 大表示** | 42px の大きな数字でリアルタイム表示 |
+| **パス進行バー** | AOS〜LOS の進行状況（緑バー）+ LOS カウントダウン |
+| **周波数（読み取り専用）** | Doppler 補正済み DL/UL 周波数とシフト量を表示 |
+| **トランスポンダーカードリスト** | 衛星選択時に自動取得・カード形式で表示・タップで選択 |
+| **Connect/Disconnect RIG** | スマホからリグ接続をトリガー（設定はPC側で事前設定が必要） |
+| **RIG ON/OFF ボタン** | 接続済みリグの Doppler 補正 ON/OFF |
+| **ROT ON/OFF ボタン** | ローテーター接続時のみ表示 |
+
+#### コンパス連動（レーダー North-Up / Compass 切り替え）
+
+- レーダー画面右上の「N↑ North Up」ボタンで切り替え
+- **Android**: HTTP でも動作（即時切り替え）
+- **iOS 16+**: HTTP では `DeviceOrientationEvent` が無効（Apple のセキュリティ制限）。HTTPS が必要
+- **iOS 13–15**: 許可ダイアログ後に使用可能
+
+#### RIG 遠隔制御アーキテクチャ（src/web/rig_state.py）
+
+```python
+# RigWebState — Qt UI スレッド（書き込み）と FastAPI スレッド（読み込み）の共有状態
+rig_connected: bool      # Rig 1 接続状態
+rig_engaged: bool        # Doppler 補正動作中
+dl_hz / ul_hz: float    # 補正済み周波数
+rig_connect_requested    # POST /api/rig/connect でセット → Qt が処理して接続
+rig_disconnect_requested # POST /api/rig/disconnect でセット → Qt が処理して切断
+```
+
+**WebSocket ペイロード拡張**（`/ws/tracking` レスポンスに追加）:
+```json
+{
+  "rig": { "connected": true, "engaged": true, "dl_hz": 435611234, "mode": "SSB" },
+  "rot": { "connected": false }
+}
+```
+
+**REST エンドポイント**:
+- `POST /api/rig/connect` `{norad, xpdr_uuid}` — 衛星・トランスポンダー選択＋接続
+- `POST /api/rig/disconnect` — 切断
+- `POST /api/rig/toggle` — Doppler ON/OFF トグル
+- `POST /api/rot/toggle` — ローテーター ON/OFF トグル
+
 ## 次回の作業候補
 
 ### 継続中・優先度高
@@ -586,7 +643,7 @@ CREATE TABLE autotrack_entries (
 2. **ローテーター設定ダイアログの改善** — 接続テストボタン・AZ/ELリミット設定
 
 ### モバイル・Web UI
-3. **スマホ・タブレット画面の確認と調整** — 各種端末・ブラウザでの表示確認、レスポンシブ対応の修正
+3. **スマホ・タブレット画面の継続確認** — Android 実機でのコンパス連動確認、各種ブラウザでの表示確認
 
 ### SDR・デジタルモード
 4. **SDR機能の追加（段階的）**
@@ -603,8 +660,8 @@ CREATE TABLE autotrack_entries (
 7. **多言語対応（日本語）** — フェーズ2として日本語UIの追加（翻訳ファイルは準備済み）
 
 ### ハードウェア連携
-9. **追加リグの実機テスト** — IC-9700・TS-2000・FT-817ND 等でのドップラー制御動作確認（satmode含む）
-10. **WSJT-X / JS8Call 連携** — デジタルモード運用ソフトとの周波数・モード連動（将来）
+8. **追加リグの実機テスト** — IC-9700・TS-2000・FT-817ND 等でのドップラー制御動作確認（satmode含む）
+9. **WSJT-X / JS8Call 連携** — デジタルモード運用ソフトとの周波数・モード連動（将来）
 
 ---
 
