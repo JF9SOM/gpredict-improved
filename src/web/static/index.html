@@ -156,6 +156,116 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
   min-height: 200px;
   padding: 8px;
 }
+/* ── Antenna tab ── */
+.ant-wrap {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ant-sat-name {
+  font-size: 18px;
+  font-weight: bold;
+  color: #e6edf3;
+  text-align: center;
+}
+.ant-pass-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ant-pass-bar-wrap {
+  flex: 1;
+  height: 8px;
+  background: #30363d;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ant-pass-bar {
+  height: 100%;
+  background: #2ecc71;
+  border-radius: 4px;
+  transition: width 1s linear;
+}
+.ant-los {
+  font-size: 13px;
+  color: #f1c40f;
+  white-space: nowrap;
+  min-width: 60px;
+  text-align: right;
+}
+.ant-azel {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
+.ant-azel-box {
+  flex: 1;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 12px 8px;
+  text-align: center;
+}
+.ant-azel-label {
+  font-size: 13px;
+  color: #8b949e;
+  margin-bottom: 4px;
+}
+.ant-azel-value {
+  font-size: 42px;
+  font-weight: bold;
+  color: #58a6ff;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.ant-freq-block {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ant-freq-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.ant-freq-label {
+  font-size: 12px;
+  color: #8b949e;
+  min-width: 70px;
+}
+.ant-freq-val {
+  font-size: 15px;
+  color: #e6edf3;
+  font-variant-numeric: tabular-nums;
+}
+.ant-freq-doppler {
+  font-size: 12px;
+  color: #58a6ff;
+}
+.ant-ctrl-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.ant-ctrl-btn {
+  flex: 1;
+  padding: 12px 0;
+  border-radius: 10px;
+  border: none;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.ant-ctrl-on  { background: #2ecc71; color: #0d1117; }
+.ant-ctrl-off { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+.ant-ctrl-btn:disabled { opacity: 0.4; cursor: default; }
+
 .radar-toolbar {
   width: 100%;
   display: flex;
@@ -346,6 +456,7 @@ canvas#radar { background: transparent; }
   <div class="content">
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab('track', this)">Tracking</button>
+      <button class="tab-btn" onclick="switchTab('antenna', this)">Antenna</button>
       <button class="tab-btn" onclick="switchTab('passes', this)">Pass Prediction</button>
       <button class="tab-btn" onclick="switchTab('group', this)">Group Pass</button>
     </div>
@@ -400,6 +511,59 @@ canvas#radar { background: transparent; }
           </thead>
           <tbody id="pass-tbody"></tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Antenna tab -->
+    <div id="pane-antenna" class="tab-pane">
+      <div class="ant-wrap">
+        <div class="ant-sat-name" id="ant-sat-name">Select a satellite</div>
+
+        <!-- Pass progress bar + LOS countdown -->
+        <div class="ant-pass-row">
+          <div class="ant-pass-bar-wrap">
+            <div class="ant-pass-bar" id="ant-pass-bar" style="width:0%"></div>
+          </div>
+          <span class="ant-los" id="ant-los">—</span>
+        </div>
+
+        <!-- Large AZ / EL display -->
+        <div class="ant-azel">
+          <div class="ant-azel-box">
+            <div class="ant-azel-label">AZ</div>
+            <div class="ant-azel-value" id="ant-az">—°</div>
+          </div>
+          <div class="ant-azel-box">
+            <div class="ant-azel-label">EL</div>
+            <div class="ant-azel-value" id="ant-el">—°</div>
+          </div>
+        </div>
+
+        <!-- Read-only frequency display -->
+        <div class="ant-freq-block">
+          <div class="ant-freq-row">
+            <span class="ant-freq-label">Downlink</span>
+            <span class="ant-freq-val" id="ant-dl">—</span>
+            <span class="ant-freq-doppler" id="ant-dl-dop"></span>
+          </div>
+          <div class="ant-freq-row">
+            <span class="ant-freq-label">Uplink</span>
+            <span class="ant-freq-val" id="ant-ul">—</span>
+            <span class="ant-freq-doppler" id="ant-ul-dop"></span>
+          </div>
+          <div class="ant-freq-row">
+            <span class="ant-freq-label">Mode</span>
+            <span class="ant-freq-val" id="ant-mode">—</span>
+          </div>
+        </div>
+
+        <!-- RIG / ROT control -->
+        <div class="ant-ctrl-row">
+          <button id="ant-rig-btn" class="ant-ctrl-btn ant-ctrl-off"
+                  onclick="antToggleRig()" disabled>RIG: —</button>
+          <button id="ant-rot-btn" class="ant-ctrl-btn ant-ctrl-off"
+                  onclick="antToggleRot()" disabled style="display:none">ROT: —</button>
+        </div>
       </div>
     </div>
 
@@ -585,6 +749,7 @@ function selectSat(norad, name, liElem) {
   document.querySelectorAll('#sat-list li').forEach(l => l.classList.remove('selected'));
   if (liElem) liElem.classList.add('selected');
   document.getElementById('sat-name').textContent = name;
+  document.getElementById('ant-sat-name').textContent = name;
   resetTrackDisplay();
   connectWS(norad);
   loadPasses(norad);
@@ -783,6 +948,92 @@ function updateTracking(data) {
       losTime: currentPassLos,
     }]);
   }
+  updateAntennaTab(data);
+}
+
+/* ── Antenna tab update ── */
+function fmtHz(hz) {
+  if (hz == null) return '—';
+  return (hz / 1e6).toFixed(6) + ' MHz';
+}
+function fmtDoppler(hz) {
+  if (hz == null) return '';
+  const sign = hz >= 0 ? '+' : '';
+  return `(${sign}${Math.round(hz)} Hz)`;
+}
+
+function updateAntennaTab(data) {
+  // AZ / EL
+  document.getElementById('ant-az').textContent = data.azimuth_deg.toFixed(1) + '°';
+  document.getElementById('ant-el').textContent = data.elevation_deg.toFixed(1) + '°';
+
+  // Pass progress bar and LOS countdown
+  if (currentPassAos && currentPassLos) {
+    const now = Date.now();
+    const aosMs = new Date(currentPassAos).getTime();
+    const losMs = new Date(currentPassLos).getTime();
+    const total = losMs - aosMs;
+    const elapsed = now - aosMs;
+    const pct = Math.max(0, Math.min(100, (elapsed / total) * 100));
+    document.getElementById('ant-pass-bar').style.width = pct + '%';
+    const remaining = Math.max(0, Math.round((losMs - now) / 1000));
+    if (remaining > 0) {
+      const m = Math.floor(remaining / 60);
+      const s = remaining % 60;
+      document.getElementById('ant-los').textContent = `LOS ${m}m${s.toString().padStart(2,'0')}s`;
+    } else {
+      document.getElementById('ant-los').textContent = data.is_above_horizon ? 'In pass' : 'No pass';
+    }
+  } else {
+    document.getElementById('ant-pass-bar').style.width = '0%';
+    document.getElementById('ant-los').textContent = '—';
+  }
+
+  // Frequency (from rig state in payload)
+  const rig = data.rig;
+  if (rig) {
+    document.getElementById('ant-dl').textContent = fmtHz(rig.dl_hz);
+    document.getElementById('ant-dl-dop').textContent = fmtDoppler(rig.dl_doppler_hz);
+    document.getElementById('ant-ul').textContent = fmtHz(rig.ul_hz);
+    document.getElementById('ant-ul-dop').textContent = fmtDoppler(rig.ul_doppler_hz);
+    document.getElementById('ant-mode').textContent = rig.mode || '—';
+
+    // RIG button
+    const rigBtn = document.getElementById('ant-rig-btn');
+    if (rig.connected) {
+      rigBtn.disabled = false;
+      rigBtn.className = 'ant-ctrl-btn ' + (rig.engaged ? 'ant-ctrl-on' : 'ant-ctrl-off');
+      rigBtn.textContent = rig.engaged ? 'RIG: ON' : 'RIG: OFF';
+    } else {
+      rigBtn.disabled = true;
+      rigBtn.className = 'ant-ctrl-btn ant-ctrl-off';
+      rigBtn.textContent = 'RIG: Not connected';
+    }
+  }
+
+  // ROT button (only show when connected)
+  const rot = data.rot;
+  const rotBtn = document.getElementById('ant-rot-btn');
+  if (rot && rot.connected) {
+    rotBtn.style.display = '';
+    rotBtn.disabled = false;
+    rotBtn.className = 'ant-ctrl-btn ' + (rot.engaged ? 'ant-ctrl-on' : 'ant-ctrl-off');
+    rotBtn.textContent = rot.engaged ? 'ROT: ON' : 'ROT: OFF';
+  } else {
+    rotBtn.style.display = 'none';
+  }
+}
+
+async function antToggleRig() {
+  try {
+    await fetch('/api/rig/toggle', { method: 'POST' });
+  } catch (e) { console.warn('RIG toggle failed', e); }
+}
+
+async function antToggleRot() {
+  try {
+    await fetch('/api/rot/toggle', { method: 'POST' });
+  } catch (e) { console.warn('ROT toggle failed', e); }
 }
 
 /* ── Pass track approximation ── */

@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from core.engine import PassPredictor, SatelliteEngine
 from core.location import Location, LocationManager
 from data.tle_manager import TLEManager
+from web.rig_state import RigWebState
 from web.websocket import ConnectionManager
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -201,14 +202,18 @@ def _parse_alt_names(raw: Any) -> list[str]:
         return []
 
 
-def _build_tracking_payload(norad: int, engine: SatelliteEngine | None) -> dict[str, Any]:
+def _build_tracking_payload(
+    norad: int,
+    engine: SatelliteEngine | None,
+    rig_state: RigWebState | None = None,
+) -> dict[str, Any]:
     """Build the tracking data dict to send over WebSocket."""
     if engine is None:
         return {"norad": norad, "error": "engine not available"}
     obs = engine.observe(norad)
     if obs is None:
         return {"norad": norad, "error": "no TLE data"}
-    return {
+    payload: dict[str, Any] = {
         "norad": norad,
         "timestamp": obs.timestamp.isoformat(),
         "elevation_deg": round(obs.elevation_deg, 4),
@@ -217,6 +222,23 @@ def _build_tracking_payload(norad: int, engine: SatelliteEngine | None) -> dict[
         "range_rate_km_s": round(obs.range_rate_km_s, 6),
         "is_above_horizon": obs.is_above_horizon,
     }
+    if rig_state is not None:
+        payload["rig"] = {
+            "connected": rig_state.rig_connected,
+            "engaged": rig_state.rig_engaged,
+            "dl_hz": rig_state.dl_hz,
+            "ul_hz": rig_state.ul_hz,
+            "dl_doppler_hz": rig_state.dl_doppler_hz,
+            "ul_doppler_hz": rig_state.ul_doppler_hz,
+            "mode": rig_state.mode,
+        }
+        payload["rot"] = {
+            "connected": rig_state.rot_connected,
+            "engaged": rig_state.rot_engaged,
+            "az": rig_state.rot_az,
+            "el": rig_state.rot_el,
+        }
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +321,7 @@ def create_app(
     engine: SatelliteEngine | None = None,
     start_time: datetime | None = None,
     location_manager: LocationManager | None = None,
+    rig_state: RigWebState | None = None,
 ) -> FastAPI:
     """
     Create and return a configured FastAPI application.
@@ -713,6 +736,28 @@ def create_app(
         return _location_to_out(loc, location_manager)
 
     # ------------------------------------------------------------------ #
+    # Rig / Rotator control (mobile web UI)
+    # ------------------------------------------------------------------ #
+
+    @app.post("/api/rig/toggle", status_code=204, response_model=None)
+    async def toggle_rig() -> None:
+        """Toggle rig Doppler correction on/off (used by mobile Antenna tab)."""
+        if rig_state is None:
+            raise HTTPException(status_code=503, detail="rig state not available")
+        if not rig_state.rig_connected:
+            raise HTTPException(status_code=409, detail="rig not connected")
+        rig_state.rig_toggle_requested = True
+
+    @app.post("/api/rot/toggle", status_code=204, response_model=None)
+    async def toggle_rot() -> None:
+        """Toggle rotator tracking on/off (used by mobile Antenna tab)."""
+        if rig_state is None:
+            raise HTTPException(status_code=503, detail="rig state not available")
+        if not rig_state.rot_connected:
+            raise HTTPException(status_code=409, detail="rotator not connected")
+        rig_state.rot_toggle_requested = True
+
+    # ------------------------------------------------------------------ #
     # WebSocket — /ws/tracking
     # ------------------------------------------------------------------ #
 
@@ -746,7 +791,7 @@ def create_app(
             while True:
                 await asyncio.sleep(1.0)
                 try:
-                    payload = _build_tracking_payload(norad, engine)
+                    payload = _build_tracking_payload(norad, engine, rig_state)
                 except Exception as exc:
                     logger.warning("WS: payload build error: %s", exc)
                     payload = {"norad": norad, "error": str(exc)}

@@ -245,6 +245,7 @@ class MainWindow(QMainWindow):
         location_manager: LocationManager | None = None,
         fastapi_app: Any | None = None,
         web_port: int = 8080,
+        rig_state: Any | None = None,
     ) -> None:
         """
         Args:
@@ -255,6 +256,7 @@ class MainWindow(QMainWindow):
             location_manager: location manager (QTH shown as unset if None)
             fastapi_app:      FastAPI app (web server not started if None)
             web_port:         web server port number
+            rig_state:        shared RigWebState (written every tick for mobile UI)
         """
         super().__init__()
         self._conn = conn
@@ -310,6 +312,9 @@ class MainWindow(QMainWindow):
         self._ctcss_tone_hz: float | None = None
         # Activation tone for the current satellite (from CTCSS_DB; None if not applicable).
         self._ctcss_activation_hz: float | None = None
+
+        # Shared rig state for mobile web UI
+        self._rig_state = rig_state
 
         # AOS/LOS desktop notifier
         self._notifier = PassNotifier(conn)
@@ -920,6 +925,66 @@ class MainWindow(QMainWindow):
         self._update_statusbar()
         self._check_notifications()
         self._check_autotrack()
+        self._update_rig_web_state()
+
+    def _update_rig_web_state(self) -> None:
+        """Push current rig/rotator state to the shared RigWebState for the mobile web UI."""
+        if self._rig_state is None:
+            return
+        rs = self._rig_state
+
+        # Rig 1
+        rig = self._rig_controller
+        rs.rig_connected = rig is not None and rig.is_connected
+        rs.rig_engaged = rs.rig_connected and self._current_transmitter is not None
+
+        # Frequencies from current transmitter + Doppler
+        if self._current_transmitter is not None and self._selected_norad is not None:
+            obs = self._engine.observe(self._selected_norad) if self._engine else None
+            if obs is not None:
+                dl_nom = self._current_transmitter.get("downlink_low")
+                ul_nom = self._current_transmitter.get("uplink_low")
+                rr = obs.range_rate_km_s
+                if dl_nom:
+                    dl_hz = float(dl_nom)
+                    doppler_dl = -dl_hz * rr / 299792.458
+                    rs.dl_hz = dl_hz + doppler_dl
+                    rs.dl_doppler_hz = doppler_dl
+                else:
+                    rs.dl_hz = rs.dl_doppler_hz = None
+                if ul_nom:
+                    ul_hz = float(ul_nom)
+                    invert = bool(self._current_transmitter.get("invert", False))
+                    doppler_ul = ul_hz * rr / 299792.458 if invert else -ul_hz * rr / 299792.458
+                    rs.ul_hz = ul_hz + doppler_ul
+                    rs.ul_doppler_hz = doppler_ul
+                else:
+                    rs.ul_hz = rs.ul_doppler_hz = None
+            rs.mode = str(self._current_transmitter.get("mode") or "")
+        else:
+            rs.dl_hz = rs.ul_hz = rs.dl_doppler_hz = rs.ul_doppler_hz = None
+            rs.mode = ""
+
+        # Rotator
+        rot = self._rotator_controller
+        rs.rot_connected = rot is not None and rot.is_connected
+        rs.rot_engaged = rs.rot_connected
+
+        # Handle toggle requests from mobile UI
+        if rs.rig_toggle_requested:
+            rs.rig_toggle_requested = False
+            # Toggle by changing _current_transmitter to None or restoring
+            if rs.rig_engaged:
+                self._current_transmitter = None
+            # (re-engage handled by user selecting transponder again)
+        if rs.rot_toggle_requested:
+            rs.rot_toggle_requested = False
+            # Disconnect or reconnect rotator
+            if self._rotator_controller is not None:
+                if self._rotator_controller.is_connected:
+                    self._rotator_controller.disconnect()
+                else:
+                    self._rotator_controller.connect()
 
     def _check_notifications(self) -> None:
         """Fire AOS/LOS desktop notifications for Target and Group passes."""

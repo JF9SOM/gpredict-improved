@@ -38,6 +38,7 @@ from data.tle_manager import TLEManager
 from ui.main_window import MainWindow
 from ui.world_map import prefetch_land_data
 from web.app import create_app
+from web.rig_state import RigWebState
 
 logging.basicConfig(
     level=logging.INFO,
@@ -109,6 +110,9 @@ def main() -> int:
     else:
         logger.info("No saved location — engine not initialized. Set QTH from menu.")
 
+    # Shared rig/rotator state (written by Qt UI, read by FastAPI)
+    rig_state = RigWebState()
+
     # Create FastAPI app
     fastapi_app = create_app(
         conn=conn,
@@ -117,6 +121,7 @@ def main() -> int:
         engine=engine,
         start_time=datetime.now(UTC),
         location_manager=location_manager,
+        rig_state=rig_state,
     )
 
     # Show main window (web server and scheduler also start internally)
@@ -127,6 +132,7 @@ def main() -> int:
         pass_predictor=pass_predictor,
         location_manager=location_manager,
         fastapi_app=fastapi_app,
+        rig_state=rig_state,
     )
     window.show()
 
