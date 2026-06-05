@@ -830,13 +830,29 @@ async function toggleCompass() {
     return;
   }
 
-  // iOS 13+ requires explicit permission for DeviceOrientationEvent
-  if (typeof DeviceOrientationEvent !== 'undefined' &&
-      typeof DeviceOrientationEvent.requestPermission === 'function') {
+  // iOS 16+ blocks DeviceOrientationEvent on plain HTTP (requires HTTPS).
+  // Android Chrome works on HTTP without restriction.
+  if (typeof DeviceOrientationEvent === 'undefined') {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    if (isIOS) {
+      alert(
+        'Compass is not available on iOS over HTTP.\n\n' +
+        'Apple requires HTTPS for motion sensor access (iOS 16+).\n' +
+        'This is a browser security restriction and cannot be bypassed.\n\n' +
+        'Compass works on Android over HTTP.'
+      );
+    } else {
+      alert('This device does not support compass orientation.');
+    }
+    return;
+  }
+
+  // iOS 13–15: requestPermission is available and works over HTTP
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
     try {
       const perm = await DeviceOrientationEvent.requestPermission();
       if (perm !== 'granted') {
-        alert('Compass access was denied. Please allow motion & orientation in Settings.');
+        alert('Compass access was denied.\nPlease allow Motion & Orientation in iOS Settings > Safari.');
         return;
       }
       // Register the listener now that permission is granted
@@ -845,9 +861,6 @@ async function toggleCompass() {
       alert('Could not request compass permission: ' + e);
       return;
     }
-  } else if (typeof DeviceOrientationEvent === 'undefined') {
-    alert('This device does not support compass orientation.');
-    return;
   }
 
   _compassMode = true;
