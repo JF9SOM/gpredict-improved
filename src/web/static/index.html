@@ -157,8 +157,9 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
   padding: 8px;
 }
 /* ── Antenna tab ── */
+#pane-antenna { overflow-y: auto; }
 .ant-wrap {
-  padding: 12px 16px;
+  padding: 12px 16px 24px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -264,7 +265,8 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
 }
 .ant-ctrl-on  { background: #2ecc71; color: #0d1117; }
 .ant-ctrl-off { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
-.ant-ctrl-btn:disabled { opacity: 0.4; cursor: default; }
+.ant-ctrl-btn:disabled { opacity: 0.6; cursor: default; }
+.ant-ctrl-disconnected { background: #21262d; color: #e74c3c; border: 1px solid #e74c3c; }
 
 .radar-toolbar {
   width: 100%;
@@ -559,8 +561,8 @@ canvas#radar { background: transparent; }
 
         <!-- RIG / ROT control -->
         <div class="ant-ctrl-row">
-          <button id="ant-rig-btn" class="ant-ctrl-btn ant-ctrl-off"
-                  onclick="antToggleRig()" disabled>RIG: —</button>
+          <button id="ant-rig-btn" class="ant-ctrl-btn ant-ctrl-disconnected"
+                  onclick="antToggleRig()" disabled>RIG: Disconnected</button>
           <button id="ant-rot-btn" class="ant-ctrl-btn ant-ctrl-off"
                   onclick="antToggleRot()" disabled style="display:none">ROT: —</button>
         </div>
@@ -998,7 +1000,7 @@ function updateAntennaTab(data) {
     document.getElementById('ant-ul-dop').textContent = fmtDoppler(rig.ul_doppler_hz);
     document.getElementById('ant-mode').textContent = rig.mode || '—';
 
-    // RIG button
+    // RIG button — always visible, colour reflects state
     const rigBtn = document.getElementById('ant-rig-btn');
     if (rig.connected) {
       rigBtn.disabled = false;
@@ -1006,8 +1008,8 @@ function updateAntennaTab(data) {
       rigBtn.textContent = rig.engaged ? 'RIG: ON' : 'RIG: OFF';
     } else {
       rigBtn.disabled = true;
-      rigBtn.className = 'ant-ctrl-btn ant-ctrl-off';
-      rigBtn.textContent = 'RIG: Not connected';
+      rigBtn.className = 'ant-ctrl-btn ant-ctrl-disconnected';
+      rigBtn.textContent = 'RIG: Disconnected';
     }
   }
 
