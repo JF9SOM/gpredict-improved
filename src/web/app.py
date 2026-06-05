@@ -757,6 +757,28 @@ def create_app(
             raise HTTPException(status_code=409, detail="rotator not connected")
         rig_state.rot_toggle_requested = True
 
+    class RigConnectIn(BaseModel):
+        """Request body for POST /api/rig/connect."""
+
+        norad: int
+        xpdr_uuid: str
+
+    @app.post("/api/rig/connect", status_code=204, response_model=None)
+    async def rig_connect(body: RigConnectIn) -> None:
+        """Select satellite + transponder and connect rig from mobile UI."""
+        if rig_state is None:
+            raise HTTPException(status_code=503, detail="rig state not available")
+        rig_state.requested_norad = body.norad
+        rig_state.requested_xpdr_uuid = body.xpdr_uuid
+        rig_state.rig_connect_requested = True
+
+    @app.post("/api/rig/disconnect", status_code=204, response_model=None)
+    async def rig_disconnect() -> None:
+        """Disconnect rig from mobile UI."""
+        if rig_state is None:
+            raise HTTPException(status_code=503, detail="rig state not available")
+        rig_state.rig_disconnect_requested = True
+
     # ------------------------------------------------------------------ #
     # WebSocket — /ws/tracking
     # ------------------------------------------------------------------ #

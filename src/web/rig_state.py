@@ -37,3 +37,9 @@ class RigWebState:
         # Toggle request flags — set by REST endpoint, cleared by Qt UI
         self.rig_toggle_requested: bool = False
         self.rot_toggle_requested: bool = False
+
+        # Connect / disconnect requests from mobile UI
+        self.rig_connect_requested: bool = False  # set by POST /api/rig/connect
+        self.rig_disconnect_requested: bool = False  # set by POST /api/rig/disconnect
+        self.requested_norad: int | None = None  # satellite to select
+        self.requested_xpdr_uuid: str | None = None  # transponder to activate

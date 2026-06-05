@@ -266,6 +266,58 @@ header h1 { font-size: 16px; font-weight: 600; color: #58a6ff; }
 .ant-ctrl-on  { background: #2ecc71; color: #0d1117; }
 .ant-ctrl-off { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
 .ant-ctrl-btn:disabled { opacity: 0.6; cursor: default; }
+.ant-section-title {
+  font-size: 12px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+.ant-xpdr-list { display: flex; flex-direction: column; gap: 8px; }
+.ant-xpdr-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ant-xpdr-card:active { background: #1f2937; }
+.ant-xpdr-card.selected {
+  border-color: #2ecc71;
+  background: #0d2318;
+}
+.ant-xpdr-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.ant-xpdr-mode {
+  font-size: 11px;
+  font-weight: bold;
+  background: #30363d;
+  color: #58a6ff;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.ant-xpdr-name {
+  font-size: 14px;
+  color: #e6edf3;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ant-xpdr-inv {
+  font-size: 11px;
+  color: #f1c40f;
+}
+.ant-xpdr-freq {
+  font-size: 12px;
+  color: #8b949e;
+  font-variant-numeric: tabular-nums;
+}
 .ant-ctrl-disconnected { background: #21262d; color: #e74c3c; border: 1px solid #e74c3c; }
 
 .radar-toolbar {
@@ -559,7 +611,21 @@ canvas#radar { background: transparent; }
           </div>
         </div>
 
-        <!-- RIG / ROT control -->
+        <!-- Transponder card list -->
+        <div id="ant-xpdr-section" style="display:none">
+          <div class="ant-section-title">Select Transponder</div>
+          <div id="ant-xpdr-list" class="ant-xpdr-list"></div>
+        </div>
+
+        <!-- Connect / Disconnect RIG -->
+        <div class="ant-ctrl-row">
+          <button id="ant-connect-btn" class="ant-ctrl-btn ant-ctrl-off"
+                  onclick="antConnectRig()" disabled>Connect RIG</button>
+          <button id="ant-disconnect-btn" class="ant-ctrl-btn ant-ctrl-off"
+                  onclick="antDisconnectRig()" style="display:none">Disconnect RIG</button>
+        </div>
+
+        <!-- RIG / ROT status -->
         <div class="ant-ctrl-row">
           <button id="ant-rig-btn" class="ant-ctrl-btn ant-ctrl-disconnected"
                   onclick="antToggleRig()" disabled>RIG: Disconnected</button>
@@ -752,6 +818,7 @@ function selectSat(norad, name, liElem) {
   if (liElem) liElem.classList.add('selected');
   document.getElementById('sat-name').textContent = name;
   document.getElementById('ant-sat-name').textContent = name;
+  loadAntennaXpdrs(norad);
   resetTrackDisplay();
   connectWS(norad);
   loadPasses(norad);
@@ -1006,10 +1073,17 @@ function updateAntennaTab(data) {
       rigBtn.disabled = false;
       rigBtn.className = 'ant-ctrl-btn ' + (rig.engaged ? 'ant-ctrl-on' : 'ant-ctrl-off');
       rigBtn.textContent = rig.engaged ? 'RIG: ON' : 'RIG: OFF';
+      // Show disconnect button, hide connect button
+      document.getElementById('ant-connect-btn').style.display = 'none';
+      document.getElementById('ant-disconnect-btn').style.display = '';
     } else {
       rigBtn.disabled = true;
       rigBtn.className = 'ant-ctrl-btn ant-ctrl-disconnected';
       rigBtn.textContent = 'RIG: Disconnected';
+      // Show connect button, hide disconnect button
+      document.getElementById('ant-connect-btn').style.display = '';
+      document.getElementById('ant-disconnect-btn').style.display = 'none';
+      updateConnectBtn();
     }
   }
 
@@ -1024,6 +1098,95 @@ function updateAntennaTab(data) {
   } else {
     rotBtn.style.display = 'none';
   }
+}
+
+/* ── Transponder card list ── */
+let antXpdrs = [];         // all transponders for current satellite
+let antSelectedXpdr = null; // selected transponder object
+
+async function loadAntennaXpdrs(norad) {
+  antXpdrs = [];
+  antSelectedXpdr = null;
+  const section = document.getElementById('ant-xpdr-section');
+  const list = document.getElementById('ant-xpdr-list');
+  section.style.display = 'none';
+  list.innerHTML = '';
+  updateConnectBtn();
+  if (!norad) return;
+
+  try {
+    const xpdrs = await fetch(`/api/satellites/${norad}/transmitters`).then(r => r.json());
+    // Filter to uplink+downlink transponders only (skip beacon-only)
+    antXpdrs = xpdrs.filter(x => x.alive);
+    if (antXpdrs.length === 0) return;
+
+    antXpdrs.forEach((x, i) => {
+      const card = document.createElement('div');
+      card.className = 'ant-xpdr-card';
+      card.dataset.idx = i;
+      card.onclick = () => selectAntennaXpdr(i, card);
+
+      const dl = x.downlink_low ? (x.downlink_low / 1e6).toFixed(3) + ' MHz' : '—';
+      const ul = x.uplink_low ? (x.uplink_low / 1e6).toFixed(3) + ' MHz' : '—';
+      const inv = x.invert ? '<span class="ant-xpdr-inv">↕ inv</span>' : '';
+      const mode = x.mode || x.type || '?';
+
+      card.innerHTML = `
+        <div class="ant-xpdr-card-header">
+          <span class="ant-xpdr-mode">${mode}</span>
+          <span class="ant-xpdr-name">${x.description}</span>
+          ${inv}
+        </div>
+        <div class="ant-xpdr-freq">DL ${dl}  UL ${ul}</div>
+      `;
+      list.appendChild(card);
+    });
+
+    section.style.display = '';
+    // Auto-select first transponder
+    const firstCard = list.querySelector('.ant-xpdr-card');
+    if (firstCard) selectAntennaXpdr(0, firstCard);
+  } catch (e) { console.warn('Failed to load transponders', e); }
+}
+
+function selectAntennaXpdr(idx, cardEl) {
+  document.querySelectorAll('.ant-xpdr-card').forEach(c => c.classList.remove('selected'));
+  cardEl.classList.add('selected');
+  antSelectedXpdr = antXpdrs[idx] || null;
+  updateConnectBtn();
+}
+
+function updateConnectBtn() {
+  const btn = document.getElementById('ant-connect-btn');
+  const hasXpdr = antSelectedXpdr !== null && selectedNorad !== null;
+  btn.disabled = !hasXpdr;
+  btn.className = 'ant-ctrl-btn ' + (hasXpdr ? 'ant-ctrl-off' : 'ant-ctrl-off');
+}
+
+async function antConnectRig() {
+  if (!antSelectedXpdr || !selectedNorad) return;
+  try {
+    const resp = await fetch('/api/rig/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ norad: selectedNorad, xpdr_uuid: antSelectedXpdr.uuid }),
+    });
+    if (resp.ok) {
+      document.getElementById('ant-connect-btn').style.display = 'none';
+      document.getElementById('ant-disconnect-btn').style.display = '';
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      alert('Connect failed: ' + (err.detail || resp.status));
+    }
+  } catch (e) { alert('Connect error: ' + e); }
+}
+
+async function antDisconnectRig() {
+  try {
+    await fetch('/api/rig/disconnect', { method: 'POST' });
+    document.getElementById('ant-connect-btn').style.display = '';
+    document.getElementById('ant-disconnect-btn').style.display = 'none';
+  } catch (e) { console.warn('Disconnect failed', e); }
 }
 
 async function antToggleRig() {

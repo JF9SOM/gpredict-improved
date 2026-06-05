@@ -979,12 +979,45 @@ class MainWindow(QMainWindow):
             # (re-engage handled by user selecting transponder again)
         if rs.rot_toggle_requested:
             rs.rot_toggle_requested = False
-            # Disconnect or reconnect rotator
             if self._rotator_controller is not None:
                 if self._rotator_controller.is_connected:
                     self._rotator_controller.disconnect()
                 else:
                     self._rotator_controller.connect()
+
+        # Connect request from mobile UI (satellite + transponder already chosen)
+        if rs.rig_connect_requested:
+            rs.rig_connect_requested = False
+            norad = rs.requested_norad
+            xpdr_uuid = rs.requested_xpdr_uuid
+            if norad is not None and xpdr_uuid is not None:
+                self._mobile_rig_connect(norad, xpdr_uuid)
+
+        # Disconnect request from mobile UI
+        if rs.rig_disconnect_requested:
+            rs.rig_disconnect_requested = False
+            self._disconnect_rig()
+            self._radio_control.refresh_status()
+
+    def _mobile_rig_connect(self, norad: int, xpdr_uuid: str) -> None:
+        """Select satellite+transponder and connect rig, triggered from mobile UI."""
+        # 1. Select satellite in list widget (fires _on_sat_selected)
+        self._select_satellite_by_norad(norad)
+
+        # 2. Select transponder by UUID
+        transmitters = self._transmitter_manager.get_transmitters(norad)
+        try:
+            idx = next(i for i, t in enumerate(transmitters) if t["uuid"] == xpdr_uuid)
+        except StopIteration:
+            idx = 0
+        if transmitters:
+            self._radio_control.set_transmitters(transmitters, default_index=idx)
+            # _on_transmitter_changed is triggered by set_transmitters
+
+        # 3. Connect rig if not already connected
+        if self._rig_controller is not None and not self._rig_controller.is_connected:
+            self._rig_controller.connect()
+            self._radio_control.refresh_status()
 
     def _check_notifications(self) -> None:
         """Fire AOS/LOS desktop notifications for Target and Group passes."""
