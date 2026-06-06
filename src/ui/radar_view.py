@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen
@@ -144,6 +144,7 @@ class RadarView(QWidget):
         self._dot_hit_radius: float = 10.0
         self._rot_az: float | None = None
         self._rot_el: float | None = None
+        self._use_utc: bool = True
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -163,6 +164,17 @@ class RadarView(QWidget):
         """Clear all satellites from the radar."""
         self._tracks = []
         self.update()
+
+    def set_use_utc(self, use_utc: bool) -> None:
+        """Switch time display between UTC and local time."""
+        self._use_utc = use_utc
+        self.update()
+
+    def _fmt_time(self, dt: datetime) -> str:
+        """Format a UTC datetime as HH:MM UTC or HH:MM (local)."""
+        if self._use_utc:
+            return dt.astimezone(UTC).strftime("%H:%M") + " UTC"
+        return dt.astimezone().strftime("%H:%M")
 
     def set_rotator_position(self, az: float | None, el: float | None) -> None:
         """Update the rotator current-position marker on the radar.
@@ -335,10 +347,10 @@ class RadarView(QWidget):
         p.setPen(_TRACK_COLOR)
 
         if track.aos_time is not None:
-            p.drawText(int(ax) + 6, int(ay) - 2, f"AOS {track.aos_time.strftime('%H:%M')}")
+            p.drawText(int(ax) + 6, int(ay) - 2, f"AOS {self._fmt_time(track.aos_time)}")
 
         if track.los_time is not None:
-            p.drawText(int(lx) + 6, int(ly) + 10, f"LOS {track.los_time.strftime('%H:%M')}")
+            p.drawText(int(lx) + 6, int(ly) + 10, f"LOS {self._fmt_time(track.los_time)}")
 
     def _draw_satellite(
         self,
@@ -414,15 +426,16 @@ class RadarView(QWidget):
                 # IN PASS: show current pass info in green
                 los_str = ""
                 if track.los_time is not None:
-                    los_str = f"  LOS: {track.los_time.strftime('%H:%M')} UTC"
+                    los_str = f"  LOS: {self._fmt_time(track.los_time)}"
                 text = (
                     f"IN PASS  EL: {track.elevation_deg:.1f}°"
                     f"  AZ: {track.azimuth_deg:.1f}°{los_str}"
                 )
                 p.setPen(QColor("#2ecc71"))
             elif track.aos_time is not None:
-                # Next pass info: "Next: MM/DD HH:MM UTC  Max X.X°  Xm Ys"
-                aos_str = track.aos_time.strftime("%m/%d %H:%M") + " UTC"
+                # Next pass info: "Next: MM/DD HH:MM [UTC]  Max X.X°  Xm Ys"
+                aos_dt = track.aos_time if self._use_utc else track.aos_time.astimezone()
+                aos_str = aos_dt.strftime("%m/%d %H:%M") + (" UTC" if self._use_utc else "")
                 max_el_str = (
                     f"  Max {track.next_max_el:.1f}°" if track.next_max_el is not None else ""
                 )

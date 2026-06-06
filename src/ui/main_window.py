@@ -1925,6 +1925,8 @@ class MainWindow(QMainWindow):
         self._pass_list.set_use_utc(use_utc)
         self._pass_chart.set_use_utc(use_utc)
         self._group_pass_chart.set_use_utc(use_utc)
+        self._radar_view.set_use_utc(use_utc)
+        self._dashboard_view._radar.set_use_utc(use_utc)
 
     def _on_time_zone_changed(self, use_utc: bool) -> None:
         """Persist the time zone preference and propagate to all display widgets."""
@@ -1940,6 +1942,8 @@ class MainWindow(QMainWindow):
         self._pass_list.set_use_utc(use_utc)
         self._pass_chart.set_use_utc(use_utc)
         self._group_pass_chart.set_use_utc(use_utc)
+        self._radar_view.set_use_utc(use_utc)
+        self._dashboard_view._radar.set_use_utc(use_utc)
 
     def _open_url_app_mode(self, url: str) -> None:
         """Open *url* in Chrome/Chromium app mode (no browser chrome/tabs).
