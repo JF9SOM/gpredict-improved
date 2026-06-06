@@ -409,6 +409,8 @@ class WorldMapView(QWidget):
         self._map_pixmap: QPixmap | None = None
         # Zoom mode: None = global view, (center_lat, center_lon, span_deg) = local zoom
         self._zoom_region: tuple[float, float, float] | None = None
+        # When False, lat/lon grid lines and equator line are not drawn
+        self._show_grid: bool = True
 
     def sizeHint(self) -> QSize:
         return QSize(800, 400)
@@ -428,6 +430,12 @@ class WorldMapView(QWidget):
         """Return to global (full-world) view."""
         self._zoom_region = None
         self.update()
+
+    def set_show_grid(self, show: bool) -> None:
+        """Enable or disable lat/lon grid lines and the equator line."""
+        if self._show_grid != show:
+            self._show_grid = show
+            self.update()
 
     def set_satellites(
         self,
@@ -599,23 +607,24 @@ class WorldMapView(QWidget):
                 if len(points) >= 3:
                     p.drawPolygon(QPolygonF(points))
 
-        # Grid lines — 10° intervals in zoom mode, 30° in global mode
-        grid_interval = 10 if self._zoom_region is not None else 30
-        grid_pen = QPen(QColor("#90CAF9"), 1)
-        grid_pen.setStyle(Qt.PenStyle.DashLine)
-        p.setPen(grid_pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for lat in range(-90, 91, grid_interval):
-            _, y = self.latlon_to_xy(float(lat), 0.0, w, h)
-            p.drawLine(0, int(y), int(w), int(y))
-        for lon in range(-180, 181, grid_interval):
-            x, _ = self.latlon_to_xy(0.0, float(lon), w, h)
-            p.drawLine(int(x), 0, int(x), int(h))
+        if self._show_grid:
+            # Grid lines — 10° intervals in zoom mode, 30° in global mode
+            grid_interval = 10 if self._zoom_region is not None else 30
+            grid_pen = QPen(QColor("#90CAF9"), 1)
+            grid_pen.setStyle(Qt.PenStyle.DashLine)
+            p.setPen(grid_pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            for lat in range(-90, 91, grid_interval):
+                _, y = self.latlon_to_xy(float(lat), 0.0, w, h)
+                p.drawLine(0, int(y), int(w), int(y))
+            for lon in range(-180, 181, grid_interval):
+                x, _ = self.latlon_to_xy(0.0, float(lon), w, h)
+                p.drawLine(int(x), 0, int(x), int(h))
 
-        # Equator (gold solid line, emphasized)
-        _, eq_y = self.latlon_to_xy(0.0, 0.0, w, h)
-        p.setPen(QPen(QColor("#FFD700"), 2))
-        p.drawLine(0, int(eq_y), int(w), int(eq_y))
+            # Equator (gold solid line, emphasized)
+            _, eq_y = self.latlon_to_xy(0.0, 0.0, w, h)
+            p.setPen(QPen(QColor("#FFD700"), 2))
+            p.drawLine(0, int(eq_y), int(w), int(eq_y))
 
         # Observer location (star marker)
         if self._observer_lat is not None and self._observer_lon is not None:

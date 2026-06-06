@@ -66,10 +66,11 @@ class DashboardView(QWidget):
         # ── Top: map (left) + radar (right) ────────────────────────────
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Zoomed local map
+        # Zoomed local map — grid lines disabled for a cleaner look
         self._local_map = WorldMapView()
         self._local_map.setMinimumSize(200, 200)
         self._local_map.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._local_map.set_show_grid(False)
         splitter.addWidget(self._local_map)
 
         # Compact radar
