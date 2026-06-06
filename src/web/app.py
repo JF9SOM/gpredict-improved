@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,12 @@ from web.websocket import ConnectionManager
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_FALLBACKS = [
     Path(__file__).parent / "static",
+    # PyInstaller bundle: data collected to web/static relative to _MEIPASS
+    *(
+        [Path(sys._MEIPASS) / "web" / "static"]  # type: ignore[attr-defined]
+        if getattr(sys, "frozen", False)
+        else []
+    ),
     Path("src/web/static"),
 ]
 

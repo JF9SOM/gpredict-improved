@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,8 +23,12 @@ SATNOGS_TRANSMITTERS_URL = f"{SATNOGS_API_BASE}/transmitters/"
 SATNOGS_SATELLITES_URL = f"{SATNOGS_API_BASE}/satellites/"
 
 # Path to the bundled community transmitter frequency database.
-# Maintained in the repository and updated with each app release.
-_COMMUNITY_JSON = Path(__file__).parent / "community_transmitters.json"
+# In a PyInstaller bundle the file is collected to data/ under _MEIPASS.
+_COMMUNITY_JSON = (
+    Path(sys._MEIPASS) / "data" / "community_transmitters.json"  # type: ignore[attr-defined]
+    if getattr(sys, "frozen", False)
+    else Path(__file__).parent / "community_transmitters.json"
+)
 
 # Matches "CTCSS 67.0 Hz" or "CTCSS 100 Hz" in transmitter description text
 _CTCSS_RE = re.compile(r"CTCSS\s+([\d.]+)\s*Hz", re.IGNORECASE)

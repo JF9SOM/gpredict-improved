@@ -15,12 +15,20 @@ Usage:
 from __future__ import annotations
 
 import gettext
+import sys
 import threading
 from pathlib import Path
 
 _DOMAIN = "gpredict_improved"
-# locale/ directory at the project root
-_LOCALE_DIR = Path(__file__).parent.parent.parent / "locale"
+
+# Resolve locale/ directory.  When running from a PyInstaller bundle the
+# _MEIPASS root is the extraction directory, so locale/ lives directly under it.
+# In a normal source checkout it is three levels above this file (project root).
+_LOCALE_DIR = (
+    Path(sys._MEIPASS) / "locale"  # type: ignore[attr-defined]
+    if getattr(sys, "frozen", False)
+    else Path(__file__).parent.parent.parent / "locale"
+)
 
 _lock = threading.Lock()
 _current_lang: str = "en"

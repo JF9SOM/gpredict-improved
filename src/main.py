@@ -18,16 +18,17 @@ import os
 import sys
 from datetime import UTC, datetime
 
-# Ensure only Hamlib 4.7.1 is loaded — not the system package (4.5.5).
-# Loading both simultaneously causes a "Hash collision" fatal error in Hamlib's
-# internal rig registry. Remove the system dist-packages path first so Python
-# cannot find the old _Hamlib.so, then prepend the 4.7.1 site-packages.
-_HAMLIB_SITE = "/opt/hamlib/4.7/lib/python3.12/site-packages"
-_HAMLIB_SYS = "/usr/lib/python3/dist-packages"
-if _HAMLIB_SYS in sys.path:
-    sys.path.remove(_HAMLIB_SYS)
-if os.path.exists(_HAMLIB_SITE) and _HAMLIB_SITE not in sys.path:
-    sys.path.insert(0, _HAMLIB_SITE)
+# On the developer's Linux machine, ensure only Hamlib 4.7.1 is loaded and not
+# the older system package (4.5.5).  Loading both causes a "Hash collision"
+# fatal error in Hamlib's rig registry.  This block is a no-op when running
+# from a PyInstaller bundle or on Windows/macOS where /opt/hamlib does not exist.
+if sys.platform == "linux":
+    _HAMLIB_SITE = "/opt/hamlib/4.7/lib/python3.12/site-packages"
+    _HAMLIB_SYS = "/usr/lib/python3/dist-packages"
+    if _HAMLIB_SYS in sys.path:
+        sys.path.remove(_HAMLIB_SYS)
+    if os.path.exists(_HAMLIB_SITE) and _HAMLIB_SITE not in sys.path:
+        sys.path.insert(0, _HAMLIB_SITE)
 
 from PySide6.QtWidgets import QApplication
 
