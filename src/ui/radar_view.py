@@ -210,14 +210,14 @@ class RadarView(QWidget):
         """Return (center_x, center_y, radius) with bottom margin reserved for status text."""
         w = self.width()
         h = self.height()
-        margin = 70  # reserve space for next-pass info text below circle
-        top_pad = 28  # room above circle for the N cardinal label
-        # Side padding (30px) keeps W/E labels inside the widget boundary.
-        usable_w = w - 30
-        usable_h = h - margin - top_pad
-        r = (min(usable_w, usable_h) - 10) / 2.0
+        status_h = 70  # reserved for next-pass text below circle
+        # Centre the circle in the full widget area.  r is bounded so that:
+        #   - top:    circle + N label (≥20px) fits above cy
+        #   - bottom: circle fits above the status-text area (status_h + 5px gutter)
+        #   - sides:  W/E labels (≥15px gutter) fit inside widget width
         cx = w / 2.0
-        cy = top_pad + r + 5.0
+        cy = h / 2.0
+        r = max(1.0, min(cx - 15.0, cy - 20.0, cy - status_h - 5.0) - 5.0)
         return cx, cy, max(r, 1.0)
 
     def _draw(self, p: QPainter) -> None:
