@@ -977,6 +977,9 @@ class SettingsDialog(QDialog):
         row = conn.execute("SELECT value FROM app_settings WHERE key = 'world_map_file'").fetchone()
         filename = (row["value"] if row and row["value"] else "").strip()
         if not filename:
-            return None
+            # No explicit selection yet — use NASA Topographic 1024px as the default
+            # if already downloaded, otherwise fall back to the built-in polygon map.
+            default_path = _maps_dir() / "nasa-topo_1024.jpg"
+            return str(default_path) if default_path.exists() else None
         path = _maps_dir() / filename
         return str(path) if path.exists() else None

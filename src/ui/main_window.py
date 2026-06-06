@@ -1903,8 +1903,46 @@ class MainWindow(QMainWindow):
             self._on_settings_accepted()
 
     def _apply_world_map(self) -> None:
-        """Apply the world map image selected in Settings to the WorldMapView."""
-        from ui.settings_dialog import SettingsDialog
+        """Apply the world map image selected in Settings to the WorldMapView.
+
+        On first launch (no explicit selection), automatically download the
+        NASA Topographic 1024px map so users see a nice map out of the box.
+        """
+        from ui.settings_dialog import SettingsDialog, _maps_dir
+
+        # Auto-download the default map on first launch if not yet present.
+        row = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'world_map_file'"
+        ).fetchone()
+        if not (row and row["value"]):
+            default_path = _maps_dir() / "nasa-topo_1024.jpg"
+            if not default_path.exists():
+                import threading
+
+                def _download() -> None:
+                    try:
+                        import httpx
+
+                        url = (
+                            "https://raw.githubusercontent.com/csete/gpredict/"
+                            "master/pixmaps/maps/nasa-topo_1024.jpg"
+                        )
+                        with httpx.Client(follow_redirects=True, timeout=30) as client:
+                            resp = client.get(url)
+                            if resp.status_code == 200:
+                                default_path.write_bytes(resp.content)
+                                # Re-apply once download completes
+                                from PySide6.QtCore import QMetaObject, Qt
+
+                                QMetaObject.invokeMethod(
+                                    self,
+                                    "_apply_world_map",
+                                    Qt.ConnectionType.QueuedConnection,
+                                )
+                    except Exception:
+                        pass
+
+                threading.Thread(target=_download, daemon=True).start()
 
         path = SettingsDialog.get_world_map_path(self._conn)
         self._world_map.set_map_image(path)
