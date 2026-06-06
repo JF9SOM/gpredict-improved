@@ -211,7 +211,8 @@ class RadarView(QWidget):
         w = self.width()
         h = self.height()
         margin = 70  # reserve space for next-pass info text
-        r = (min(w, h - margin) - 20) / 2.0
+        # 30px side padding so W/E cardinal labels are not clipped at the widget edge
+        r = (min(w - 30, h - margin) - 20) / 2.0
         cx = w / 2.0
         cy = (h - margin) / 2.0 + 10.0
         return cx, cy, max(r, 1.0)
