@@ -482,10 +482,10 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## 実装済み機能一覧（2026年6月5日時点）
+## 実装済み機能一覧（2026年6月6日時点）
 
 - 衛星追尾エンジン（Skyfield）
-- Qt6デスクトップUI（世界地図・レーダー・Pass Chart・Group Pass Chart・Radio Control）
+- Qt6デスクトップUI（**Dashboard**・世界地図・レーダー・Pass Chart・Group Pass Chart・Radio Control）
 - FastAPI内蔵Webサーバー（ポート8080）
 - **スマホブラウザUI**（グループフィルター・Favorites・Group Pass・レーダー・Antenna タブ）
 - Hamlib内蔵リグ制御（Direct/NET Control）・Rig 1 / Rig 2 デュアルリグ対応
@@ -516,6 +516,10 @@ sudo usermod -aG dialout $USER
   - `_last_elevations` で仰角データを Autotrack と共有
 - Radio Control レイアウト縦幅圧縮（Name/NORAD・DL/Doppler・UL/Doppler・Mode/CTCSS・AZ/EL を各1行に）
 - **スマホ Web UI 大幅強化**（Antenna タブ・コンパス切り替え・RIG 遠隔制御）
+- **Dashboard タブ**（src/ui/dashboard_view.py）— ズームマップ＋レーダー＋ステータスバーの統合ビュー
+  - Dashboard 表示中は Satellite Detail パネルを自動非表示
+  - ズームマップはグリッド線・赤道線を非表示（WorldMapView.set_show_grid(False)）
+  - NASA Topographic 1024px をデフォルト世界地図として採用（初回起動時に自動ダウンロード）
 - CI緑（mypy strict + pytest）
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -541,6 +545,44 @@ CREATE TABLE custom_groups (
 | RS-44 (NORAD 44909) | 435.612 MHz | 145.993 MHz | FT4 | JH1NHK |
 | JO-97 (NORAD 43803) | 145.857 MHz | 435.118 MHz | FT4 | JH1NHK |
 | MO-122 (NORAD 60209) | 435.812 MHz | 145.938 MHz | FT4 | JH1NHK |
+
+### Dashboard タブ（src/ui/dashboard_view.py）
+
+左2/3にズームマップ、右1/3にレーダー、下部に36pxのステータスバーを配置した統合ビュー。
+
+#### レイアウト構造
+
+```
+┌─────────────────────────────┬──────────────┐
+│  WorldMapView（ズーム）      │  RadarView   │
+│  （2/3 幅）                 │  （1/3 幅）  │
+├─────────────────────────────┴──────────────┤
+│  ステータスバー（36px固定）                  │
+│  衛星名 / EL / AZ / Range / 可視 / DL / UL │
+└────────────────────────────────────────────┘
+```
+
+#### 主要な設計判断
+
+- `QSplitter` で左右を分割。`setStretchFactor(0,2) / setStretchFactor(1,1)` + `setSizes([660, 330])` で初期2:1比率を強制
+- Dashboard 表示時は Satellite Detail パネルを非表示: `currentChanged` ではなく起動時に `setVisible(False)` で初期化（`currentChanged` は初期タブでは発火しないため）
+- ズームマップはグリッド線を非表示（`set_show_grid(False)`）— 衛星移動に伴う線のカクカク感を回避
+- `isVisible()` チェックで非表示時の再描画をスキップ（CPU負荷削減）
+- `track_data: SatTrackData | None` パラメータで Radar タブと同一のパス軌跡を表示
+- レーダーの AOS/LOS 時刻表示は `set_use_utc()` で UTC/Local 切り替えに連動
+
+#### WorldMapView への追加 API（src/ui/world_map.py）
+
+| メソッド | 説明 |
+|---|---|
+| `set_show_grid(show: bool)` | グリッド線・赤道線の表示/非表示を切り替え |
+| `set_zoom_region(lat, lon, span_deg)` | 指定座標を中心にズーム表示（デフォルト ±50°） |
+| `clear_zoom()` | グローバルビューに戻す |
+
+#### デフォルト世界地図（NASA Topographic 1024px）
+
+- `settings_dialog.get_world_map_path()`: 明示的な選択がない場合、`nasa-topo_1024.jpg` が存在すればそのパスを返す
+- `main_window._apply_world_map()`: 初回起動時（ファイル未存在）はバックグラウンドスレッドで GPredict リポジトリから自動ダウンロード。完了後 `QMetaObject.invokeMethod` で再適用
 
 ### Group Pass Chart（src/ui/pass_chart.py — GroupPassChartView）
 
