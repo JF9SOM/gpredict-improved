@@ -157,6 +157,7 @@ class DashboardView(QWidget):
         ul_hz: float | None = None,
         dl_doppler: float | None = None,
         ul_doppler: float | None = None,
+        track_data: SatTrackData | None = None,
     ) -> None:
         """Refresh all displays from a new Observation.
 
@@ -168,6 +169,8 @@ class DashboardView(QWidget):
             ul_hz:      Doppler-corrected uplink frequency (Hz)
             dl_doppler: Doppler shift on DL (Hz, for display)
             ul_doppler: Doppler shift on UL (Hz)
+            track_data: Full SatTrackData including pass track and AOS/LOS times.
+                        When provided, the radar shows the same track as the Radar tab.
         """
         if obs is None or self._selected_norad is None:
             self._clear()
@@ -187,17 +190,20 @@ class DashboardView(QWidget):
 
         # ── Radar (skip repaint when tab is hidden) ────────────────────
         if is_visible_tab:
-            track = SatTrackData(
-                name=self._selected_name,
-                norad_cat_id=self._selected_norad,
-                azimuth_deg=obs.azimuth_deg,
-                elevation_deg=obs.elevation_deg,
-                is_visible=obs.is_above_horizon,
-                track=[],
-                aos_time=None,
-                los_time=None,
-            )
-            self._radar.set_tracks([track])
+            if track_data is not None:
+                radar_track = track_data
+            else:
+                radar_track = SatTrackData(
+                    name=self._selected_name,
+                    norad_cat_id=self._selected_norad,
+                    azimuth_deg=obs.azimuth_deg,
+                    elevation_deg=obs.elevation_deg,
+                    is_visible=obs.is_above_horizon,
+                    track=[],
+                    aos_time=None,
+                    los_time=None,
+                )
+            self._radar.set_tracks([radar_track])
 
         # ── Status bar ─────────────────────────────────────────────────
         self._sb_el.setText(f"EL: {obs.elevation_deg:.1f}°")

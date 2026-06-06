@@ -1219,7 +1219,7 @@ class MainWindow(QMainWindow):
             # Dashboard: update map+radar even without a transmitter
             if self._current_transmitter is None:
                 swa = self._engine.subpoint_with_alt(self._selected_norad)
-                self._dashboard_view.update_observation(obs, subpoint=swa)
+                self._dashboard_view.update_observation(obs, subpoint=swa, track_data=track)
 
         # Radio Control: update Doppler correction in real time.
         # Always compute and transmit as long as TLE and frequency data are
@@ -1292,6 +1292,7 @@ class MainWindow(QMainWindow):
                 ul_hz=ul_corr,
                 dl_doppler=dl_shift,
                 ul_doppler=ul_shift,
+                track_data=track,
             )
             # Transmit Doppler-corrected frequencies to the connected rig (regardless of elevation).
             # set_vfo_frequencies() involves TCP communication with recv(), so calling it on the
