@@ -69,6 +69,7 @@ from rig.controller import (
     RigController,
     RotatorController,
 )
+from ui.dashboard_view import DashboardView
 from ui.pass_chart import GroupPassChartView, PassChartView
 from ui.pass_panel import PassPanel
 from ui.radar_view import SAT_COLORS, RadarView, SatTrackData
@@ -422,14 +423,16 @@ class MainWindow(QMainWindow):
         left.setMaximumWidth(240)
         h_splitter.addWidget(left)
 
-        # Centre: tabs (World Map / Radar / Pass Chart / Group Pass Chart / Radio Control)
+        # Centre: tabs (Dashboard / World Map / Radar / Pass Chart / Group Pass Chart / Radio)
         self._tab_widget = QTabWidget()
+        self._dashboard_view = DashboardView()
         self._world_map = WorldMapView()
         self._radar_view = RadarView()
         self._pass_chart = PassChartView()
         self._group_pass_chart = GroupPassChartView()
         self._radio_control = RadioControlWidget()
         self._pass_chart.range_changed.connect(self._on_chart_range_changed)
+        self._dashboard_tab_idx = self._tab_widget.addTab(self._dashboard_view, _("Dashboard"))
         self._tab_widget.addTab(self._world_map, _("World Map"))
         self._tab_widget.addTab(self._radar_view, _("Radar"))
         self._tab_widget.addTab(self._pass_chart, _("Pass Chart"))
@@ -439,9 +442,10 @@ class MainWindow(QMainWindow):
         )
         self._tab_widget.setTabVisible(self._group_chart_tab_idx, False)
         self._tab_widget.addTab(self._radio_control, _("Radio Control"))
+        self._tab_widget.currentChanged.connect(self._on_tab_changed)
         h_splitter.addWidget(self._tab_widget)
 
-        # Right: satellite detail panel
+        # Right: satellite detail panel (hidden when Dashboard tab is active)
         self._detail_panel = SatDetailPanel()
         self._detail_panel.setMinimumWidth(160)
         self._detail_panel.setMaximumWidth(260)
@@ -1123,6 +1127,7 @@ class MainWindow(QMainWindow):
         if self._location_manager is not None and self._location_manager.current is not None:
             loc = self._location_manager.current
             self._world_map.set_observer_location(loc.latitude_deg, loc.longitude_deg)
+            self._dashboard_view.set_observer(loc.latitude_deg, loc.longitude_deg)
 
         if self._engine is None or not self._visible_norads:
             return
@@ -1207,6 +1212,11 @@ class MainWindow(QMainWindow):
             )
             self._radar_view.set_tracks([track])
 
+            # Dashboard: update map+radar even without a transmitter
+            if self._current_transmitter is None:
+                swa = self._engine.subpoint_with_alt(self._selected_norad)
+                self._dashboard_view.update_observation(obs, subpoint=swa)
+
         # Radio Control: update Doppler correction in real time.
         # Always compute and transmit as long as TLE and frequency data are
         # available, regardless of elevation.
@@ -1266,6 +1276,18 @@ class MainWindow(QMainWindow):
                 ul_shift,
                 mode,
                 ctcss_display,
+            )
+            # Update Dashboard status bar with Doppler frequencies
+            swa = self._engine.subpoint_with_alt(self._selected_norad)
+            sat_color = SAT_COLORS[0]
+            self._dashboard_view.update_observation(
+                obs,
+                subpoint=swa,
+                sat_color=sat_color,
+                dl_hz=dl_corr,
+                ul_hz=ul_corr,
+                dl_doppler=dl_shift,
+                ul_doppler=ul_shift,
             )
             # Transmit Doppler-corrected frequencies to the connected rig (regardless of elevation).
             # set_vfo_frequencies() involves TCP communication with recv(), so calling it on the
@@ -1371,6 +1393,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Satellite selection callbacks
     # ------------------------------------------------------------------ #
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Hide the Satellite Detail panel when Dashboard tab is active (more space for map)."""
+        is_dashboard = index == self._dashboard_tab_idx
+        self._detail_panel.setVisible(not is_dashboard)
 
     def _on_filter_changed(self, text: str) -> None:
         """Redraw the satellite list when the filter combo changes."""
@@ -1613,8 +1640,10 @@ class MainWindow(QMainWindow):
             return
         norad = int(item.data(Qt.ItemDataRole.UserRole))
         self._selected_norad = norad
-        self._detail_panel.set_satellite(norad, item.text())
-        self._radio_control.set_satellite(norad, item.text())
+        name = item.text()
+        self._detail_panel.set_satellite(norad, name)
+        self._radio_control.set_satellite(norad, name)
+        self._dashboard_view.set_satellite(norad, name)
         self._refresh_passes()
         self._refresh_radio_control(norad)
 
@@ -1652,6 +1681,7 @@ class MainWindow(QMainWindow):
         """Update _current_transmitter and refresh the display on transponder selection change."""
         self._current_transmitter = xpdr if isinstance(xpdr, dict) else None
         self._current_ctcss_tone = None  # revert to transponder tone on selection change
+        self._dashboard_view.set_transmitter(self._current_transmitter)
         if self._current_transmitter:
             dl = self._current_transmitter.get("downlink_low")
             ul = self._current_transmitter.get("uplink_low")

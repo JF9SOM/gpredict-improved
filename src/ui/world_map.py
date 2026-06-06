@@ -407,9 +407,27 @@ class WorldMapView(QWidget):
         self._visible_norads: set[int] | None = None
         # Optional background map image (replaces polygon rendering when set)
         self._map_pixmap: QPixmap | None = None
+        # Zoom mode: None = global view, (center_lat, center_lon, span_deg) = local zoom
+        self._zoom_region: tuple[float, float, float] | None = None
 
     def sizeHint(self) -> QSize:
         return QSize(800, 400)
+
+    def set_zoom_region(self, center_lat: float, center_lon: float, span_deg: float = 60.0) -> None:
+        """Set a local zoom centered on (center_lat, center_lon).
+
+        Args:
+            center_lat: Center latitude (degrees)
+            center_lon: Center longitude (degrees)
+            span_deg:   Half-span in degrees (default 60 → ±60° lat/lon visible)
+        """
+        self._zoom_region = (center_lat, center_lon, span_deg)
+        self.update()
+
+    def clear_zoom(self) -> None:
+        """Return to global (full-world) view."""
+        self._zoom_region = None
+        self.update()
 
     def set_satellites(
         self,
@@ -489,6 +507,9 @@ class WorldMapView(QWidget):
         """
         Convert latitude/longitude to widget coordinates (equirectangular projection).
 
+        In zoom mode the visible region is clipped to [center ± span_deg].
+        In global mode the full world (-180..180, -90..90) is shown.
+
         Args:
             lat: Latitude (degrees, positive = North)
             lon: Longitude (degrees, positive = East)
@@ -498,6 +519,17 @@ class WorldMapView(QWidget):
         Returns:
             (x, y) widget coordinates
         """
+        if self._zoom_region is not None:
+            clat, clon, span = self._zoom_region
+            # Normalise lon into [clon-span, clon+span]
+            dlon = lon - clon
+            while dlon > 180:
+                dlon -= 360
+            while dlon < -180:
+                dlon += 360
+            x = (dlon + span) / (2.0 * span) * w
+            y = (span - (lat - clat)) / (2.0 * span) * h
+            return x, y
         x = (lon + 180.0) / 360.0 * w
         y = (90.0 - lat) / 180.0 * h
         return x, y
@@ -542,15 +574,16 @@ class WorldMapView(QWidget):
                 if len(points) >= 3:
                     p.drawPolygon(QPolygonF(points))
 
-        # Grid lines (30° intervals, light cyan dashed)
+        # Grid lines — 10° intervals in zoom mode, 30° in global mode
+        grid_interval = 10 if self._zoom_region is not None else 30
         grid_pen = QPen(QColor("#90CAF9"), 1)
         grid_pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(grid_pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        for lat in range(-90, 91, 30):
+        for lat in range(-90, 91, grid_interval):  # type: ignore[arg-type]
             _, y = self.latlon_to_xy(float(lat), 0.0, w, h)
             p.drawLine(0, int(y), int(w), int(y))
-        for lon in range(-180, 181, 30):
+        for lon in range(-180, 181, grid_interval):  # type: ignore[arg-type]
             x, _ = self.latlon_to_xy(0.0, float(lon), w, h)
             p.drawLine(int(x), 0, int(x), int(h))
 
