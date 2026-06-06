@@ -863,11 +863,11 @@ class TestMainWindow:
         assert "GPredict" in w.windowTitle()
 
     def test_has_tab_widget_with_four_tabs(self, qtbot, db, tle_manager) -> None:
-        # Tab count is 5: World Map, Radar, Pass Chart, Group Pass Chart, Radio Control
+        # Tab count is 6: Dashboard, World Map, Radar, Pass Chart, Group Pass Chart, Radio Control
         # (Group Pass Chart tab is hidden by default but still counted)
         w = self._make_window(qtbot, db, tle_manager)
         assert w._tab_widget is not None
-        assert w._tab_widget.count() == 5
+        assert w._tab_widget.count() == 6
 
     def test_tab_has_world_map(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
