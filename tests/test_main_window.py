@@ -972,11 +972,11 @@ class TestMainWindow:
         tm = TLEManager(populated_db)
         w = MainWindow(conn=populated_db, tle_manager=tm)
         qtbot.addWidget(w)
-        assert w._sat_list.count() == 2
+        assert w._sat_list.count() == 5  # 2 from populated_db + 3 community satellites
 
     def test_empty_db_gives_empty_satellite_list(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
-        assert w._sat_list.count() == 0
+        assert w._sat_list.count() == 3  # 3 community satellites always loaded at startup
 
     def test_no_crash_with_none_engine(self, qtbot, db, tle_manager) -> None:
         w = MainWindow(conn=db, tle_manager=tle_manager, engine=None)
@@ -1014,7 +1014,7 @@ class TestMainWindow:
         tm = TLEManager(populated_db)
         w = MainWindow(conn=populated_db, tle_manager=tm)
         qtbot.addWidget(w)
-        assert len(w._all_norads) == 2
+        assert len(w._all_norads) == 5  # 2 from populated_db + 3 community satellites
 
     def test_on_tick_no_crash_empty_db(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
