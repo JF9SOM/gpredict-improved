@@ -580,10 +580,10 @@ class WorldMapView(QWidget):
         grid_pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(grid_pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        for lat in range(-90, 91, grid_interval):  # type: ignore[arg-type]
+        for lat in range(-90, 91, grid_interval):
             _, y = self.latlon_to_xy(float(lat), 0.0, w, h)
             p.drawLine(0, int(y), int(w), int(y))
-        for lon in range(-180, 181, grid_interval):  # type: ignore[arg-type]
+        for lon in range(-180, 181, grid_interval):
             x, _ = self.latlon_to_xy(0.0, float(lon), w, h)
             p.drawLine(int(x), 0, int(x), int(h))
 
