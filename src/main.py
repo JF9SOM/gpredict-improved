@@ -18,6 +18,19 @@ import os
 import sys
 from datetime import UTC, datetime
 
+# In a PyInstaller bundle the Python SSL CA bundle is not present on the system
+# path.  Point httpx (and the stdlib ssl module) at the certifi bundle that was
+# collected into the frozen archive so that HTTPS requests succeed on all
+# platforms (critical for TLE/SATNOGS downloads on macOS and Windows).
+if getattr(sys, "frozen", False):
+    try:
+        import certifi
+
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
+    except ImportError:
+        pass
+
 # On the developer's Linux machine, ensure only Hamlib 4.7.1 is loaded and not
 # the older system package (4.5.5).  Loading both causes a "Hash collision"
 # fatal error in Hamlib's rig registry.  This block is a no-op when running

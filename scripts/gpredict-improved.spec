@@ -115,6 +115,8 @@ hidden_imports = [
     "alembic.config",
     "alembic.runtime",
     "alembic.runtime.migration",
+    # SSL CA bundle (required for httpx HTTPS on macOS/Windows bundles)
+    "certifi",
 ]
 
 # --------------------------------------------------------------------------- #

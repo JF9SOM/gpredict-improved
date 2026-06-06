@@ -49,6 +49,7 @@ dependencies = [
     "python-dateutil>=2.9",
     "shapely>=2.0",             # 世界地図 Natural Earth ポリゴン解析
     "beautifulsoup4>=4.12",     # AMSAT運用状況スクレイピング
+    "certifi>=2024.2",          # CA bundle used by httpx in PyInstaller bundles
 ]
 
 [project.optional-dependencies]
