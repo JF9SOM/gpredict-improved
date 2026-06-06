@@ -74,12 +74,12 @@ class DashboardView(QWidget):
 
         # Compact radar
         self._radar = RadarView()
-        self._radar.setMinimumSize(180, 180)
-        self._radar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self._radar.setMinimumSize(200, 200)
+        self._radar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         splitter.addWidget(self._radar)
 
-        splitter.setStretchFactor(0, 3)  # map gets more space
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(0, 2)  # map : radar = 2 : 1
+        splitter.setStretchFactor(1, 1)
         root.addWidget(splitter, stretch=1)
 
         # ── Bottom: status bar ──────────────────────────────────────────
