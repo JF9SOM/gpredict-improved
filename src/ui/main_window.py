@@ -455,6 +455,10 @@ class MainWindow(QMainWindow):
         h_splitter.setStretchFactor(1, 1)
         h_splitter.setStretchFactor(2, 0)
 
+        # Apply initial visibility: Dashboard is the first tab so currentChanged
+        # won't fire on startup — hide the detail panel explicitly here.
+        self._detail_panel.setVisible(False)
+
         # Bottom: pass prediction list (PassPanel)
         self._pass_list = PassPanel()
         self._pass_list.setMinimumHeight(200)

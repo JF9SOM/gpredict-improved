@@ -80,6 +80,9 @@ class DashboardView(QWidget):
 
         splitter.setStretchFactor(0, 2)  # map : radar = 2 : 1
         splitter.setStretchFactor(1, 1)
+        # Set explicit initial sizes so the radar starts at ~33% regardless of sizeHint.
+        # These are overridden when the user drags the splitter handle.
+        splitter.setSizes([660, 330])
         root.addWidget(splitter, stretch=1)
 
         # ── Bottom: status bar ──────────────────────────────────────────
