@@ -137,6 +137,10 @@ class DashboardView(QWidget):
         """Update the active transponder (for frequency display in status bar)."""
         self._current_transmitter = xpdr
 
+    def set_map_image(self, path: str | None) -> None:
+        """Apply the same background map image that the main WorldMapView uses."""
+        self._local_map.set_map_image(path)
+
     def set_observer(self, lat: float, lon: float) -> None:
         """Update the observer position on the zoomed map."""
         self._local_map.set_observer_location(lat, lon)
@@ -167,9 +171,10 @@ class DashboardView(QWidget):
             return
 
         color = sat_color or QColor("#58a6ff")
+        is_visible_tab = self.isVisible()
 
-        # ── Zoomed map ─────────────────────────────────────────────────
-        if subpoint is not None:
+        # ── Zoomed map (skip repaint when tab is hidden to reduce CPU load) ──
+        if subpoint is not None and is_visible_tab:
             lat, lon, alt_km = subpoint
             self._local_map.set_zoom_region(lat, lon, _ZOOM_SPAN_DEG)
             self._local_map.set_satellites(
@@ -177,18 +182,19 @@ class DashboardView(QWidget):
             )
             self._local_map.draw_footprint(self._selected_norad, lat, lon, alt_km)
 
-        # ── Radar ──────────────────────────────────────────────────────
-        track = SatTrackData(
-            name=self._selected_name,
-            norad_cat_id=self._selected_norad,
-            azimuth_deg=obs.azimuth_deg,
-            elevation_deg=obs.elevation_deg,
-            is_visible=obs.is_above_horizon,
-            track=[],
-            aos_time=None,
-            los_time=None,
-        )
-        self._radar.set_tracks([track])
+        # ── Radar (skip repaint when tab is hidden) ────────────────────
+        if is_visible_tab:
+            track = SatTrackData(
+                name=self._selected_name,
+                norad_cat_id=self._selected_norad,
+                azimuth_deg=obs.azimuth_deg,
+                elevation_deg=obs.elevation_deg,
+                is_visible=obs.is_above_horizon,
+                track=[],
+                aos_time=None,
+                los_time=None,
+            )
+            self._radar.set_tracks([track])
 
         # ── Status bar ─────────────────────────────────────────────────
         self._sb_el.setText(f"EL: {obs.elevation_deg:.1f}°")

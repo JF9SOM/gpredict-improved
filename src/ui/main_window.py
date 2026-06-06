@@ -1903,6 +1903,7 @@ class MainWindow(QMainWindow):
 
         path = SettingsDialog.get_world_map_path(self._conn)
         self._world_map.set_map_image(path)
+        self._dashboard_view.set_map_image(path)
 
     def _apply_time_zone(self) -> None:
         """Load the saved time zone preference and apply it to all time-display widgets."""
