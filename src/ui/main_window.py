@@ -932,18 +932,21 @@ class MainWindow(QMainWindow):
 
     def _on_tick(self) -> None:
         """Timer callback that updates satellite positions and the status bar."""
-        # World map position update is throttled to every MAP_UPDATE_INTERVAL ticks
-        # (default 5 seconds) to reduce Skyfield SGP4 computation load.
-        self._map_tick_counter += 1
-        if self._map_tick_counter >= self._MAP_UPDATE_INTERVAL:
-            self._map_tick_counter = 0
-            self._update_world_map()
+        try:
+            # World map position update is throttled to every MAP_UPDATE_INTERVAL ticks
+            # (default 5 seconds) to reduce Skyfield SGP4 computation load.
+            self._map_tick_counter += 1
+            if self._map_tick_counter >= self._MAP_UPDATE_INTERVAL:
+                self._map_tick_counter = 0
+                self._update_world_map()
 
-        self._update_selected_satellite()
-        self._update_statusbar()
-        self._check_notifications()
-        self._check_autotrack()
-        self._update_rig_web_state()
+            self._update_selected_satellite()
+            self._update_statusbar()
+            self._check_notifications()
+            self._check_autotrack()
+            self._update_rig_web_state()
+        except Exception:
+            logger.exception("_on_tick error")
 
     def _update_rig_web_state(self) -> None:
         """Push current rig/rotator state to the shared RigWebState for the mobile web UI."""

@@ -62,7 +62,20 @@ datas = [
 # Collect certifi CA bundle (cacert.pem) so httpx HTTPS works in the bundle.
 try:
     import certifi as _certifi
+
     datas.append((_certifi.where(), "certifi"))
+except Exception:
+    pass
+
+# Collect Skyfield package data (built-in leap-second / time-scale tables).
+try:
+    import skyfield as _skyfield
+
+    _sf_dir = Path(_skyfield.__file__).parent
+    for _sf_data_dir in ["data"]:
+        _sf_path = _sf_dir / _sf_data_dir
+        if _sf_path.is_dir():
+            datas.append((str(_sf_path), f"skyfield/{_sf_data_dir}"))
 except Exception:
     pass
 
@@ -167,7 +180,7 @@ exe = EXE(  # noqa: F821
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,   # GUI app — no terminal window on Windows/macOS
+    console=False,  # GUI app — no terminal window on Windows/macOS
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,

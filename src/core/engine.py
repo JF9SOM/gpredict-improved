@@ -126,11 +126,18 @@ class SatelliteEngine:
         if sat is None:
             return None
 
-        t = self._to_skyfield_time(at)
-        topo = (sat - self._ground_station).at(t)
-        alt, az, dist = topo.altaz()
+        try:
+            t = self._to_skyfield_time(at)
+            topo = (sat - self._ground_station).at(t)
+            alt, az, dist = topo.altaz()
+            range_rate = self._calc_range_rate(topo)
+        except Exception:
+            import logging as _logging
 
-        range_rate = self._calc_range_rate(topo)
+            _logging.getLogger(__name__).exception(
+                "Skyfield observe() failed for NORAD %s", norad_cat_id
+            )
+            return None
 
         return Observation(
             norad_cat_id=norad_cat_id,
@@ -247,7 +254,16 @@ class SatelliteEngine:
             if norad_cat_id in self._sat_cache:
                 return self._sat_cache[norad_cat_id]
 
-        sat = self._tle_manager.get_earth_satellite(norad_cat_id)
+        try:
+            sat = self._tle_manager.get_earth_satellite(norad_cat_id)
+        except Exception:
+            import logging as _logging
+
+            _logging.getLogger(__name__).exception(
+                "Failed to build EarthSatellite for NORAD %s", norad_cat_id
+            )
+            return None
+
         if sat is None:
             return None
 
