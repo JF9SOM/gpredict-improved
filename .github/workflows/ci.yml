@@ -59,6 +59,8 @@ jobs:
     runs-on: ubuntu-22.04
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,6 +104,8 @@ jobs:
     runs-on: windows-latest
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -165,6 +169,8 @@ jobs:
     runs-on: macos-14
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
