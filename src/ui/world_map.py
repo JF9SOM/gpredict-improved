@@ -572,8 +572,15 @@ class WorldMapView(QWidget):
                 src_w = int((lon_max - lon_min) / 360.0 * pm_w)
                 src_h = int((lat_max - lat_min) / 180.0 * pm_h)
                 p.drawPixmap(
-                    0, 0, int(w), int(h),
-                    self._map_pixmap, src_x, src_y, max(1, src_w), max(1, src_h),
+                    0,
+                    0,
+                    int(w),
+                    int(h),
+                    self._map_pixmap,
+                    src_x,
+                    src_y,
+                    max(1, src_w),
+                    max(1, src_h),
                 )
             else:
                 p.drawPixmap(0, 0, int(w), int(h), self._map_pixmap)
