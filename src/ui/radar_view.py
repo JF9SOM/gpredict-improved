@@ -21,6 +21,8 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from i18n import _
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -428,7 +430,9 @@ class RadarView(QWidget):
                 text = f"Next: {aos_str}{max_el_str}{dur_str}"
                 p.setPen(QColor("#ffffff"))
             else:
-                continue
+                # No upcoming pass found — satellite may never rise from this QTH
+                text = _("No visible passes from this location")
+                p.setPen(QColor("#8b949e"))
 
             p.drawText(
                 0,
