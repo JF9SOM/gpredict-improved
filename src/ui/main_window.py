@@ -359,6 +359,13 @@ class MainWindow(QMainWindow):
         self._radio_control.rotator_connected.connect(self._on_rotator_connected)
         self._radio_control.south_init_changed.connect(self._on_south_init_changed)
         self._restore_satellite_filter()
+        # Load bundled community transmitters immediately (no network required).
+        # This runs on the main thread so satellites are visible before any
+        # background sync completes — important on first launch.
+        try:
+            self._transmitter_manager.load_community_transmitters()
+        except Exception as exc:
+            logger.warning("Community transmitter load failed at startup: %s", exc)
         self._load_satellites()
         self._load_rig_settings()
         self._load_rotator_settings()

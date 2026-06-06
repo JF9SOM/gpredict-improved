@@ -59,6 +59,13 @@ datas = [
     (str(SRC / "data" / "community_transmitters.json"), "data"),
 ]
 
+# Collect certifi CA bundle (cacert.pem) so httpx HTTPS works in the bundle.
+try:
+    import certifi as _certifi
+    datas.append((_certifi.where(), "certifi"))
+except Exception:
+    pass
+
 # --------------------------------------------------------------------------- #
 # Hidden imports (dynamic loaders that PyInstaller cannot auto-detect)
 # --------------------------------------------------------------------------- #

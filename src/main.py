@@ -28,7 +28,7 @@ if getattr(sys, "frozen", False):
 
         os.environ.setdefault("SSL_CERT_FILE", certifi.where())
         os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-    except ImportError:
+    except Exception:
         pass
 
 # On the developer's Linux machine, ensure only Hamlib 4.7.1 is loaded and not
