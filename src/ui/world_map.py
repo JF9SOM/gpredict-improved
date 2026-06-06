@@ -557,8 +557,23 @@ class WorldMapView(QWidget):
         w, h = float(self.width()), float(self.height())
 
         if self._map_pixmap is not None:
-            # Use downloaded map image as background (scaled to fill widget)
-            p.drawPixmap(0, 0, int(w), int(h), self._map_pixmap)
+            if self._zoom_region is not None:
+                # Crop the source image to the visible lat/lon region, then scale to fill.
+                clat, clon, span = self._zoom_region
+                pm_w = self._map_pixmap.width()
+                pm_h = self._map_pixmap.height()
+                # Map image is assumed equirectangular: full lon -180..180, lat 90..-90
+                lon_min = max(-180.0, clon - span)
+                lon_max = min(180.0, clon + span)
+                lat_max = min(90.0, clat + span)
+                lat_min = max(-90.0, clat - span)
+                sx = int((lon_min + 180.0) / 360.0 * pm_w)
+                sy = int((90.0 - lat_max) / 180.0 * pm_h)
+                sw = int((lon_max - lon_min) / 360.0 * pm_w)
+                sh = int((lat_max - lat_min) / 180.0 * pm_h)
+                p.drawPixmap(0, 0, int(w), int(h), self._map_pixmap, sx, sy, max(1, sw), max(1, sh))
+            else:
+                p.drawPixmap(0, 0, int(w), int(h), self._map_pixmap)
         else:
             # Background (ocean: medium blue)
             p.fillRect(0, 0, int(w), int(h), QColor("#1565C0"))
