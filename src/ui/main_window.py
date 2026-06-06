@@ -236,6 +236,8 @@ class MainWindow(QMainWindow):
     _satnogs_not_found: Signal = Signal()
     # Signal used to pass rotator position from a background thread to the UI thread.
     _rot_pos_updated: Signal = Signal(float, float)
+    # Signal fired from the download thread when the default NASA map has been saved.
+    _map_downloaded: Signal = Signal()
 
     def __init__(
         self,
@@ -342,6 +344,7 @@ class MainWindow(QMainWindow):
         self._satellite_list_refresh.connect(self._load_satellites)
         self._rig_error.connect(self._on_rig_error)
         self._satnogs_status.connect(self._on_satnogs_status)
+        self._map_downloaded.connect(self._apply_world_map)
         self._satnogs_open_url.connect(self._open_satnogs_url)
         self._satnogs_not_found.connect(
             lambda: QMessageBox.information(self, "SatNOGS", "SatNOGS page not found")
@@ -1931,14 +1934,8 @@ class MainWindow(QMainWindow):
                             resp = client.get(url)
                             if resp.status_code == 200:
                                 default_path.write_bytes(resp.content)
-                                # Re-apply once download completes
-                                from PySide6.QtCore import QMetaObject, Qt
-
-                                QMetaObject.invokeMethod(
-                                    self,
-                                    "_apply_world_map",
-                                    Qt.ConnectionType.QueuedConnection,
-                                )
+                                # Emit signal so the Qt UI thread re-applies the map.
+                                self._map_downloaded.emit()
                     except Exception:
                         pass
 
