@@ -761,107 +761,69 @@ class WorldMapView(QWidget):
             left_pts.append(QPointF(xl, yl))
             right_pts.append(QPointF(xr, yr))
 
-        # ── Determine if the footprint encompasses a polar cap ─────────────
-        # A "polar cap" means one or more consecutive full-width rows.
-        # When this is combined with a dateline crossing the polygon vertices
-        # become inconsistent (full-width rows have xl=0/xr=w while normal
-        # dateline-crossing rows have inverted x ordering).  We handle these
-        # two zones separately to avoid the gap artefact.
+        # ── Polar-cap detection ────────────────────────────────────────────
+        # A "polar cap" means the footprint extends over the nearest pole so
+        # that some latitude rows are full-width (dlon == 180°).  Full-width
+        # rows already have xl=0, xr=w, so they are handled naturally by the
+        # simple fill_poly below — no separate rectangle or bridging is needed
+        # when the footprint does NOT cross the antimeridian.
+        #
+        # When the footprint DOES cross the antimeridian (dateline crossing),
+        # the non-full-width rows have inverted x ordering (lon0-dlon wraps to
+        # the east/right side, lon0+dlon wraps to the west/left side), so we
+        # must split into two wing polygons.  The polar-cap rows are covered
+        # by a separate full-width rectangle in that case.
         has_polar_cap = any(is_full_width)
 
-        # Find the contiguous full-width zone (always at the topmost or
-        # bottommost latitudes because cos_dlon decreases monotonically toward
-        # the pole closest to the satellite).
-        south_polar_cap = False
-        y_cap_boundary = 0.0  # y-coord of the equator-facing edge of the cap rectangle
-        if has_polar_cap:
-            # First index where full-width starts (scanning south→north, i.e. i=0 is lat_min)
-            fw_first = next(i for i, f in enumerate(is_full_width) if f)
-            fw_last = next((N - i) for i, f in enumerate(reversed(is_full_width)) if f)
-            # fw_first == 0 → cap is at the south (lat_min end); otherwise cap is at the north.
-            south_polar_cap = fw_first == 0
-            # The cap boundary is the full-width row that faces the normal rows:
-            #   south cap → fw_last (the northernmost full-width row)
-            #   north cap → fw_first (the southernmost full-width row)
-            y_cap_boundary = left_pts[fw_last].y() if south_polar_cap else left_pts[fw_first].y()
-        else:
-            fw_first = N + 1
-            fw_last = -1
-
-        # Indices of the normal (non-full-width) rows
+        # Normal (non-full-width) rows — used for dateline-crossing path only
         normal_left = [left_pts[i] for i in range(N + 1) if not is_full_width[i]]
         normal_right = [right_pts[i] for i in range(N + 1) if not is_full_width[i]]
 
-        # Detect dateline crossing using only the normal (non-full-width) rows.
-        # Using the midpoint of the normal rows avoids being fooled by xl=0/xr=w
-        # from polar-cap rows.
+        # Detect dateline crossing using only normal rows to avoid the xl=0/xr=w
+        # values from polar-cap rows giving a false positive.
+        crosses_dateline = False
         if normal_left:
             nm = len(normal_left) // 2
             crosses_dateline = normal_left[nm].x() > normal_right[nm].x()
-        else:
-            crosses_dateline = False
 
         p.setBrush(QColor(100, 200, 255, 140))
         p.setPen(Qt.PenStyle.NoPen)
 
-        if has_polar_cap:
-            # ── Polar-cap zone: full-width rectangle ──────────────────────
-            y_fw_top = left_pts[fw_last].y()
-            y_fw_bot = left_pts[fw_first].y()
-            cap_height = abs(y_fw_bot - y_fw_top) + 1.0
-            p.drawRect(QRectF(0.0, min(y_fw_top, y_fw_bot), w, cap_height))
-
-        if normal_left:
-            if crosses_dateline:
-                # lon_l (left_pts) maps to the RIGHT/east side of the screen;
-                # lon_r (right_pts) maps to the LEFT/west side of the screen.
-                # Use right_pts for the western (x≈0) polygon and
-                # left_pts for the eastern (x≈w) polygon.
-                #
-                # Closing anchor:
-                #   north cap  → anchor at y_cap_boundary (bottom edge of the north cap rect)
-                #   south cap  → no special anchor; polygon closes naturally at the north edge
-                #   no cap     → close at the far end of the normal rows
-                if has_polar_cap and not south_polar_cap:
-                    y_anchor = y_cap_boundary
-                else:
-                    y_anchor = normal_right[-1].y()
-
-                west_poly: list[QPointF] = [QPointF(0.0, normal_right[0].y())]
-                west_poly += normal_right
-                west_poly.append(QPointF(0.0, y_anchor))
-                east_poly: list[QPointF] = [QPointF(w, normal_left[0].y())]
-                east_poly += normal_left
-                east_poly.append(QPointF(w, y_anchor))
-                for poly in (west_poly, east_poly):
-                    if len(poly) >= 3:
-                        p.drawPolygon(QPolygonF(poly))
-            else:
-                # No dateline crossing.
-                # Bridge the gap between the cap rectangle and the normal polygon
-                # by inserting a full-width row at the cap boundary.
-                # The bridge must be on the side that FACES the polar cap:
-                #   south cap → cap is at the beginning (south) of normal rows → prepend
-                #   north cap → cap is at the end (north) of normal rows → append
-                norm_fill = list(normal_left)
-                norm_fill_r = list(normal_right)
-                if has_polar_cap:
-                    bridge_l = QPointF(0.0, y_cap_boundary)
-                    bridge_r = QPointF(w, y_cap_boundary)
-                    if south_polar_cap:
-                        norm_fill = [bridge_l] + norm_fill
-                        norm_fill_r = [bridge_r] + norm_fill_r
-                    else:
-                        norm_fill.append(bridge_l)
-                        norm_fill_r.append(bridge_r)
-                fill_poly = norm_fill + list(reversed(norm_fill_r))
-                if len(fill_poly) >= 3:
-                    p.drawPolygon(QPolygonF(fill_poly))
-        elif not has_polar_cap:
-            # Edge case: all rows are normal, no polar cap.
+        if not crosses_dateline:
+            # ── Simple path: no antimeridian crossing ──────────────────────
+            # left_pts and right_pts already have xl=0/xr=w for every
+            # full-width row, so left_pts + reversed(right_pts) forms a valid
+            # closed polygon that correctly fills both the normal part and the
+            # polar cap in one pass.  No bridging or separate rectangle needed.
             fill_poly = left_pts + list(reversed(right_pts))
             if len(fill_poly) >= 3:
                 p.drawPolygon(QPolygonF(fill_poly))
+        else:
+            # ── Dateline-crossing path ──────────────────────────────────────
+            # Draw the polar-cap band (if any) as a full-width rectangle, then
+            # fill the non-full-width rows as west and east wing polygons.
+            #
+            # left_pts (lon0-dlon) → east/right side of screen (high x)
+            # right_pts (lon0+dlon) → west/left side of screen (low x)
+            if has_polar_cap:
+                fw_first = next(i for i, f in enumerate(is_full_width) if f)
+                fw_last = next(N - i for i, f in enumerate(reversed(is_full_width)) if f)
+                y_a = left_pts[fw_first].y()
+                y_b = left_pts[fw_last].y()
+                p.drawRect(QRectF(0.0, min(y_a, y_b), w, abs(y_b - y_a) + 1.0))
+
+            if normal_left:
+                # Each wing is anchored to x=0 (west) or x=w (east) at both
+                # ends so QPainter fills the area between the curve and the
+                # screen edge — which is exactly the footprint's west or east
+                # half when the antimeridian splits it.
+                y_s = normal_right[0].y()  # "south" (or cap-boundary) end
+                y_n = normal_right[-1].y()  # "north" (or cap-boundary) end
+                west_poly: list[QPointF] = [QPointF(0.0, y_s)] + normal_right + [QPointF(0.0, y_n)]
+                east_poly: list[QPointF] = [QPointF(w, y_s)] + normal_left + [QPointF(w, y_n)]
+                for poly in (west_poly, east_poly):
+                    if len(poly) >= 3:
+                        p.drawPolygon(QPolygonF(poly))
 
         # Outline: draw left and right boundary curves
         # Skip individual segments that jump across the dateline
