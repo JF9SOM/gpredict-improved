@@ -54,10 +54,30 @@ from ui.world_map import prefetch_land_data
 from web.app import create_app
 from web.rig_state import RigWebState
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+
+def _setup_logging() -> None:
+    """Configure logging: always write to stderr; in frozen bundles also write to a log file."""
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+
+    if getattr(sys, "frozen", False):
+        # In a PyInstaller bundle stderr is discarded; write to a log file instead
+        # so the user can inspect it from the macOS/Windows Console or a text editor.
+        from platformdirs import user_log_dir
+
+        log_dir = user_log_dir("GPredict-Improved", "GPredict-Improved")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "gpredict-improved.log")
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter(fmt))
+        handlers.append(file_handler)
+        # Print log location to stderr (visible when launched from Terminal)
+        print(f"[GPredict-Improved] Log file: {log_path}", file=sys.stderr)
+
+    logging.basicConfig(level=logging.INFO, format=fmt, handlers=handlers)
+
+
+_setup_logging()
 logger = logging.getLogger(__name__)
 
 
