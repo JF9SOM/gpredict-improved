@@ -18,12 +18,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QMouseEvent,
     QPainter,
+    QPainterPath,
     QPaintEvent,
     QPen,
     QPixmap,
@@ -684,20 +685,16 @@ class WorldMapView(QWidget):
     def _draw_footprint(self, p: QPainter, w: float, h: float) -> None:
         """Draw the footprint (visibility circle) on the equirectangular map.
 
-        Uses a scanline approach: for each latitude row between lat_min and
-        lat_max, the longitude half-width of the footprint is computed from
-        the spherical law of cosines.  This correctly handles footprints that
-        cross the North or South Pole without any bearing-based sampling
-        artefacts.
+        Uses a per-scanline rectangle approach: for each latitude band the
+        longitude extent is computed from the spherical law of cosines and
+        drawn as one or two QRectF objects accumulated in a QPainterPath.
+        Filling the path once prevents alpha stacking from multiple calls.
 
-        When the entire latitude row lies within the footprint (i.e. the
-        footprint wraps all the way around at that latitude, which happens
-        near the pole when the footprint crosses it), the row is drawn
-        full-width across the map.
-
-        Dateline (antimeridian) crossing is handled by splitting each
-        latitude row into two segments when the longitude range straddles
-        ±180°.
+        This correctly handles all cases without polygon-winding artefacts:
+        - ordinary footprints (no pole, no dateline crossing)
+        - north / south polar cap (footprint encompasses the nearest pole)
+        - antimeridian (dateline) crossing
+        - combined polar cap + dateline crossing
         """
         if self._footprint is None:
             return
@@ -715,30 +712,27 @@ class WorldMapView(QWidget):
         lat_min = max(-90.0, lat0 - rho_deg)
         lat_max = min(90.0, lat0 + rho_deg)
 
-        # Number of latitude samples — enough for a smooth curve at any map size
+        # Sample N+1 latitude values; each consecutive pair forms one scanline band.
         N = 180
         left_pts: list[QPointF] = []
         right_pts: list[QPointF] = []
-        is_full_width: list[bool] = []  # True when dlon >= 180 (polar-cap row)
+        is_full_width: list[bool] = []
 
         for i in range(N + 1):
             lat = lat_min + (lat_max - lat_min) * i / N
             sin_lat = math.sin(math.radians(lat))
             cos_lat = math.cos(math.radians(lat))
 
-            # cos(Δlon) from the spherical law of cosines for sides:
+            # Spherical law of cosines:
             #   cos(rho) = sin(lat0)*sin(lat) + cos(lat0)*cos(lat)*cos(Δlon)
             denom = cos_lat0 * cos_lat
             if abs(denom) < 1e-10:
-                # At the exact pole: entire row is within footprint
                 dlon = 180.0
             else:
                 cos_dlon = (cos_rho - sin_lat0 * sin_lat) / denom
                 if cos_dlon <= -1.0:
-                    # Entire longitude row lies within the footprint
                     dlon = 180.0
                 elif cos_dlon >= 1.0:
-                    # This latitude is outside the footprint (numerical edge)
                     dlon = 0.0
                 else:
                     dlon = math.degrees(math.acos(cos_dlon))
@@ -747,83 +741,43 @@ class WorldMapView(QWidget):
             is_full_width.append(full_width)
 
             if full_width:
-                # Full-width row: the footprint spans all longitudes at this latitude.
-                # Computing lon_l/lon_r as lon0±180° would map both edges to the same
-                # antimeridian point (which may be far off-screen in zoom mode), causing
-                # the polygon to collapse.  Use explicit widget-edge x coordinates instead.
                 _, yl = self.latlon_to_xy(lat, lon0, w, h)
-                xl, xr, yr = 0.0, w, yl
+                xl, xr = 0.0, w
             else:
                 lon_l = ((lon0 - dlon + 180.0) % 360.0) - 180.0
                 lon_r = ((lon0 + dlon + 180.0) % 360.0) - 180.0
                 xl, yl = self.latlon_to_xy(lat, lon_l, w, h)
-                xr, yr = self.latlon_to_xy(lat, lon_r, w, h)
+                xr, _ = self.latlon_to_xy(lat, lon_r, w, h)
             left_pts.append(QPointF(xl, yl))
-            right_pts.append(QPointF(xr, yr))
+            right_pts.append(QPointF(xr, yl))
 
-        # ── Polar-cap detection ────────────────────────────────────────────
-        # A "polar cap" means the footprint extends over the nearest pole so
-        # that some latitude rows are full-width (dlon == 180°).  Full-width
-        # rows already have xl=0, xr=w, so they are handled naturally by the
-        # simple fill_poly below — no separate rectangle or bridging is needed
-        # when the footprint does NOT cross the antimeridian.
-        #
-        # When the footprint DOES cross the antimeridian (dateline crossing),
-        # the non-full-width rows have inverted x ordering (lon0-dlon wraps to
-        # the east/right side, lon0+dlon wraps to the west/left side), so we
-        # must split into two wing polygons.  The polar-cap rows are covered
-        # by a separate full-width rectangle in that case.
-        has_polar_cap = any(is_full_width)
+        # ── Fill: one rectangle per latitude band ─────────────────────────
+        # Each band [i, i+1] is drawn as:
+        #   full-width → one full-width rect
+        #   xl <= xr   → one interior rect (no dateline crossing)
+        #   xl >  xr   → two edge rects (dateline crossing: lon0-dlon wrapped
+        #                to east/right, lon0+dlon wrapped to west/left)
+        # All rects are added to a QPainterPath and filled once to avoid
+        # alpha accumulation from overlapping draw calls.
+        fill_path = QPainterPath()
+        for i in range(N):
+            yt = min(left_pts[i].y(), left_pts[i + 1].y())
+            yb = max(left_pts[i].y(), left_pts[i + 1].y())
+            row_h = max(yb - yt, 1.0)
+            xl_i = left_pts[i].x()
+            xr_i = right_pts[i].x()
 
-        # Normal (non-full-width) rows — used for dateline-crossing path only
-        normal_left = [left_pts[i] for i in range(N + 1) if not is_full_width[i]]
-        normal_right = [right_pts[i] for i in range(N + 1) if not is_full_width[i]]
+            if is_full_width[i]:
+                fill_path.addRect(0.0, yt, w, row_h)
+            elif xl_i <= xr_i:
+                fill_path.addRect(xl_i, yt, max(xr_i - xl_i, 1.0), row_h)
+            else:
+                # Dateline crossing: two strips at the screen edges
+                fill_path.addRect(0.0, yt, max(xr_i, 1.0), row_h)
+                fill_path.addRect(xl_i, yt, max(w - xl_i, 1.0), row_h)
 
-        # Detect dateline crossing using only normal rows to avoid the xl=0/xr=w
-        # values from polar-cap rows giving a false positive.
-        crosses_dateline = False
-        if normal_left:
-            nm = len(normal_left) // 2
-            crosses_dateline = normal_left[nm].x() > normal_right[nm].x()
-
-        p.setBrush(QColor(100, 200, 255, 140))
-        p.setPen(Qt.PenStyle.NoPen)
-
-        if not crosses_dateline:
-            # ── Simple path: no antimeridian crossing ──────────────────────
-            # left_pts and right_pts already have xl=0/xr=w for every
-            # full-width row, so left_pts + reversed(right_pts) forms a valid
-            # closed polygon that correctly fills both the normal part and the
-            # polar cap in one pass.  No bridging or separate rectangle needed.
-            fill_poly = left_pts + list(reversed(right_pts))
-            if len(fill_poly) >= 3:
-                p.drawPolygon(QPolygonF(fill_poly))
-        else:
-            # ── Dateline-crossing path ──────────────────────────────────────
-            # Draw the polar-cap band (if any) as a full-width rectangle, then
-            # fill the non-full-width rows as west and east wing polygons.
-            #
-            # left_pts (lon0-dlon) → east/right side of screen (high x)
-            # right_pts (lon0+dlon) → west/left side of screen (low x)
-            if has_polar_cap:
-                fw_first = next(i for i, f in enumerate(is_full_width) if f)
-                fw_last = next(N - i for i, f in enumerate(reversed(is_full_width)) if f)
-                y_a = left_pts[fw_first].y()
-                y_b = left_pts[fw_last].y()
-                p.drawRect(QRectF(0.0, min(y_a, y_b), w, abs(y_b - y_a) + 1.0))
-
-            if normal_left:
-                # Each wing is anchored to x=0 (west) or x=w (east) at both
-                # ends so QPainter fills the area between the curve and the
-                # screen edge — which is exactly the footprint's west or east
-                # half when the antimeridian splits it.
-                y_s = normal_right[0].y()  # "south" (or cap-boundary) end
-                y_n = normal_right[-1].y()  # "north" (or cap-boundary) end
-                west_poly: list[QPointF] = [QPointF(0.0, y_s)] + normal_right + [QPointF(0.0, y_n)]
-                east_poly: list[QPointF] = [QPointF(w, y_s)] + normal_left + [QPointF(w, y_n)]
-                for poly in (west_poly, east_poly):
-                    if len(poly) >= 3:
-                        p.drawPolygon(QPolygonF(poly))
+        fill_path.setFillRule(Qt.FillRule.WindingFill)
+        p.fillPath(fill_path, QColor(100, 200, 255, 140))
 
         # Outline: draw left and right boundary curves
         # Skip individual segments that jump across the dateline
