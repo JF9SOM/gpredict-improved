@@ -98,7 +98,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/GPredict-Improved-x86_64.AppImage
-          prerelease: true
           make_latest: true
 
   build-windows:
@@ -165,7 +164,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/GPredict-Improved-Windows.zip
-          prerelease: true
           make_latest: true
 
   build-macos:
@@ -206,5 +204,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/GPredict-Improved.dmg
-          prerelease: true
           make_latest: true
