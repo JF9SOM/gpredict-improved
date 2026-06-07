@@ -744,7 +744,18 @@ class TransmitterManager:
                             )
                         stats["updated"] += 1
                     else:
-                        stats["skipped"] += 1
+                        # Satellite not yet in DB (fresh install or new launch).
+                        # Insert it so TLE fetch and transmitter sync can reference it.
+                        # Provisional-NORAD remnants (is_remnant=True) are hidden immediately;
+                        # regular satellites start visible (is_hidden=0).
+                        hidden = 2 if is_remnant else 0
+                        self._conn.execute(
+                            "INSERT OR IGNORE INTO satellites"
+                            " (norad_cat_id, name, alt_names, status, is_hidden, updated_at)"
+                            " VALUES (?, ?, ?, ?, ?, ?)",
+                            (norad, name, alt_names_json, status, hidden, now),
+                        )
+                        stats["updated"] += 1
 
                     total_processed += 1
                     if progress_callback:

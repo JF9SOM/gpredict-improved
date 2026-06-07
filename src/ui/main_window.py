@@ -852,16 +852,14 @@ class MainWindow(QMainWindow):
         if self._amsat_fetcher.is_stale():
             threading.Thread(target=self._refresh_amsat_sync, daemon=True).start()
 
-        # On startup, fetch CelesTrak active TLEs if last run was >24 hours ago
-        if self._tle_manager.is_active_tle_stale():
-            threading.Thread(target=self._refresh_active_tle_sync, daemon=True).start()
-
         # On startup, auto-sync if there are no transmitters yet
         count = self._conn.execute("SELECT COUNT(*) FROM transmitters").fetchone()[0]
         if count == 0:
             threading.Thread(target=self._refresh_satnogs_sync, daemon=True).start()
 
-        # Always sync satellite names and status from SATNOGS in the background on startup
+        # Always sync satellite names (inserts new satellites too) and then fetch TLEs.
+        # Active-TLE fetch runs inside _refresh_satellite_names_sync so it is guaranteed
+        # to start only after satellite rows are present in the DB.
         threading.Thread(target=self._refresh_satellite_names_sync, daemon=True).start()
 
     def _refresh_tle_sync(self) -> None:
@@ -924,7 +922,15 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             logger.warning("Community transmitter load failed: %s", exc)
 
+        # Refresh the satellite list now that names are synced (includes new inserts).
         self._satellite_list_refresh.emit()
+
+        # Fetch active TLEs here (after satellite rows are in the DB) so that
+        # Phase 1 CelesTrak bulk download and Phase 2 SATNOGS fallback can match rows.
+        if self._tle_manager.is_active_tle_stale():
+            self._refresh_active_tle_sync()
+        else:
+            logger.info("Active TLE cache is fresh — skipping fetch.")
 
     # ------------------------------------------------------------------ #
     # Timer callback (every 1 second)
