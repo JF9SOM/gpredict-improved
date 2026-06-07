@@ -30,6 +30,7 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QIcon,
     QPixmap,
 )
 from PySide6.QtWidgets import (
@@ -238,6 +239,8 @@ class MainWindow(QMainWindow):
     _rot_pos_updated: Signal = Signal(float, float)
     # Signal fired from the download thread when the default NASA map has been saved.
     _map_downloaded: Signal = Signal()
+    # Signal to update sync progress label from a background thread (empty string = hide).
+    _sync_progress: Signal = Signal(str)
 
     def __init__(
         self,
@@ -329,6 +332,8 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("GPredict-Improved")
         self.resize(1280, 800)
+        self._set_app_icon()
+        self._sync_progress.connect(self._on_sync_progress)
 
         self._build_ui()
         self._build_menu()
@@ -542,6 +547,31 @@ class MainWindow(QMainWindow):
             help_menu.addAction(_("About"), self._on_about)
             help_menu.addAction(_("GitHub"), self._on_github)
 
+    def _set_app_icon(self) -> None:
+        """Set the application window icon from the bundled assets."""
+        from pathlib import Path
+
+        # Locate icon: PyInstaller bundle uses _MEIPASS, dev uses assets/ in repo root
+        if getattr(sys, "frozen", False):
+            icon_path = Path(sys._MEIPASS) / "assets" / "icon_256.png"
+        else:
+            icon_path = Path(__file__).parent.parent.parent / "assets" / "icon_256.png"
+
+        if icon_path.exists():
+            icon = QIcon(str(icon_path))
+            self.setWindowIcon(icon)
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.setWindowIcon(icon)
+
+    def _on_sync_progress(self, text: str) -> None:
+        """Update the sync progress label in the status bar (called on UI thread)."""
+        if text:
+            self._sync_label.setText(text)
+            self._sync_label.setVisible(True)
+        else:
+            self._sync_label.setVisible(False)
+
     def _build_statusbar(self) -> None:
         """Build the status bar."""
         sb = self.statusBar()
@@ -549,6 +579,9 @@ class MainWindow(QMainWindow):
         self._qth_label = QLabel("QTH: Not set")
         self._tle_label = QLabel("")
         self._filter_label = QLabel("Showing: All")
+        self._sync_label = QLabel("")
+        self._sync_label.setStyleSheet("color: #f0a500; font-style: italic;")
+        self._sync_label.setVisible(False)
         self._url_label = QLabel("")
         self._qr_button = QPushButton("QR")
         self._qr_button.setFlat(True)
@@ -562,6 +595,7 @@ class MainWindow(QMainWindow):
             sb.addWidget(self._qth_label)
             sb.addWidget(self._tle_label)
             sb.addWidget(self._filter_label)
+            sb.addWidget(self._sync_label)
             sb.addPermanentWidget(self._url_label)
             sb.addPermanentWidget(self._qr_button)
             sb.addPermanentWidget(self._rig_label)
@@ -896,8 +930,15 @@ class MainWindow(QMainWindow):
           3. fetch_legacy_tles() — one-time check for NORAD < 10000 satellites;
              hides those no longer tracked by CelesTrak (fast no-op after first run)
         """
+        self._sync_progress.emit("🛰 Syncing satellites from SATNOGS...")
+
+        def _sat_progress(n: int) -> None:
+            self._sync_progress.emit(f"🛰 Syncing satellites... ({n:,})")
+
         try:
-            result = asyncio.run(self._transmitter_manager.sync_satellite_names())
+            result = asyncio.run(
+                self._transmitter_manager.sync_satellite_names(progress_callback=_sat_progress)
+            )
             logger.info("SATNOGS satellite names sync completed: %s", result)
         except Exception as exc:
             logger.warning("SATNOGS satellite names sync failed: %s", exc)
@@ -928,6 +969,7 @@ class MainWindow(QMainWindow):
 
         # Refresh the satellite list now that names are synced (includes new inserts).
         self._satellite_list_refresh.emit()
+        self._sync_progress.emit("")  # Hide sync label once satellite list is ready
 
         # Fetch active TLEs here (after satellite rows are in the DB) so that
         # Phase 1 CelesTrak bulk download and Phase 2 SATNOGS fallback can match rows.

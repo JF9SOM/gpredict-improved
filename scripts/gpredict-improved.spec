@@ -57,6 +57,8 @@ datas = [
     (str(ROOT / "locale"), "locale"),
     # Community frequency database
     (str(SRC / "data" / "community_transmitters.json"), "data"),
+    # App icon PNGs (used by Qt window icon at runtime on all platforms)
+    (str(ROOT / "assets"), "assets"),
 ]
 
 # Collect certifi CA bundle (cacert.pem) so httpx HTTPS works in the bundle.
@@ -170,6 +172,15 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)  # noqa: F821
 # --------------------------------------------------------------------------- #
 # Executable
 # --------------------------------------------------------------------------- #
+# Platform-specific icon path
+_icon_dir = ROOT / "assets"
+if sys.platform == "win32":
+    _exe_icon = str(_icon_dir / "icon.ico") if (_icon_dir / "icon.ico").exists() else None
+elif sys.platform == "darwin":
+    _exe_icon = str(_icon_dir / "icon.icns") if (_icon_dir / "icon.icns").exists() else None
+else:
+    _exe_icon = str(_icon_dir / "icon_256.png") if (_icon_dir / "icon_256.png").exists() else None
+
 exe = EXE(  # noqa: F821
     pyz,
     a.scripts,
@@ -185,6 +196,7 @@ exe = EXE(  # noqa: F821
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=_exe_icon,
 )
 
 coll = COLLECT(  # noqa: F821
@@ -203,7 +215,7 @@ if sys.platform == "darwin":
     app = BUNDLE(  # noqa: F821
         coll,
         name="GPredict-Improved.app",
-        icon=None,
+        icon=_exe_icon,
         bundle_identifier="org.gpredict.improved",
         info_plist={
             "NSPrincipalClass": "NSApplication",
