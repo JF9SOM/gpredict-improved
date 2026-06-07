@@ -733,11 +733,18 @@ class WorldMapView(QWidget):
                 else:
                     dlon = math.degrees(math.acos(cos_dlon))
 
-            lon_l = ((lon0 - dlon + 180.0) % 360.0) - 180.0
-            lon_r = ((lon0 + dlon + 180.0) % 360.0) - 180.0
-
-            xl, yl = self.latlon_to_xy(lat, lon_l, w, h)
-            xr, yr = self.latlon_to_xy(lat, lon_r, w, h)
+            if dlon >= 180.0:
+                # Full-width row: the footprint spans all longitudes at this latitude.
+                # Computing lon_l/lon_r as lon0±180° would map both edges to the same
+                # antimeridian point (which may be far off-screen in zoom mode), causing
+                # the polygon to collapse.  Use explicit widget-edge x coordinates instead.
+                _, yl = self.latlon_to_xy(lat, lon0, w, h)
+                xl, xr, yr = 0.0, w, yl
+            else:
+                lon_l = ((lon0 - dlon + 180.0) % 360.0) - 180.0
+                lon_r = ((lon0 + dlon + 180.0) % 360.0) - 180.0
+                xl, yl = self.latlon_to_xy(lat, lon_l, w, h)
+                xr, yr = self.latlon_to_xy(lat, lon_r, w, h)
             left_pts.append(QPointF(xl, yl))
             right_pts.append(QPointF(xr, yr))
 

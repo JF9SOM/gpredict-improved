@@ -221,40 +221,53 @@ class DashboardView(QWidget):
                 self._zoom_lat, self._zoom_lon = lat, lon
                 self._prev_sat_lat, self._prev_sat_lon = lat, lon
             else:
+                prev_lat = self._prev_sat_lat if self._prev_sat_lat is not None else lat
+                prev_lon = self._prev_sat_lon if self._prev_sat_lon is not None else lon
+
                 # --- velocity estimate (degrees/s, longitude wrapped) ---
-                v_lat = lat - (self._prev_sat_lat or lat)
-                raw_v_lon = lon - (self._prev_sat_lon or lon)
+                v_lat = lat - prev_lat
+                raw_v_lon = lon - prev_lon
                 if raw_v_lon > 180.0:
                     raw_v_lon -= 360.0
                 elif raw_v_lon < -180.0:
                     raw_v_lon += 360.0
                 v_lon = raw_v_lon
 
-                # --- predicted target position ---
-                tgt_lat = lat + v_lat * self._ZOOM_LEAD_S
-                tgt_lon = lon + v_lon * self._ZOOM_LEAD_S
-                # Clamp latitude to [-90, 90]
-                tgt_lat = max(-90.0, min(90.0, tgt_lat))
-                # Wrap longitude to [-180, 180]
-                if tgt_lon > 180.0:
-                    tgt_lon -= 360.0
-                elif tgt_lon < -180.0:
-                    tgt_lon += 360.0
+                # Guard against stale previous position from hidden tab: if the
+                # satellite appears to have moved faster than physically possible
+                # (~0.1 deg/s), clamp velocity to zero and snap the zoom center.
+                _MAX_V = 0.15  # degrees/s (well above any LEO ground track speed)
+                if abs(v_lat) > _MAX_V or abs(v_lon) > _MAX_V:
+                    self._zoom_lat, self._zoom_lon = lat, lon
+                else:
+                    # --- predicted target position ---
+                    tgt_lat = lat + v_lat * self._ZOOM_LEAD_S
+                    tgt_lon = lon + v_lon * self._ZOOM_LEAD_S
+                    # Clamp latitude to [-90, 90]
+                    tgt_lat = max(-90.0, min(90.0, tgt_lat))
+                    # Wrap longitude to [-180, 180]
+                    if tgt_lon > 180.0:
+                        tgt_lon -= 360.0
+                    elif tgt_lon < -180.0:
+                        tgt_lon += 360.0
 
-                # --- lerp toward predicted target ---
-                d_lon = tgt_lon - self._zoom_lon
-                if d_lon > 180.0:
-                    d_lon -= 360.0
-                elif d_lon < -180.0:
-                    d_lon += 360.0
-                self._zoom_lat += (tgt_lat - self._zoom_lat) * self._ZOOM_LERP
-                self._zoom_lon += d_lon * self._ZOOM_LERP
-                if self._zoom_lon > 180.0:
-                    self._zoom_lon -= 360.0
-                elif self._zoom_lon < -180.0:
-                    self._zoom_lon += 360.0
+                    # --- lerp toward predicted target ---
+                    d_lon = tgt_lon - self._zoom_lon
+                    if d_lon > 180.0:
+                        d_lon -= 360.0
+                    elif d_lon < -180.0:
+                        d_lon += 360.0
+                    self._zoom_lat += (tgt_lat - self._zoom_lat) * self._ZOOM_LERP
+                    self._zoom_lon += d_lon * self._ZOOM_LERP
+                    if self._zoom_lon > 180.0:
+                        self._zoom_lon -= 360.0
+                    elif self._zoom_lon < -180.0:
+                        self._zoom_lon += 360.0
 
-            # Store current position for next tick's velocity estimate
+            # Store current position for next tick's velocity estimate.
+            # Done here (inside is_visible_tab) so _prev_sat_* always reflects
+            # what was used in the last rendered frame, avoiding stale velocity
+            # jumps when the tab is hidden and then shown.
             self._prev_sat_lat, self._prev_sat_lon = lat, lon
 
             self._local_map.set_zoom_region(self._zoom_lat, self._zoom_lon, _ZOOM_SPAN_DEG)
