@@ -330,7 +330,10 @@ class MainWindow(QMainWindow):
         self._autotrack = AutotrackManager(conn)
         self._autotrack_enabled: bool = False
 
-        self.setWindowTitle("GPredict-Improved")
+        from PySide6.QtWidgets import QApplication
+
+        _ver = QApplication.applicationVersion() or "0.1.0"
+        self.setWindowTitle(f"GPredict-Improved  v{_ver}")
         self.resize(1280, 800)
         self._set_app_icon()
         self._sync_progress.connect(self._on_sync_progress)
@@ -553,7 +556,7 @@ class MainWindow(QMainWindow):
 
         # Locate icon: PyInstaller bundle uses _MEIPASS, dev uses assets/ in repo root
         if getattr(sys, "frozen", False):
-            icon_path = Path(sys._MEIPASS) / "assets" / "icon_256.png"
+            icon_path = Path(getattr(sys, "_MEIPASS", "")) / "assets" / "icon_256.png"
         else:
             icon_path = Path(__file__).parent.parent.parent / "assets" / "icon_256.png"
 
@@ -2698,10 +2701,13 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_about(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        ver = QApplication.applicationVersion() or "0.1.0"
         QMessageBox.information(
             self,
             _("About GPredict-Improved"),
-            "GPredict-Improved v0.1.0\n\n"
+            f"GPredict-Improved  v{ver}\n\n"
             + _("Modern satellite tracking software for amateur radio operators.\n")
             + "https://github.com/JF9SOM/gpredict-improved",
         )

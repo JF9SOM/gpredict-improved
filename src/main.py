@@ -81,11 +81,30 @@ _setup_logging()
 logger = logging.getLogger(__name__)
 
 
+def _get_version() -> str:
+    """Return the application version string.
+
+    In a PyInstaller bundle the version is baked into CFBundleShortVersionString
+    (macOS) and the EXE version resource (Windows).  At runtime we resolve it via
+    importlib.metadata so that ``pip install -e .`` and tagged wheel builds both
+    work without hard-coding.  Falls back to "0.1.0" when metadata is unavailable.
+    """
+    try:
+        from importlib.metadata import version
+
+        return version("gpredict-improved")
+    except Exception:
+        return "0.1.0"
+
+
+APP_VERSION = _get_version()
+
+
 def main() -> int:
     """Application main entry point."""
     app = QApplication(sys.argv)
     app.setApplicationName("GPredict-Improved")
-    app.setApplicationVersion("0.1.0")
+    app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("GPredict-Improved")
 
     # Prefetch Natural Earth map data (downloads on first run, uses cache thereafter)
