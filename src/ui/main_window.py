@@ -934,6 +934,8 @@ class MainWindow(QMainWindow):
           3. fetch_legacy_tles() — one-time check for NORAD < 10000 satellites;
              hides those no longer tracked by CelesTrak (fast no-op after first run)
         """
+        from ui.settings_dialog import SettingsDialog  # local import to avoid circular dep
+
         self._sync_progress.emit("🛰 Syncing satellites from SATNOGS...")
 
         def _sat_progress(n: int) -> None:
@@ -981,6 +983,28 @@ class MainWindow(QMainWindow):
             self._refresh_active_tle_sync()
         else:
             logger.info("Active TLE cache is fresh — skipping fetch.")
+
+        # On first launch (fresh install), the APScheduler group-specific jobs
+        # (celestrak-cubesat, celestrak-weather, etc.) haven't fired yet because
+        # they are scheduled with interval hours=2/4/6/12.  Without this initial
+        # fetch, every satellite ends up with tle_group='amateur' and CubeSat /
+        # Weather / Science / Earth-Obs / Space-Stations groups appear empty.
+        # We trigger the stale group sources here so the correct tle_group values
+        # are written before the user can see the satellite list.
+        enabled = SettingsDialog.get_enabled_sources(self._conn)
+        stale_sources = [s for s in enabled if self._tle_manager.is_source_stale(s)]
+        if stale_sources:
+            logger.info("First-run group TLE fetch: %s", stale_sources)
+            self._sync_progress.emit(_("Fetching group TLEs (first run)..."))
+            for source_name in stale_sources:
+                try:
+                    result = asyncio.run(self._tle_manager.fetch_and_update(source_name))
+                    logger.info("First-run TLE fetch done: %s -> %s", source_name, result)
+                except Exception as exc:
+                    logger.warning("First-run TLE fetch failed: %s - %s", source_name, exc)
+            self._sync_progress.emit("")
+            # Refresh satellite list so tle_group changes are reflected immediately.
+            self._satellite_list_refresh.emit()
 
     # ------------------------------------------------------------------ #
     # Timer callback (every 1 second)

@@ -350,6 +350,19 @@ class TLEManager:
             last = last.replace(tzinfo=UTC)
         return datetime.now(UTC) - last > timedelta(hours=max_age_hours)
 
+    def is_source_stale(self, source_name: str) -> bool:
+        """Return True if the given TLE source has never been fetched (no sync_log entry).
+
+        Unlike is_active_tle_stale(), this only returns True when there is no record at all
+        (i.e. first run after a fresh install).  The APScheduler interval jobs handle
+        subsequent periodic refreshes, so we only need to detect the very first-run case.
+        """
+        row = self._conn.execute(
+            "SELECT finished_at FROM sync_log WHERE sync_type = ? ORDER BY id DESC LIMIT 1",
+            (source_name,),
+        ).fetchone()
+        return row is None
+
     async def fetch_active_tles(self) -> dict[str, int]:
         """Fill TLE gaps for SATNOGS-registered satellites (NORAD 10000-89999).
 
