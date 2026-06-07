@@ -52,13 +52,20 @@ class DashboardView(QWidget):
         self._selected_norad: int | None = None
         self._selected_name: str = ""
         self._current_transmitter: dict[str, Any] | None = None
-        # Smoothed zoom-center position (lerp toward target each update).
-        # None until the first satellite position is received.
+        # Smoothed zoom-center with velocity-predictive correction.
+        # The zoom center is placed at:
+        #   predicted_pos = current_sat_pos + velocity * _ZOOM_LEAD_S
+        # where velocity is estimated from the previous two positions (1 Hz diff).
+        # A small lerp is still applied to absorb any residual jitter.
         self._zoom_lat: float | None = None
         self._zoom_lon: float | None = None
-        # Lerp factor per tick (1 Hz).  0.15 means ~15% of the remaining
-        # distance is covered each second, giving a smooth ~4-5 s convergence.
-        self._ZOOM_LERP = 0.15
+        self._prev_sat_lat: float | None = None  # satellite position 1 tick ago
+        self._prev_sat_lon: float | None = None
+        # How many seconds ahead the zoom center is predicted (= lerp lag compensation).
+        # At 0.25 lerp the center converges in ~4 s → lead by ~3 s.
+        self._ZOOM_LEAD_S: float = 3.0
+        # Lerp factor applied on top of velocity prediction (absorbs high-freq jitter).
+        self._ZOOM_LERP: float = 0.25
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -143,9 +150,11 @@ class DashboardView(QWidget):
         self._selected_norad = norad
         self._selected_name = name
         self._sb_sat.setText(name)
-        # Reset lerp state so the new satellite snaps to its position immediately.
+        # Reset lerp/velocity state so the new satellite snaps to position immediately.
         self._zoom_lat = None
         self._zoom_lon = None
+        self._prev_sat_lat = None
+        self._prev_sat_lon = None
 
     def set_transmitter(self, xpdr: dict[str, Any] | None) -> None:
         """Update the active transponder (for frequency display in status bar)."""
@@ -194,25 +203,59 @@ class DashboardView(QWidget):
         if subpoint is not None and is_visible_tab:
             lat, lon, alt_km = subpoint
 
-            # Smoothly lerp the zoom-center toward the satellite's current position.
-            # On the first observation (or after a satellite change) snap immediately.
+            # Velocity-predictive zoom center.
+            #
+            # Step 1 — estimate velocity from the previous satellite position.
+            #   v_lat = lat - prev_lat  (degrees / second at 1 Hz)
+            #   v_lon = lon - prev_lon  (with ±180° wrap)
+            #
+            # Step 2 — compute a predicted target ahead by _ZOOM_LEAD_S seconds.
+            #   target = current_pos + velocity * _ZOOM_LEAD_S
+            #
+            # Step 3 — lerp the zoom center toward that predicted target.
+            #   This absorbs any residual SGP4 jitter while keeping the center
+            #   ahead of the satellite so the dot stays near the middle of the view.
+            #
+            # On the very first tick (or after a satellite change) snap immediately.
             if self._zoom_lat is None or self._zoom_lon is None:
                 self._zoom_lat, self._zoom_lon = lat, lon
+                self._prev_sat_lat, self._prev_sat_lon = lat, lon
             else:
-                # Linear interpolation on a per-degree basis.
-                # Longitude wrapping: keep delta in [-180, 180] to avoid crossing the antimeridian.
-                d_lon = lon - self._zoom_lon
+                # --- velocity estimate (degrees/s, longitude wrapped) ---
+                v_lat = lat - (self._prev_sat_lat or lat)
+                raw_v_lon = lon - (self._prev_sat_lon or lon)
+                if raw_v_lon > 180.0:
+                    raw_v_lon -= 360.0
+                elif raw_v_lon < -180.0:
+                    raw_v_lon += 360.0
+                v_lon = raw_v_lon
+
+                # --- predicted target position ---
+                tgt_lat = lat + v_lat * self._ZOOM_LEAD_S
+                tgt_lon = lon + v_lon * self._ZOOM_LEAD_S
+                # Clamp latitude to [-90, 90]
+                tgt_lat = max(-90.0, min(90.0, tgt_lat))
+                # Wrap longitude to [-180, 180]
+                if tgt_lon > 180.0:
+                    tgt_lon -= 360.0
+                elif tgt_lon < -180.0:
+                    tgt_lon += 360.0
+
+                # --- lerp toward predicted target ---
+                d_lon = tgt_lon - self._zoom_lon
                 if d_lon > 180.0:
                     d_lon -= 360.0
                 elif d_lon < -180.0:
                     d_lon += 360.0
-                self._zoom_lat += (lat - self._zoom_lat) * self._ZOOM_LERP
+                self._zoom_lat += (tgt_lat - self._zoom_lat) * self._ZOOM_LERP
                 self._zoom_lon += d_lon * self._ZOOM_LERP
-                # Clamp longitude to [-180, 180]
                 if self._zoom_lon > 180.0:
                     self._zoom_lon -= 360.0
                 elif self._zoom_lon < -180.0:
                     self._zoom_lon += 360.0
+
+            # Store current position for next tick's velocity estimate
+            self._prev_sat_lat, self._prev_sat_lon = lat, lon
 
             self._local_map.set_zoom_region(self._zoom_lat, self._zoom_lon, _ZOOM_SPAN_DEG)
             self._local_map.set_satellites(
