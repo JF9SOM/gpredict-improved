@@ -852,9 +852,13 @@ class MainWindow(QMainWindow):
         if self._amsat_fetcher.is_stale():
             threading.Thread(target=self._refresh_amsat_sync, daemon=True).start()
 
-        # On startup, auto-sync if there are no transmitters yet
-        count = self._conn.execute("SELECT COUNT(*) FROM transmitters").fetchone()[0]
-        if count == 0:
+        # On startup, auto-sync SATNOGS transmitters if none have been fetched from SATNOGS yet.
+        # Community transmitters (source='community') are always present on first launch,
+        # so check specifically for SATNOGS-sourced transmitters instead of total count.
+        satnogs_count = self._conn.execute(
+            "SELECT COUNT(*) FROM transmitters WHERE source = 'satnogs'"
+        ).fetchone()[0]
+        if satnogs_count == 0:
             threading.Thread(target=self._refresh_satnogs_sync, daemon=True).start()
 
         # Always sync satellite names (inserts new satellites too) and then fetch TLEs.
