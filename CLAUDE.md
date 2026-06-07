@@ -523,6 +523,11 @@ sudo usermod -aG dialout $USER
   - 速度予測ズームセンター（1Hz差分速度 × 3秒先読み + lerp 0.25）でスムーズ追尾
   - 速度スパイクガード: 0.15°/s 超の推定速度は衛星位置にスナップして暴走防止
 - **World Map 衛星ドットクリック選択**（`sat_clicked(int)` シグナル → `_select_satellite_by_norad` 接続）
+- **フットプリント描画 QPainterPath スキャンライン方式**（polar cap・antimeridian・極境界弧の全ケース修正済み）
+- **MainWindow `_shutdown_flag`（threading.Event）**: `closeEvent()` 冒頭でセット。バックグラウンドスレッド（`_refresh_satellite_names_sync`）が各 `asyncio.run()` 呼び出しの間でフラグを確認し、インタプリタシャットダウン後の `futures` スケジュールを防ぐ
+- **`is_source_stale(source_name)` (TLEManager)**: `sync_log` を照会し、一度もフェッチされていないソース（`never-fetched`）を検出。初回起動時に cubesat/weather/science/earth-obs グループを即時フェッチするトリガーとして使用
+- **`_sort_sources_by_priority()` (MainWindow)**: TLE_SOURCES の `priority` フィールドでソース名を昇順ソート。amateur より先に cubesat/weather 等を上書きしないよう順序を制御
+- **GitHub Actions: `make_latest: true`**（`prerelease: true` を廃止）。3プラットフォーム全ビルドジョブで設定済み。最新リリース: `v0.1.0-beta.29`
 - CI緑（mypy strict + pytest）
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -584,11 +589,20 @@ CREATE TABLE custom_groups (
 
 #### フットプリント描画の設計（`_draw_footprint` — src/ui/world_map.py）
 
-**スキャンライン方式**（bearing法から変更済み）:
+**スキャンライン QPainterPath 方式**（ポリゴン方式から変更済み）:
+- N=180 ラチチュードバンドを走査し、各バンドを `QRectF` として `QPainterPath` に追加
+- `QPainterPath.setFillRule(Qt.FillRule.WindingFill)` で確実に全領域を塗りつぶし（OddEven 規則のワインディングキャンセル問題を回避）
 - 緯度ごとに球面余弦定理で経度半幅 `dlon` を計算
 - `cos(rho) = sin(lat0)*sin(lat) + cos(lat0)*cos(lat)*cos(dlon)` を解く
-- `cos_dlon ≤ -1` → 全経度（180°）。この行は `xl=0, xr=w` を直接設定（antimeridian崩壊を防ぐ）
+- `is_full_width[i]` フラグ: `dlon ≥ 180°` の行は極域を包む全経度帯 → `xl=0, xr=w` を直接設定
+- Antimeridian（日付変更線）越え: `xl > xr` の行は左端・右端の2つの `QRectF` に分割
 - fill: `rgba(100,200,255,140)`、outline: シアン `#00DCFF` 3px（陸地・雪氷上でも視認可）
+
+**アウトラインスキップ規則（重要）**:
+- `is_full_width[i] and is_full_width[i+1]` のペアのみスキップ（両端が全幅行 → 画面端の縦線を防ぐ）
+- `is_full_width[i] or is_full_width[i+1]`（`or`）は使用禁止 → 極境界の弧が開いてしまう
+- 水平幅 `abs(x2 - x1) < w/3` のセグメントのみ描画（日付変更線越えの大ジャンプを除外）
+- 極冠境界（normal↔full_width 遷移）はスキップせず描画し、弧の閉合を確保
 
 **ズームモードの座標整合（重要）**:
 - `latlon_to_xy` は地図画像描画と同じクランプ済みlatレンジを使用する
@@ -1039,6 +1053,8 @@ manual（最高優先）> celestrak > satnogs > なし
 - 既存 TLE が `celestrak` の場合、`satnogs` ソースの取得結果で上書きしない
   （`fetch_provisional_tles()` は `INSERT OR REPLACE` だが `source='manual'` チェックで防御）
 - `fetch_active_tles()` の UPDATE では `tle_group` を保持（分類を劣化させない）
+- **初回起動時の未フェッチソース自動検出**: `TLEManager.is_source_stale(source_name)` が `sync_log` 未記録のソースを `True` で返す → MainWindow が起動時に未フェッチグループを即時フェッチ
+- **フェッチ順序制御**: `MainWindow._sort_sources_by_priority()` が `TLE_SOURCES["priority"]` 昇順でソート。`amateur`（汎用）を先にフェッチし、`cubesat`/`weather` 等がその後に上書きするよう保証
 
 ### tle_group と UI フィルタの対応
 
