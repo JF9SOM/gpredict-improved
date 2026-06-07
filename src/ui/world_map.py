@@ -758,7 +758,7 @@ class WorldMapView(QWidget):
         mid = N // 2
         crosses_dateline = left_pts[mid].x() > right_pts[mid].x()
 
-        p.setBrush(QColor(100, 180, 255, 100))
+        p.setBrush(QColor(100, 200, 255, 140))
         p.setPen(Qt.PenStyle.NoPen)
 
         if crosses_dateline:
@@ -780,7 +780,7 @@ class WorldMapView(QWidget):
         # Outline: draw left and right boundary curves
         # Skip individual segments that jump across the dateline
         threshold = w / 3.0
-        p.setPen(QPen(QColor(255, 255, 255, 220), 3.0))
+        p.setPen(QPen(QColor(0, 220, 255, 255), 3.0))
         p.setBrush(Qt.BrushStyle.NoBrush)
         for pts in (left_pts, right_pts):
             for i in range(len(pts) - 1):
