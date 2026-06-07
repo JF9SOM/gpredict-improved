@@ -779,13 +779,18 @@ class WorldMapView(QWidget):
         fill_path.setFillRule(Qt.FillRule.WindingFill)
         p.fillPath(fill_path, QColor(100, 200, 255, 140))
 
-        # Outline: draw left and right boundary curves
-        # Skip individual segments that jump across the dateline
+        # Outline: draw left and right boundary curves.
+        # Skip segments that involve full-width rows (dlon == 180): those rows
+        # have xl=0 / xr=w and would produce spurious vertical lines along the
+        # screen edges and diagonal artefacts at the normal→full-width transition.
+        # Also skip segments whose x-jump exceeds w/3 (antimeridian crossing).
         threshold = w / 3.0
         p.setPen(QPen(QColor(0, 220, 255, 255), 3.0))
         p.setBrush(Qt.BrushStyle.NoBrush)
         for pts in (left_pts, right_pts):
             for i in range(len(pts) - 1):
+                if is_full_width[i] or is_full_width[i + 1]:
+                    continue
                 x1, y1 = pts[i].x(), pts[i].y()
                 x2, y2 = pts[i + 1].x(), pts[i + 1].y()
                 if abs(x2 - x1) < threshold:
