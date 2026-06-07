@@ -675,64 +675,112 @@ class WorldMapView(QWidget):
     def _draw_footprint(self, p: QPainter, w: float, h: float) -> None:
         """Draw the footprint (visibility circle) on the equirectangular map.
 
-        Computes 361 screen points at 1-degree bearing intervals and skips
-        any line segment whose X span exceeds one-third of the widget width,
-        which handles date-line crossings and polar regions correctly.
+        Uses a scanline approach: for each latitude row between lat_min and
+        lat_max, the longitude half-width of the footprint is computed from
+        the spherical law of cosines.  This correctly handles footprints that
+        cross the North or South Pole without any bearing-based sampling
+        artefacts.
+
+        When the entire latitude row lies within the footprint (i.e. the
+        footprint wraps all the way around at that latitude, which happens
+        near the pole when the footprint crosses it), the row is drawn
+        full-width across the map.
+
+        Dateline (antimeridian) crossing is handled by splitting each
+        latitude row into two segments when the longitude range straddles
+        ±180°.
         """
         if self._footprint is None:
             return
 
         _norad, lat0, lon0, alt_km = self._footprint
         earth_r = 6371.0
-        cos_rho = earth_r / (earth_r + max(alt_km, 1.0))
-        rho = math.acos(min(cos_rho, 1.0))
-        lat0_r = math.radians(lat0)
+        cos_rho_val = earth_r / (earth_r + max(alt_km, 1.0))
+        rho = math.acos(min(cos_rho_val, 1.0))
+        rho_deg = math.degrees(rho)
 
-        # Compute 361 screen coordinates at 1-degree bearing intervals
-        screen_pts: list[tuple[float, float]] = []
-        for i in range(361):
-            bearing = math.radians(i)
-            sin_lat = math.sin(lat0_r) * math.cos(rho) + math.cos(lat0_r) * math.sin(
-                rho
-            ) * math.cos(bearing)
-            fp_lat = math.degrees(math.asin(max(-1.0, min(1.0, sin_lat))))
-            fp_lon = lon0 + math.degrees(
-                math.atan2(
-                    math.sin(bearing) * math.sin(rho) * math.cos(lat0_r),
-                    math.cos(rho) - math.sin(lat0_r) * math.sin(math.radians(fp_lat)),
-                )
-            )
-            fp_lon = ((fp_lon + 180.0) % 360.0) - 180.0
-            screen_pts.append(self.latlon_to_xy(fp_lat, fp_lon, w, h))
+        sin_lat0 = math.sin(math.radians(lat0))
+        cos_lat0 = math.cos(math.radians(lat0))
+        cos_rho = math.cos(rho)
 
-        threshold = w / 3.0
+        lat_min = max(-90.0, lat0 - rho_deg)
+        lat_max = min(90.0, lat0 + rho_deg)
 
-        # Fill: split into sub-polygons at each date-line skip and draw each
-        sub_polys: list[list[QPointF]] = []
-        cur_poly: list[QPointF] = []
-        for i, (x, y) in enumerate(screen_pts):
-            if i > 0 and abs(x - screen_pts[i - 1][0]) >= threshold:
-                if len(cur_poly) >= 3:
-                    sub_polys.append(cur_poly)
-                cur_poly = []
-            cur_poly.append(QPointF(x, y))
-        if cur_poly:
-            sub_polys.append(cur_poly)
+        # Number of latitude samples — enough for a smooth curve at any map size
+        N = 180
+        left_pts: list[QPointF] = []
+        right_pts: list[QPointF] = []
+
+        for i in range(N + 1):
+            lat = lat_min + (lat_max - lat_min) * i / N
+            sin_lat = math.sin(math.radians(lat))
+            cos_lat = math.cos(math.radians(lat))
+
+            # cos(Δlon) from the spherical law of cosines for sides:
+            #   cos(rho) = sin(lat0)*sin(lat) + cos(lat0)*cos(lat)*cos(Δlon)
+            denom = cos_lat0 * cos_lat
+            if abs(denom) < 1e-10:
+                # At the exact pole: entire row is within footprint
+                dlon = 180.0
+            else:
+                cos_dlon = (cos_rho - sin_lat0 * sin_lat) / denom
+                if cos_dlon <= -1.0:
+                    # Entire longitude row lies within the footprint
+                    dlon = 180.0
+                elif cos_dlon >= 1.0:
+                    # This latitude is outside the footprint (numerical edge)
+                    dlon = 0.0
+                else:
+                    dlon = math.degrees(math.acos(cos_dlon))
+
+            lon_l = ((lon0 - dlon + 180.0) % 360.0) - 180.0
+            lon_r = ((lon0 + dlon + 180.0) % 360.0) - 180.0
+
+            xl, yl = self.latlon_to_xy(lat, lon_l, w, h)
+            xr, yr = self.latlon_to_xy(lat, lon_r, w, h)
+            left_pts.append(QPointF(xl, yl))
+            right_pts.append(QPointF(xr, yr))
+
+        # Build the fill polygon: left edge (south→north) + right edge (north→south)
+        fill_poly = left_pts + list(reversed(right_pts))
+
+        # Detect dateline crossing: if the satellite's longitude range straddles ±180°
+        # the left/right longitude ordering inverts on screen.  In that case split into
+        # two polygons — one on each side of the dateline.
+        # Simple heuristic: if most left_pts have x > most right_pts, the dateline is crossed.
+        mid = N // 2
+        crosses_dateline = left_pts[mid].x() > right_pts[mid].x()
 
         p.setBrush(QColor(100, 180, 255, 60))
         p.setPen(Qt.PenStyle.NoPen)
-        for poly in sub_polys:
-            if len(poly) >= 3:
-                p.drawPolygon(QPolygonF(poly))
 
-        # Outline: skip segments that cross the date line (abnormally long X span)
+        if crosses_dateline:
+            # Left sub-polygon (western half, x from 0 to left edge)
+            west_poly = [QPointF(0.0, left_pts[0].y())]
+            west_poly += left_pts
+            west_poly.append(QPointF(0.0, left_pts[-1].y()))
+            # Right sub-polygon (eastern half, x from right edge to w)
+            east_poly = [QPointF(w, right_pts[0].y())]
+            east_poly += right_pts
+            east_poly.append(QPointF(w, right_pts[-1].y()))
+            for poly in (west_poly, east_poly):
+                if len(poly) >= 3:
+                    p.drawPolygon(QPolygonF(poly))
+        else:
+            if len(fill_poly) >= 3:
+                p.drawPolygon(QPolygonF(fill_poly))
+
+        # Outline: draw left and right boundary curves
+        # Skip individual segments that jump across the dateline
+        threshold = w / 3.0
         p.setPen(QPen(QColor(255, 255, 255, 220), 2.0))
         p.setBrush(Qt.BrushStyle.NoBrush)
-        for i in range(len(screen_pts) - 1):
-            x1, y1 = screen_pts[i]
-            x2, y2 = screen_pts[i + 1]
-            if abs(x2 - x1) < threshold:
-                p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+        for pts in (left_pts, right_pts):
+            for i in range(len(pts) - 1):
+                x1, y1 = pts[i].x(), pts[i].y()
+                x2, y2 = pts[i + 1].x(), pts[i + 1].y()
+                if abs(x2 - x1) < threshold:
+                    p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
         # Crosshair at footprint center
         cx, cy = self.latlon_to_xy(lat0, lon0, w, h)
