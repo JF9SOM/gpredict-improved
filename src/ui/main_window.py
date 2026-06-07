@@ -931,6 +931,9 @@ class MainWindow(QMainWindow):
                 logger.info("TLE refresh completed: %s", source_name)
             except Exception as exc:
                 logger.warning("TLE refresh failed: %s — %s", source_name, exc)
+        # Refresh the satellite list so tle_group changes are visible in the UI
+        # without requiring an app restart.
+        self._satellite_list_refresh.emit()
 
     def _refresh_amsat_sync(self) -> None:
         """Update AMSAT operational status from a background thread."""
@@ -1024,8 +1027,18 @@ class MainWindow(QMainWindow):
         # Weather / Science / Earth-Obs / Space-Stations groups appear empty.
         # We trigger the stale group sources here so the correct tle_group values
         # are written before the user can see the satellite list.
+        #
+        # Also handles the upgrade case (e.g. Windows): a previous beta may have
+        # left sync_log entries so is_source_stale() returns False, but without the
+        # CASE WHEN protection that beta introduced, all tle_group values were
+        # overwritten back to 'amateur'.  We detect this by checking whether the
+        # expected tle_group has 0 satellites in tle_data and treat it as stale.
         enabled = self._sort_sources_by_priority(SettingsDialog.get_enabled_sources(self._conn))
-        stale_sources = [s for s in enabled if self._tle_manager.is_source_stale(s)]
+        stale_sources = [
+            s
+            for s in enabled
+            if self._tle_manager.is_source_stale(s) or self._tle_manager.is_group_empty(s)
+        ]
         if stale_sources:
             logger.info("First-run group TLE fetch: %s", stale_sources)
             self._sync_progress.emit(_("Fetching group TLEs (first run)..."))

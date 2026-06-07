@@ -369,6 +369,28 @@ class TLEManager:
         ).fetchone()
         return row is None
 
+    def is_group_empty(self, source_name: str) -> bool:
+        """Return True if the tle_group associated with source_name has zero satellites.
+
+        This detects the upgrade case where a previous installation ran the source
+        (so sync_log has an entry) but lacked the CASE WHEN tle_group protection,
+        causing all tle_group values to be overwritten back to 'amateur'.
+        Only applies to group-specific sources (cubesat, weather, earth-obs, science,
+        stations); returns False for 'celestrak-amateur' to avoid a spurious re-fetch.
+        """
+        source = next((s for s in TLE_SOURCES if s["name"] == source_name), None)
+        if source is None:
+            return False
+        tle_group = str(source.get("group", "amateur"))
+        # Amateur is the catch-all default; an empty count there doesn't indicate a problem.
+        if tle_group == "amateur":
+            return False
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM tle_data WHERE tle_group = ?",
+            (tle_group,),
+        ).fetchone()
+        return (row["cnt"] if row else 0) == 0
+
     async def fetch_active_tles(self) -> dict[str, int]:
         """Fill TLE gaps for SATNOGS-registered satellites (NORAD 10000-89999).
 
