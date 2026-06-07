@@ -536,7 +536,16 @@ class WorldMapView(QWidget):
             while dlon < -180:
                 dlon += 360
             x = (dlon + span) / (2.0 * span) * w
-            y = (span - (lat - clat)) / (2.0 * span) * h
+            # The map image draw code clamps the rendered latitude range to
+            # [-90, 90].  Near the poles the visible span is therefore
+            # *smaller* than 2*span and the image is NOT stretched back to
+            # 2*span — the source rect is just narrower.  latlon_to_xy must
+            # use the same clamped range so that the satellite dot and
+            # footprint overlay stay aligned with the map image.
+            rendered_lat_max = min(90.0, clat + span)
+            rendered_lat_min = max(-90.0, clat - span)
+            rendered_lat_span = rendered_lat_max - rendered_lat_min
+            y = (rendered_lat_max - lat) / rendered_lat_span * h
             return x, y
         x = (lon + 180.0) / 360.0 * w
         y = (90.0 - lat) / 180.0 * h
