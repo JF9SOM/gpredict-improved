@@ -1003,30 +1003,14 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             logger.warning("Community transmitter load failed: %s", exc)
 
-        # Refresh the satellite list now that names are synced (includes new inserts).
-        self._satellite_list_refresh.emit()
-        self._sync_progress.emit("")  # Hide sync label once satellite list is ready
-
-        if self._shutdown_flag.is_set():
-            return
-
-        # Fetch active TLEs here (after satellite rows are in the DB) so that
-        # Phase 1 CelesTrak bulk download and Phase 2 SATNOGS fallback can match rows.
-        if self._tle_manager.is_active_tle_stale():
-            self._refresh_active_tle_sync()
-        else:
-            logger.info("Active TLE cache is fresh — skipping fetch.")
-
-        if self._shutdown_flag.is_set():
-            return
-
-        # On first launch (fresh install), the APScheduler group-specific jobs
+        # On first launch (fresh install) the APScheduler group-specific jobs
         # (celestrak-cubesat, celestrak-weather, etc.) haven't fired yet because
         # they are scheduled with interval hours=2/4/6/12.  Without this initial
         # fetch, every satellite ends up with tle_group='amateur' and CubeSat /
         # Weather / Science / Earth-Obs / Space-Stations groups appear empty.
-        # We trigger the stale group sources here so the correct tle_group values
-        # are written before the user can see the satellite list.
+        # Run this BEFORE fetch_active_tles() (which can take 20-30 min on first
+        # run) so the user sees correct group counts as soon as the satellite list
+        # refreshes — without waiting for the long Phase 2 SATNOGS fallback.
         #
         # Also handles the upgrade case (e.g. Windows): a previous beta may have
         # left sync_log entries so is_source_stale() returns False, but without the
@@ -1051,8 +1035,21 @@ class MainWindow(QMainWindow):
                 except Exception as exc:
                     logger.warning("First-run TLE fetch failed: %s - %s", source_name, exc)
             self._sync_progress.emit("")
-            # Refresh satellite list so tle_group changes are reflected immediately.
-            self._satellite_list_refresh.emit()
+
+        # Refresh the satellite list now that names and group TLEs are synced.
+        self._satellite_list_refresh.emit()
+        self._sync_progress.emit("")  # Hide sync label once satellite list is ready
+
+        if self._shutdown_flag.is_set():
+            return
+
+        # Fetch active TLEs last; Phase 2 SATNOGS fallback can take 20-30 min.
+        # The satellite list has already been refreshed above so the user sees
+        # correct group assignments without waiting for this to complete.
+        if self._tle_manager.is_active_tle_stale():
+            self._refresh_active_tle_sync()
+        else:
+            logger.info("Active TLE cache is fresh — skipping fetch.")
 
     # ------------------------------------------------------------------ #
     # Timer callback (every 1 second)

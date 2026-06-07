@@ -370,26 +370,34 @@ class TLEManager:
         return row is None
 
     def is_group_empty(self, source_name: str) -> bool:
-        """Return True if the tle_group associated with source_name has zero satellites.
+        """Return True if the tle_group associated with source_name is suspiciously sparse.
 
-        This detects the upgrade case where a previous installation ran the source
-        (so sync_log has an entry) but lacked the CASE WHEN tle_group protection,
-        causing all tle_group values to be overwritten back to 'amateur'.
-        Only applies to group-specific sources (cubesat, weather, earth-obs, science,
-        stations); returns False for 'celestrak-amateur' to avoid a spurious re-fetch.
+        This detects two failure cases:
+        1. Upgrade case: a previous beta overwrote all tle_group values back to 'amateur'
+           (so sync_log has an entry but the group still has 0 satellites).
+        2. Failed fetch case: a previous fetch attempt failed mid-way (e.g. due to
+           database lock from concurrent instances), leaving 0 or very few satellites.
+
+        We use a minimum threshold rather than strict 0 to catch partially-failed fetches:
+        - cubesat: expects hundreds of satellites; < 5 means the fetch failed
+        - weather / earth-obs / science: expects dozens; < 5 means failed
+        - stations: expects ~10; < 3 means failed
+        Only applies to group-specific sources (not 'celestrak-amateur').
         """
         source = next((s for s in TLE_SOURCES if s["name"] == source_name), None)
         if source is None:
             return False
         tle_group = str(source.get("group", "amateur"))
-        # Amateur is the catch-all default; an empty count there doesn't indicate a problem.
+        # Amateur is the catch-all default; a low count there doesn't indicate a problem.
         if tle_group == "amateur":
             return False
+        # Minimum expected satellites per group; anything below triggers a re-fetch.
+        min_expected = 3 if tle_group == "stations" else 5
         row = self._conn.execute(
             "SELECT COUNT(*) AS cnt FROM tle_data WHERE tle_group = ?",
             (tle_group,),
         ).fetchone()
-        return (row["cnt"] if row else 0) == 0
+        return (row["cnt"] if row else 0) < min_expected
 
     async def fetch_active_tles(self) -> dict[str, int]:
         """Fill TLE gaps for SATNOGS-registered satellites (NORAD 10000-89999).
