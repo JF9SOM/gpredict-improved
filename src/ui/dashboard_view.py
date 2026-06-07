@@ -52,6 +52,13 @@ class DashboardView(QWidget):
         self._selected_norad: int | None = None
         self._selected_name: str = ""
         self._current_transmitter: dict[str, Any] | None = None
+        # Smoothed zoom-center position (lerp toward target each update).
+        # None until the first satellite position is received.
+        self._zoom_lat: float | None = None
+        self._zoom_lon: float | None = None
+        # Lerp factor per tick (1 Hz).  0.15 means ~15% of the remaining
+        # distance is covered each second, giving a smooth ~4-5 s convergence.
+        self._ZOOM_LERP = 0.15
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -136,6 +143,9 @@ class DashboardView(QWidget):
         self._selected_norad = norad
         self._selected_name = name
         self._sb_sat.setText(name)
+        # Reset lerp state so the new satellite snaps to its position immediately.
+        self._zoom_lat = None
+        self._zoom_lon = None
 
     def set_transmitter(self, xpdr: dict[str, Any] | None) -> None:
         """Update the active transponder (for frequency display in status bar)."""
@@ -183,7 +193,28 @@ class DashboardView(QWidget):
         # ── Zoomed map (skip repaint when tab is hidden to reduce CPU load) ──
         if subpoint is not None and is_visible_tab:
             lat, lon, alt_km = subpoint
-            self._local_map.set_zoom_region(lat, lon, _ZOOM_SPAN_DEG)
+
+            # Smoothly lerp the zoom-center toward the satellite's current position.
+            # On the first observation (or after a satellite change) snap immediately.
+            if self._zoom_lat is None or self._zoom_lon is None:
+                self._zoom_lat, self._zoom_lon = lat, lon
+            else:
+                # Linear interpolation on a per-degree basis.
+                # Longitude wrapping: keep delta in [-180, 180] to avoid crossing the antimeridian.
+                d_lon = lon - self._zoom_lon
+                if d_lon > 180.0:
+                    d_lon -= 360.0
+                elif d_lon < -180.0:
+                    d_lon += 360.0
+                self._zoom_lat += (lat - self._zoom_lat) * self._ZOOM_LERP
+                self._zoom_lon += d_lon * self._ZOOM_LERP
+                # Clamp longitude to [-180, 180]
+                if self._zoom_lon > 180.0:
+                    self._zoom_lon -= 360.0
+                elif self._zoom_lon < -180.0:
+                    self._zoom_lon += 360.0
+
+            self._local_map.set_zoom_region(self._zoom_lat, self._zoom_lon, _ZOOM_SPAN_DEG)
             self._local_map.set_satellites(
                 {self._selected_norad: (self._selected_name, lat, lon, color)}
             )
