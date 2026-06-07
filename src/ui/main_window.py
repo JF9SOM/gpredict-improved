@@ -287,6 +287,8 @@ class MainWindow(QMainWindow):
         self._web_server: Any | None = None
         self._web_server_url: str = ""
         self._scheduler: Any | None = None
+        # Set to True in closeEvent so background threads stop gracefully
+        self._shutdown_flag = threading.Event()
         self._amsat_fetcher = AMSATStatusFetcher(conn)
         self._transmitter_manager = TransmitterManager(conn)
         self._rig_controller: RigController | None = None
@@ -950,6 +952,8 @@ class MainWindow(QMainWindow):
         """
         from ui.settings_dialog import SettingsDialog  # local import to avoid circular dep
 
+        if self._shutdown_flag.is_set():
+            return
         self._sync_progress.emit("🛰 Syncing satellites from SATNOGS...")
 
         def _sat_progress(n: int) -> None:
@@ -963,12 +967,18 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             logger.warning("SATNOGS satellite names sync failed: %s", exc)
 
+        if self._shutdown_flag.is_set():
+            return
+
         # Fetch TLEs for remaining visible provisional satellites (NORAD >= 90000).
         try:
             prov = asyncio.run(self._tle_manager.fetch_provisional_tles())
             logger.info("Provisional TLE fetch completed: %s", prov)
         except Exception as exc:
             logger.warning("Provisional TLE fetch failed: %s", exc)
+
+        if self._shutdown_flag.is_set():
+            return
 
         # One-time cleanup for very old satellites (NORAD < 10000).
         # Hides those no longer in CelesTrak; fast no-op once all are resolved.
@@ -978,6 +988,9 @@ class MainWindow(QMainWindow):
                 logger.info("Legacy satellite TLE check completed: %s", legacy)
         except Exception as exc:
             logger.warning("Legacy satellite TLE check failed: %s", exc)
+
+        if self._shutdown_flag.is_set():
+            return
 
         # Load bundled community transmitters (FT4/FT8 calling freqs, etc.)
         try:
@@ -991,12 +1004,18 @@ class MainWindow(QMainWindow):
         self._satellite_list_refresh.emit()
         self._sync_progress.emit("")  # Hide sync label once satellite list is ready
 
+        if self._shutdown_flag.is_set():
+            return
+
         # Fetch active TLEs here (after satellite rows are in the DB) so that
         # Phase 1 CelesTrak bulk download and Phase 2 SATNOGS fallback can match rows.
         if self._tle_manager.is_active_tle_stale():
             self._refresh_active_tle_sync()
         else:
             logger.info("Active TLE cache is fresh — skipping fetch.")
+
+        if self._shutdown_flag.is_set():
+            return
 
         # On first launch (fresh install), the APScheduler group-specific jobs
         # (celestrak-cubesat, celestrak-weather, etc.) haven't fired yet because
@@ -1011,6 +1030,8 @@ class MainWindow(QMainWindow):
             logger.info("First-run group TLE fetch: %s", stale_sources)
             self._sync_progress.emit(_("Fetching group TLEs (first run)..."))
             for source_name in stale_sources:
+                if self._shutdown_flag.is_set():
+                    break
                 try:
                     result = asyncio.run(self._tle_manager.fetch_and_update(source_name))
                     logger.info("First-run TLE fetch done: %s -> %s", source_name, result)
@@ -2791,6 +2812,8 @@ class MainWindow(QMainWindow):
                 (self._filter_combo.currentText(),),
             )
             self._conn.commit()
+        # Signal background threads to exit before tearing down other resources.
+        self._shutdown_flag.set()
         self._timer.stop()
         if self._web_server is not None:
             with contextlib.suppress(Exception):
