@@ -482,7 +482,7 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## 実装済み機能一覧（2026年6月6日時点）
+## 実装済み機能一覧（2026年6月7日時点）
 
 - 衛星追尾エンジン（Skyfield）
 - Qt6デスクトップUI（**Dashboard**・世界地図・レーダー・Pass Chart・Group Pass Chart・Radio Control）
@@ -496,7 +496,7 @@ sudo usermod -aG dialout $USER
 - **超古い衛星（NORAD < 10000）の一括チェック：CelesTrak 未収録なら自動非表示**
 - AMSAT運用状況スクレイピング・色分け表示
 - **カスタムFavoriteグループ**（Favorite 1/2/3 デフォルト、Settings > Custom Groups で追加/削除/改名可能）
-- フットプリント表示
+- **フットプリント表示**（スキャンライン方式・極地域対応・ズーム地図との座標整合済み）
 - Upcoming Passes（Target/Groupタブ・カレンダー選択・CSV出力）
 - **Group Pass Chart** — グループ検索結果を衛星別カラーで描画（ホバーでツールチップ表示）
 - カレンダーポップアップ改善（英語ロケール固定・週番号列非表示・To欄はCurrent Timeボタンなし）
@@ -520,6 +520,9 @@ sudo usermod -aG dialout $USER
   - Dashboard 表示中は Satellite Detail パネルを自動非表示
   - ズームマップはグリッド線・赤道線を非表示（WorldMapView.set_show_grid(False)）
   - NASA Topographic 1024px をデフォルト世界地図として採用（初回起動時に自動ダウンロード）
+  - 速度予測ズームセンター（1Hz差分速度 × 3秒先読み + lerp 0.25）でスムーズ追尾
+  - 速度スパイクガード: 0.15°/s 超の推定速度は衛星位置にスナップして暴走防止
+- **World Map 衛星ドットクリック選択**（`sat_clicked(int)` シグナル → `_select_satellite_by_norad` 接続）
 - CI緑（mypy strict + pytest）
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -578,6 +581,24 @@ CREATE TABLE custom_groups (
 | `set_show_grid(show: bool)` | グリッド線・赤道線の表示/非表示を切り替え |
 | `set_zoom_region(lat, lon, span_deg)` | 指定座標を中心にズーム表示（デフォルト ±50°） |
 | `clear_zoom()` | グローバルビューに戻す |
+
+#### フットプリント描画の設計（`_draw_footprint` — src/ui/world_map.py）
+
+**スキャンライン方式**（bearing法から変更済み）:
+- 緯度ごとに球面余弦定理で経度半幅 `dlon` を計算
+- `cos(rho) = sin(lat0)*sin(lat) + cos(lat0)*cos(lat)*cos(dlon)` を解く
+- `cos_dlon ≤ -1` → 全経度（180°）。この行は `xl=0, xr=w` を直接設定（antimeridian崩壊を防ぐ）
+- fill: `rgba(100,200,255,140)`、outline: シアン `#00DCFF` 3px（陸地・雪氷上でも視認可）
+
+**ズームモードの座標整合（重要）**:
+- `latlon_to_xy` は地図画像描画と同じクランプ済みlatレンジを使用する
+- 地図描画: `lat_max = min(90, clat+span)` でクランプ → 実際のスパンが `2*span` より小さくなる
+- オーバーレイ（衛星ドット・フットプリント）も同じ計算を使わないと、極地域で南方向にずれて見える
+- `rendered_lat_span = min(90,clat+span) - max(-90,clat-span)` で y を正規化
+
+**衛星ドットクリック**:
+- `mousePressEvent` で衛星ドット中心12px以内のクリックを検出し `sat_clicked(int)` を emit
+- `main_window.py` で `_world_map.sat_clicked.connect(self._select_satellite_by_norad)` に接続済み
 
 #### デフォルト世界地図（NASA Topographic 1024px）
 
