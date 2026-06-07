@@ -772,10 +772,18 @@ class WorldMapView(QWidget):
         # Find the contiguous full-width zone (always at the topmost or
         # bottommost latitudes because cos_dlon decreases monotonically toward
         # the pole closest to the satellite).
+        south_polar_cap = False
+        y_cap_boundary = 0.0  # y-coord of the equator-facing edge of the cap rectangle
         if has_polar_cap:
-            # First index where full-width starts (scanning south→north)
+            # First index where full-width starts (scanning south→north, i.e. i=0 is lat_min)
             fw_first = next(i for i, f in enumerate(is_full_width) if f)
             fw_last = next((N - i) for i, f in enumerate(reversed(is_full_width)) if f)
+            # fw_first == 0 → cap is at the south (lat_min end); otherwise cap is at the north.
+            south_polar_cap = fw_first == 0
+            # The cap boundary is the full-width row that faces the normal rows:
+            #   south cap → fw_last (the northernmost full-width row)
+            #   north cap → fw_first (the southernmost full-width row)
+            y_cap_boundary = left_pts[fw_last].y() if south_polar_cap else left_pts[fw_first].y()
         else:
             fw_first = N + 1
             fw_last = -1
@@ -798,55 +806,59 @@ class WorldMapView(QWidget):
 
         if has_polar_cap:
             # ── Polar-cap zone: full-width rectangle ──────────────────────
-            # Draw a solid rectangle spanning the full-width latitude band.
             y_fw_top = left_pts[fw_last].y()
             y_fw_bot = left_pts[fw_first].y()
             cap_height = abs(y_fw_bot - y_fw_top) + 1.0
             p.drawRect(QRectF(0.0, min(y_fw_top, y_fw_bot), w, cap_height))
 
-            # ── Normal rows zone ──────────────────────────────────────────
-            # Build polygon from the non-full-width rows only.
-            # Bridge the gap between the cap and the normal rows by extending
-            # to the full-width boundary row (first/last full-width y value).
-            # We only need the rows on the side AWAY from the pole.
-            # normal_left/right already exclude full-width rows.
-
         if normal_left:
             if crosses_dateline:
-                # lon_l (left_pts) maps to the RIGHT side of the screen;
-                # lon_r (right_pts) maps to the LEFT side of the screen.
+                # lon_l (left_pts) maps to the RIGHT/east side of the screen;
+                # lon_r (right_pts) maps to the LEFT/west side of the screen.
                 # Use right_pts for the western (x≈0) polygon and
                 # left_pts for the eastern (x≈w) polygon.
-                # Anchor to the full-width cap boundary if present, otherwise
-                # to the map edge at the non-dateline end.
-                y_anchor_top = left_pts[fw_first].y() if has_polar_cap else normal_left[-1].y()
+                #
+                # Closing anchor:
+                #   north cap  → anchor at y_cap_boundary (bottom edge of the north cap rect)
+                #   south cap  → no special anchor; polygon closes naturally at the north edge
+                #   no cap     → close at the far end of the normal rows
+                if has_polar_cap and not south_polar_cap:
+                    y_anchor = y_cap_boundary
+                else:
+                    y_anchor = normal_right[-1].y()
 
                 west_poly: list[QPointF] = [QPointF(0.0, normal_right[0].y())]
                 west_poly += normal_right
-                west_poly.append(QPointF(0.0, y_anchor_top))
+                west_poly.append(QPointF(0.0, y_anchor))
                 east_poly: list[QPointF] = [QPointF(w, normal_left[0].y())]
                 east_poly += normal_left
-                east_poly.append(QPointF(w, y_anchor_top))
+                east_poly.append(QPointF(w, y_anchor))
                 for poly in (west_poly, east_poly):
                     if len(poly) >= 3:
                         p.drawPolygon(QPolygonF(poly))
             else:
-                # Simple case: no dateline crossing.
-                # Bridge to the cap boundary so there is no gap between the
-                # normal polygon and the polar-cap rectangle.
+                # No dateline crossing.
+                # Bridge the gap between the cap rectangle and the normal polygon
+                # by inserting a full-width row at the cap boundary.
+                # The bridge must be on the side that FACES the polar cap:
+                #   south cap → cap is at the beginning (south) of normal rows → prepend
+                #   north cap → cap is at the end (north) of normal rows → append
                 norm_fill = list(normal_left)
                 norm_fill_r = list(normal_right)
                 if has_polar_cap:
-                    # Insert a full-width bridging row at the cap boundary
-                    y_bridge = left_pts[fw_first].y()
-                    norm_fill.append(QPointF(0.0, y_bridge))
-                    norm_fill_r.append(QPointF(w, y_bridge))
+                    bridge_l = QPointF(0.0, y_cap_boundary)
+                    bridge_r = QPointF(w, y_cap_boundary)
+                    if south_polar_cap:
+                        norm_fill = [bridge_l] + norm_fill
+                        norm_fill_r = [bridge_r] + norm_fill_r
+                    else:
+                        norm_fill.append(bridge_l)
+                        norm_fill_r.append(bridge_r)
                 fill_poly = norm_fill + list(reversed(norm_fill_r))
                 if len(fill_poly) >= 3:
                     p.drawPolygon(QPolygonF(fill_poly))
         elif not has_polar_cap:
-            # Edge case: all rows are normal, no polar cap (should not happen
-            # if the earlier has_polar_cap branch ran, but guard anyway).
+            # Edge case: all rows are normal, no polar cap.
             fill_poly = left_pts + list(reversed(right_pts))
             if len(fill_poly) >= 3:
                 p.drawPolygon(QPolygonF(fill_poly))
