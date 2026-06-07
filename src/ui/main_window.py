@@ -445,6 +445,7 @@ class MainWindow(QMainWindow):
         self._tab_widget = QTabWidget()
         self._dashboard_view = DashboardView()
         self._world_map = WorldMapView()
+        self._world_map.sat_clicked.connect(self._select_satellite_by_norad)
         self._radar_view = RadarView()
         self._pass_chart = PassChartView()
         self._group_pass_chart = GroupPassChartView()
