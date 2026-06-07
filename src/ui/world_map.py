@@ -771,14 +771,18 @@ class WorldMapView(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
 
         if crosses_dateline:
-            # Left sub-polygon (western half, x from 0 to left edge)
-            west_poly = [QPointF(0.0, left_pts[0].y())]
-            west_poly += left_pts
-            west_poly.append(QPointF(0.0, left_pts[-1].y()))
-            # Right sub-polygon (eastern half, x from right edge to w)
-            east_poly = [QPointF(w, right_pts[0].y())]
-            east_poly += right_pts
-            east_poly.append(QPointF(w, right_pts[-1].y()))
+            # When the footprint crosses the antimeridian, lon_l = lon0-dlon maps to
+            # the RIGHT side of the screen and lon_r = lon0+dlon maps to the LEFT side.
+            # So left_pts holds the eastern screen edge and right_pts the western edge —
+            # the opposite of their names.  Assign accordingly:
+            #   west half (screen x near 0): built from right_pts
+            #   east half (screen x near w): built from left_pts
+            west_poly = [QPointF(0.0, right_pts[0].y())]
+            west_poly += right_pts
+            west_poly.append(QPointF(0.0, right_pts[-1].y()))
+            east_poly = [QPointF(w, left_pts[0].y())]
+            east_poly += left_pts
+            east_poly.append(QPointF(w, left_pts[-1].y()))
             for poly in (west_poly, east_poly):
                 if len(poly) >= 3:
                     p.drawPolygon(QPolygonF(poly))
