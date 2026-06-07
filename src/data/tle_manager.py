@@ -230,11 +230,17 @@ class TLEManager:
                 )
 
                 if existing:
+                    # Only overwrite tle_group if the existing value is 'amateur'
+                    # (the default/generic group).  This prevents a later amateur-group
+                    # fetch from reverting a satellite that was correctly classified as
+                    # 'cubesat', 'weather', etc. back to 'amateur'.
                     self._conn.execute(
                         """
                         UPDATE tle_data SET
                             name=?, line1=?, line2=?, epoch=?,
-                            source=?, tle_group=?, fetched_at=?, quality_score=?
+                            source=?,
+                            tle_group = CASE WHEN tle_group = 'amateur' THEN ? ELSE tle_group END,
+                            fetched_at=?, quality_score=?
                         WHERE norad_cat_id=?
                     """,
                         (

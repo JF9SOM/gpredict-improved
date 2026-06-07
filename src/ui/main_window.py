@@ -904,11 +904,25 @@ class MainWindow(QMainWindow):
         # to start only after satellite rows are present in the DB.
         threading.Thread(target=self._refresh_satellite_names_sync, daemon=True).start()
 
+    @staticmethod
+    def _sort_sources_by_priority(sources: list[str]) -> list[str]:
+        """Sort TLE source names by their priority in TLE_SOURCES (ascending).
+
+        Running sources in ascending priority order ensures that more-specific
+        groups (e.g. cubesat priority=2) always execute *after* more-general ones
+        (amateur priority=1), so their tle_group value wins for overlapping satellites.
+        Sources not found in TLE_SOURCES are appended at the end.
+        """
+        from data.tle_manager import TLE_SOURCES
+
+        priority_map = {s["name"]: int(s.get("priority", 99)) for s in TLE_SOURCES}
+        return sorted(sources, key=lambda n: priority_map.get(n, 99))
+
     def _refresh_tle_sync(self) -> None:
         """Update all enabled TLE sources from a background thread (APScheduler job)."""
         from ui.settings_dialog import SettingsDialog
 
-        enabled = SettingsDialog.get_enabled_sources(self._conn)
+        enabled = self._sort_sources_by_priority(SettingsDialog.get_enabled_sources(self._conn))
         for source_name in enabled:
             try:
                 asyncio.run(self._tle_manager.fetch_and_update(source_name))
@@ -991,7 +1005,7 @@ class MainWindow(QMainWindow):
         # Weather / Science / Earth-Obs / Space-Stations groups appear empty.
         # We trigger the stale group sources here so the correct tle_group values
         # are written before the user can see the satellite list.
-        enabled = SettingsDialog.get_enabled_sources(self._conn)
+        enabled = self._sort_sources_by_priority(SettingsDialog.get_enabled_sources(self._conn))
         stale_sources = [s for s in enabled if self._tle_manager.is_source_stale(s)]
         if stale_sources:
             logger.info("First-run group TLE fetch: %s", stale_sources)
