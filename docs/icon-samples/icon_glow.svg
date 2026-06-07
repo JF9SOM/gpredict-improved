@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="256" height="256">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1a2a4a"/>
+      <stop offset="100%" stop-color="#050d1a"/>
+    </radialGradient>
+    <radialGradient id="earth" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#4fc3f7"/>
+      <stop offset="100%" stop-color="#0d47a1"/>
+    </radialGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glow2">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+  <!-- Stars -->
+  <circle cx="70" cy="55" r="2" fill="white" opacity="0.9" filter="url(#glow)"/>
+  <circle cx="150" cy="35" r="1.5" fill="white" opacity="0.7"/>
+  <circle cx="420" cy="45" r="2.5" fill="white" opacity="0.8" filter="url(#glow)"/>
+  <circle cx="460" cy="100" r="1.5" fill="white" opacity="0.6"/>
+  <circle cx="55" cy="180" r="1.5" fill="white" opacity="0.8"/>
+  <circle cx="480" cy="200" r="2" fill="white" opacity="0.7" filter="url(#glow)"/>
+  <circle cx="380" cy="30" r="1.5" fill="white" opacity="0.9"/>
+  <!-- Earth glow -->
+  <circle cx="256" cy="310" r="150" fill="#0d47a1" opacity="0.3" filter="url(#glow2)"/>
+  <!-- Earth -->
+  <circle cx="256" cy="310" r="128" fill="url(#earth)"/>
+  <!-- Land masses -->
+  <ellipse cx="215" cy="285" rx="55" ry="42" fill="#2e7d32" opacity="0.85"/>
+  <ellipse cx="320" cy="320" rx="42" ry="32" fill="#388e3c" opacity="0.8"/>
+  <ellipse cx="260" cy="355" rx="28" ry="18" fill="#2e7d32" opacity="0.75"/>
+  <ellipse cx="195" cy="340" rx="20" ry="15" fill="#388e3c" opacity="0.7"/>
+  <!-- Earth rim light -->
+  <circle cx="256" cy="310" r="128" fill="none" stroke="#81d4fa" stroke-width="3" opacity="0.6"/>
+  <!-- Orbit ellipse (glowing orange) -->
+  <ellipse cx="256" cy="280" rx="210" ry="85" fill="none" stroke="#ff8f00" stroke-width="3" opacity="0.5"/>
+  <ellipse cx="256" cy="280" rx="210" ry="85" fill="none" stroke="#ffca28" stroke-width="1.5" stroke-dasharray="14 7" opacity="0.9" filter="url(#glow)"/>
+  <!-- Satellite -->
+  <g filter="url(#glow)">
+    <rect x="96" y="104" width="38" height="24" rx="5" fill="#e0e0e0"/>
+    <!-- Solar panels left -->
+    <rect x="46" y="108" width="44" height="16" rx="3" fill="#1976d2"/>
+    <line x1="68" y1="108" x2="68" y2="124" stroke="#64b5f6" stroke-width="1.5" opacity="0.8"/>
+    <!-- Solar panels right -->
+    <rect x="140" y="108" width="44" height="16" rx="3" fill="#1976d2"/>
+    <line x1="162" y1="108" x2="162" y2="124" stroke="#64b5f6" stroke-width="1.5" opacity="0.8"/>
+    <!-- Antenna -->
+    <line x1="115" y1="104" x2="115" y2="90" stroke="#e0e0e0" stroke-width="3"/>
+    <circle cx="115" cy="87" r="5" fill="#ffca28"/>
+  </g>
+  <!-- Ground antenna (radio transceiver style) -->
+  <g>
+    <!-- Rig body -->
+    <rect x="330" y="400" width="90" height="55" rx="8" fill="#37474f"/>
+    <rect x="338" y="408" width="74" height="22" rx="4" fill="#263238"/>
+    <!-- VFO knob -->
+    <circle cx="392" cy="440" r="10" fill="#546e7a"/>
+    <circle cx="392" cy="440" r="6" fill="#607d8b"/>
+    <!-- Display -->
+    <rect x="340" y="410" width="42" height="18" rx="3" fill="#00e676" opacity="0.85"/>
+    <text x="361" y="423" text-anchor="middle" font-family="monospace" font-size="9" fill="#003300">435.6</text>
+    <!-- Antenna on rig -->
+    <line x1="350" y1="400" x2="320" y2="340" stroke="#90a4ae" stroke-width="3"/>
+    <line x1="320" y1="340" x2="305" y2="340" stroke="#90a4ae" stroke-width="2.5"/>
+    <line x1="320" y1="340" x2="335" y2="340" stroke="#90a4ae" stroke-width="2.5"/>
+    <line x1="320" y1="340" x2="310" y2="330" stroke="#90a4ae" stroke-width="2"/>
+    <line x1="320" y1="340" x2="330" y2="330" stroke="#90a4ae" stroke-width="2"/>
+  </g>
+  <!-- Signal from rig to satellite (glowing) -->
+  <line x1="320" y1="340" x2="140" y2="135" stroke="#ffca28" stroke-width="2" stroke-dasharray="10 6" opacity="0.8" filter="url(#glow)"/>
+</svg>

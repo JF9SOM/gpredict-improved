@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="256" height="256">
+  <!-- Background -->
+  <rect width="512" height="512" rx="100" fill="#0d1b2a"/>
+  <!-- Stars -->
+  <circle cx="80" cy="60" r="2" fill="white" opacity="0.8"/>
+  <circle cx="140" cy="30" r="1.5" fill="white" opacity="0.6"/>
+  <circle cx="400" cy="50" r="2" fill="white" opacity="0.9"/>
+  <circle cx="450" cy="90" r="1.5" fill="white" opacity="0.5"/>
+  <circle cx="60" cy="150" r="1" fill="white" opacity="0.7"/>
+  <circle cx="470" cy="170" r="2" fill="white" opacity="0.6"/>
+  <circle cx="350" cy="25" r="1.5" fill="white" opacity="0.8"/>
+  <circle cx="200" cy="45" r="1" fill="white" opacity="0.5"/>
+  <!-- Earth -->
+  <circle cx="256" cy="300" r="130" fill="#1a6b8a"/>
+  <ellipse cx="220" cy="280" rx="50" ry="40" fill="#2d8f5e" opacity="0.9"/>
+  <ellipse cx="310" cy="310" rx="40" ry="30" fill="#2d8f5e" opacity="0.8"/>
+  <ellipse cx="256" cy="340" rx="30" ry="20" fill="#2d8f5e" opacity="0.7"/>
+  <!-- Earth shine -->
+  <circle cx="256" cy="300" r="130" fill="none" stroke="#4dc9f6" stroke-width="3" opacity="0.4"/>
+  <!-- Orbit arc -->
+  <ellipse cx="256" cy="280" rx="200" ry="80" fill="none" stroke="#f0a500" stroke-width="4" stroke-dasharray="12 6" opacity="0.9"/>
+  <!-- Satellite body -->
+  <rect x="100" y="108" width="36" height="22" rx="4" fill="#cfd8dc"/>
+  <!-- Solar panels left -->
+  <rect x="52" y="112" width="42" height="14" rx="3" fill="#1565c0"/>
+  <line x1="73" y1="112" x2="73" y2="126" stroke="#90caf9" stroke-width="1.5"/>
+  <!-- Solar panels right -->
+  <rect x="142" y="112" width="42" height="14" rx="3" fill="#1565c0"/>
+  <line x1="163" y1="112" x2="163" y2="126" stroke="#90caf9" stroke-width="1.5"/>
+  <!-- Satellite antenna -->
+  <line x1="118" y1="108" x2="118" y2="96" stroke="#cfd8dc" stroke-width="2.5"/>
+  <circle cx="118" cy="93" r="4" fill="#f0a500"/>
+  <!-- Ground station dish -->
+  <ellipse cx="380" cy="430" rx="48" ry="18" fill="none" stroke="#78909c" stroke-width="5"/>
+  <line x1="380" y1="430" x2="380" y2="460" stroke="#78909c" stroke-width="5"/>
+  <line x1="355" y1="460" x2="405" y2="460" stroke="#78909c" stroke-width="5"/>
+  <!-- Radio signal lines -->
+  <line x1="340" y1="412" x2="150" y2="145" stroke="#f0a500" stroke-width="2" stroke-dasharray="8 5" opacity="0.7"/>
+  <!-- App name hint -->
+  <text x="256" y="498" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" font-weight="bold" fill="#4dc9f6" opacity="0.9">GP</text>
+</svg>

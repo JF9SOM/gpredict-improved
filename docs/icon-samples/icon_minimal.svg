@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a237e"/>
+      <stop offset="100%" stop-color="#0a0a2e"/>
+    </linearGradient>
+    <linearGradient id="earth2" x1="20%" y1="10%" x2="80%" y2="90%">
+      <stop offset="0%" stop-color="#26c6da"/>
+      <stop offset="100%" stop-color="#0077b6"/>
+    </linearGradient>
+  </defs>
+  <!-- Background rounded square -->
+  <rect width="512" height="512" rx="115" fill="url(#bg)"/>
+  <!-- Subtle grid lines (like a map) -->
+  <line x1="0" y1="256" x2="512" y2="256" stroke="#ffffff" stroke-width="0.5" opacity="0.08"/>
+  <line x1="256" y1="0" x2="256" y2="512" stroke="#ffffff" stroke-width="0.5" opacity="0.08"/>
+  <ellipse cx="256" cy="256" rx="220" ry="220" fill="none" stroke="#ffffff" stroke-width="0.5" opacity="0.06"/>
+  <!-- Earth (simple, bold) -->
+  <circle cx="256" cy="290" r="140" fill="url(#earth2)"/>
+  <ellipse cx="225" cy="265" rx="60" ry="45" fill="#00897b" opacity="0.8"/>
+  <ellipse cx="315" cy="305" rx="45" ry="35" fill="#00897b" opacity="0.75"/>
+  <ellipse cx="260" cy="350" rx="32" ry="20" fill="#00897b" opacity="0.7"/>
+  <!-- Orbit ring -->
+  <ellipse cx="256" cy="265" rx="215" ry="82" fill="none" stroke="#ff6d00" stroke-width="4.5" opacity="0.85"/>
+  <!-- Satellite (simple clean) -->
+  <rect x="92" y="100" width="40" height="26" rx="6" fill="#eceff1"/>
+  <rect x="42" y="105" width="44" height="16" rx="3" fill="#0d47a1"/>
+  <rect x="138" y="105" width="44" height="16" rx="3" fill="#0d47a1"/>
+  <line x1="112" y1="100" x2="112" y2="86" stroke="#eceff1" stroke-width="3"/>
+  <circle cx="112" cy="82" r="6" fill="#ff6d00"/>
+  <!-- Ground transceiver (IC-9700 style silhouette) -->
+  <rect x="310" y="390" width="110" height="65" rx="10" fill="#455a64"/>
+  <rect x="320" y="400" width="52" height="26" rx="4" fill="#1c313a"/>
+  <text x="346" y="417" text-anchor="middle" font-family="monospace" font-size="11" fill="#00e5ff">435.6</text>
+  <text x="346" y="428" text-anchor="middle" font-family="monospace" font-size="8" fill="#00b0ff">145.9</text>
+  <circle cx="396" cy="410" r="12" fill="#546e7a"/>
+  <circle cx="396" cy="410" r="7" fill="#607d8b"/>
+  <circle cx="396" cy="430" r="8" fill="#546e7a"/>
+  <circle cx="396" cy="430" r="4" fill="#607d8b"/>
+  <!-- Whip antenna on rig -->
+  <line x1="325" y1="390" x2="298" y2="318" stroke="#b0bec5" stroke-width="3.5"/>
+  <!-- Yagi elements -->
+  <line x1="298" y1="318" x2="275" y2="318" stroke="#b0bec5" stroke-width="3"/>
+  <line x1="298" y1="318" x2="321" y2="318" stroke="#b0bec5" stroke-width="3"/>
+  <line x1="285" y1="310" x2="285" y2="326" stroke="#b0bec5" stroke-width="2"/>
+  <line x1="311" y1="310" x2="311" y2="326" stroke="#b0bec5" stroke-width="2"/>
+  <!-- Doppler signal arc -->
+  <path d="M 298 318 Q 200 220 140 148" fill="none" stroke="#ff6d00" stroke-width="2.5" stroke-dasharray="10 5" opacity="0.75"/>
+</svg>
