@@ -2810,7 +2810,7 @@ class MainWindow(QMainWindow):
         if not SOAPY_AVAILABLE:
             return
 
-        rig = self._rig1 if slot == 1 else self._rig2
+        rig = self._rig_controller if slot == 1 else self._rig2_controller
         if not isinstance(rig, SdrRigAdapter):
             return
 

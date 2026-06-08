@@ -25,9 +25,10 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from sdr.demodulator import AUDIO_RATE, DemodMode, Demodulator
 from sdr.device import SdrDevice
@@ -58,8 +59,8 @@ class SDRPipeline(QThread):
     status_changed: Signal = Signal(str)
     error_occurred: Signal = Signal(str)
 
-    def __init__(self, device: SdrDevice, parent: object = None) -> None:
-        super().__init__(parent)  # type: ignore[call-arg]
+    def __init__(self, device: SdrDevice, parent: QObject | None = None) -> None:
+        super().__init__(parent)
         self._device = device
         self._demodulator = Demodulator(input_rate=device.sample_rate)
         self._recorder = IQRecorder()
@@ -71,7 +72,7 @@ class SDRPipeline(QThread):
 
         # Audio output
         self._audio_enabled: bool = False
-        self._sounddevice_stream: object = None
+        self._sounddevice_stream: Any = None
 
         # FFT timing
         self._last_fft_time: float = 0.0
@@ -199,7 +200,7 @@ class SDRPipeline(QThread):
     def _play_audio(self, pcm: np.ndarray) -> None:
         """Write PCM to sounddevice output stream, opening it on first call."""
         try:
-            import sounddevice as sd  # type: ignore[import-untyped]
+            import sounddevice as sd
 
             if self._sounddevice_stream is None:
                 self._sounddevice_stream = sd.OutputStream(
@@ -208,8 +209,8 @@ class SDRPipeline(QThread):
                     dtype="float32",
                     blocksize=len(pcm),
                 )
-                self._sounddevice_stream.start()  # type: ignore[union-attr]
-            self._sounddevice_stream.write(pcm)  # type: ignore[union-attr]
+                self._sounddevice_stream.start()
+            self._sounddevice_stream.write(pcm)
         except Exception:
             logger.exception("Audio output error")
             self._sounddevice_stream = None
@@ -217,8 +218,8 @@ class SDRPipeline(QThread):
     def _close_audio_stream(self) -> None:
         if self._sounddevice_stream is not None:
             try:
-                self._sounddevice_stream.stop()  # type: ignore[union-attr]
-                self._sounddevice_stream.close()  # type: ignore[union-attr]
+                self._sounddevice_stream.stop()
+                self._sounddevice_stream.close()
             except Exception:
                 pass
             self._sounddevice_stream = None

@@ -1709,7 +1709,7 @@ class SdrRigAdapter(RigController):
         return True
 
     @property
-    def sdr_device(self) -> object:
+    def sdr_device(self) -> SdrDevice | None:
         return self._sdr_device
 
 
