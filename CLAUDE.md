@@ -359,6 +359,61 @@ MODE_MAP = {
 - インストール時に `/etc/udev/rules.d/99-gpredict-improved.rules` を配置
 - `dialout` グループへの追加を案内
 
+### Hamlib バージョン管理・配布方針（2026-06-09 確定）
+
+#### 必須バージョン
+- **Hamlib 4.7.1 以上が必須**（FTX-1F モデル 1051 および SkyWatcher ローテーターは 4.7 以降でのみ動作）
+- 配布バンドル（AppImage / .exe / .dmg）には必ず 4.7.1 を同梱すること
+
+#### バンドル版 Hamlib のビルド
+
+| プラットフォーム | ビルド方法 | PyInstaller 収集元 |
+|---|---|---|
+| Linux | ソースから `/opt/hamlib/4.7` にビルド | `/opt/hamlib/4.7/lib/*.so` |
+| Windows | 公式 `hamlib-w32-4.7.1.zip` を展開 | `hamlib-win64\bin\*.dll` + Python bindings |
+| macOS | Homebrew `brew install hamlib` | `$(brew --prefix hamlib)/lib/` |
+
+#### in-app Hamlib アップデーター（Help > Hamlib Update…）
+
+ユーザーが GUI からバンドル版を上書きできる仕組み。AppImage・exe・dmg は読み取り専用なのでバンドルは変更できず、代わりにユーザーデータディレクトリへインストールする。
+
+**インストール先:**
+```
+Linux:   ~/.local/share/gpredict-improved/hamlib/
+macOS:   ~/Library/Application Support/gpredict-improved/hamlib/
+Windows: %APPDATA%/gpredict-improved/hamlib/
+```
+
+**起動時のロード優先順位:**
+1. ユーザーインストール版（`sys.path.insert(0, ...)` で先頭に追加）
+2. バンドル版 / システム版
+
+**Windowsの追加処理**: `os.add_dll_directory(user_hamlib_dir)` が必要（Python 3.8+）。`main.py` の起動ブロックで実施済み。
+
+**GitHub Releases アセット命名規則:**（CI が自動アップロード）
+
+| プラットフォーム | ファイル名 | 内容 |
+|---|---|---|
+| Linux | `hamlib-linux-x86_64-py311-4.7.1.tar.gz` | `$ORIGIN` rpath付きポータブルビルド |
+| Windows | `hamlib-windows-x86_64-py311-4.7.1.zip` | フラットレイアウト（DLL + .pyd + Hamlib.py） |
+| macOS | `hamlib-macos-arm64-py311-4.7.1.tar.gz` | `@loader_path` rpath + dylibbundler で依存解決済み |
+
+`py311` の部分は Python バージョンに応じて変化（`hamlib_info.py` の `_PYVER_TAG` で決定）。
+
+**関連ソースファイル:**
+- `src/core/hamlib_info.py` — バージョン検出・ユーザーディレクトリ・アセット命名
+- `src/ui/hamlib_update_dialog.py` — ダウンロード・展開・インストール UI
+- `src/main.py` — ユーザーインストール版の優先ロード・Windows DLL パス登録
+- `.github/workflows/ci.yml` — 各プラットフォームのポータブルパッケージビルドと Release アップロード
+
+#### Linux 開発環境固有: sys.path surgery
+
+開発機（`/opt/hamlib/4.7` が存在する場合のみ）は `/usr/lib/python3/dist-packages` を `sys.path` から除去して 4.7.1 を優先ロードする。
+
+**重要**: このブロックは `os.path.exists(_HAMLIB_SITE)` でガードされており、`/opt/hamlib/4.7` が存在しない一般ユーザー環境では一切実行されない。
+
+SoapySDR も同じ `dist-packages` に存在するため、パス除去前に `import SoapySDR` をプリロードして `sys.modules` に保持する（`main.py` の `contextlib.suppress` ブロック）。
+
 ---
 
 ## コミットメッセージ規則
