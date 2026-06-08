@@ -14,5 +14,8 @@ try:
     import SoapySDR as _soapy_probe  # noqa: F401
 
     SOAPY_AVAILABLE: bool = True
-except Exception:
+except Exception as _e:
+    import logging as _logging
+
+    _logging.getLogger(__name__).warning("SoapySDR import failed: %s: %s", type(_e).__name__, _e)
     SOAPY_AVAILABLE = False

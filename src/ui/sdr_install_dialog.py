@@ -183,12 +183,15 @@ class SdrInstallDialog(QDialog):
 
         # 1. Try SoapySDR enumerate first (preferred — gives full info)
         soapy_devices: list[SdrDeviceInfo] = []
+        logger.info("SDR dialog refresh: SOAPY_AVAILABLE=%s", SOAPY_AVAILABLE)
         if SOAPY_AVAILABLE:
             soapy_devices = SdrDevice.enumerate()
+        logger.info("SDR dialog: soapy_devices=%s", [(d.driver, d.label) for d in soapy_devices])
 
         # 2. Fallback to USB scan when SoapySDR absent or no devices found
         # enumerate_usb() tries pyusb first, then Linux sysfs — no guard needed
         usb_devices: list[SdrDeviceInfo] = SdrDevice.enumerate_usb()
+        logger.info("SDR dialog: usb_devices=%s", [(d.driver, d.label) for d in usb_devices])
 
         all_devices = soapy_devices or usb_devices
 
