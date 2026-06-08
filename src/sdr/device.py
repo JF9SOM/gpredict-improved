@@ -17,7 +17,6 @@ USB fallback:
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -27,8 +26,19 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SOAPY_AVAILABLE: bool = importlib.util.find_spec("SoapySDR") is not None
-PYUSB_AVAILABLE: bool = importlib.util.find_spec("usb") is not None
+try:
+    import SoapySDR as _soapy_probe  # noqa: F401
+
+    SOAPY_AVAILABLE: bool = True
+except Exception:
+    SOAPY_AVAILABLE = False
+
+try:
+    import usb.core as _usb_probe  # noqa: F401
+
+    PYUSB_AVAILABLE: bool = True
+except Exception:
+    PYUSB_AVAILABLE = False
 
 # Known SDR device VID/PID pairs for USB fallback detection
 _KNOWN_USB_DEVICES: list[tuple[int, int, str, str]] = [

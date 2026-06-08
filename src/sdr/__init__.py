@@ -10,6 +10,9 @@ SDR features are hidden from the UI (graceful degradation).
 
 from __future__ import annotations
 
-import importlib.util
+try:
+    import SoapySDR as _soapy_probe  # noqa: F401
 
-SOAPY_AVAILABLE: bool = importlib.util.find_spec("SoapySDR") is not None
+    SOAPY_AVAILABLE: bool = True
+except Exception:
+    SOAPY_AVAILABLE = False
