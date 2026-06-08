@@ -2,12 +2,13 @@
 Rig settings dialog.
 
 RigSettingsDialog — Dialog opened from Radio > Rig Settings.
-Two tabs (Rig 1 / Rig 2) each containing a _RigPanel.
+Three tabs: Rig 1 / Rig 2 / SDR Settings.
 Supports Hamlib direct connection and NET (rigctld) connection.
 
 DB keys:
   'rig1_settings' — JSON dict for Rig 1 (always active)
   'rig2_settings' — JSON dict for Rig 2 (has an 'enabled' boolean field)
+  'sdr_settings'  — JSON dict for SDR (device args, sample rate, gain, etc.)
 
 Backward compatibility: if 'rig1_settings' is absent but the legacy
 'rig_settings' key exists, it is migrated to 'rig1_settings' on first open.
@@ -43,6 +44,7 @@ from PySide6.QtWidgets import (
 
 from i18n import _
 from rig.controller import CTCSS_PRESET_TEMPLATES
+from sdr import SOAPY_AVAILABLE
 
 # ---------------------------------------------------------------------------
 # Hamlib Python binding (imported lazily to avoid Qt TLS collision at startup)
@@ -653,27 +655,268 @@ class _RigPanel(QWidget):
 # ---------------------------------------------------------------------------
 
 
+class _SdrSettingsPanel(QWidget):
+    """SDR Settings tab panel.
+
+    Allows the user to enumerate SoapySDR devices, configure the selected
+    device, and assign it to Rig 1 or Rig 2.
+
+    When SoapySDR is not installed, the panel shows an install prompt instead.
+    """
+
+    # Sample rates offered in the dropdown (Hz)
+    _SAMPLE_RATES: list[tuple[str, float]] = [
+        ("250 kHz", 250_000),
+        ("1.0 MHz", 1_000_000),
+        ("1.4 MHz", 1_400_000),
+        ("1.8 MHz", 1_800_000),
+        ("2.0 MHz", 2_000_000),
+        ("2.4 MHz", 2_400_000),
+        ("3.2 MHz", 3_200_000),
+    ]
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._devices: list[object] = []  # list[SdrDeviceInfo]
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        if not SOAPY_AVAILABLE:
+            msg = QLabel(
+                _(  # noqa: F823
+                    "SoapySDR is not installed.\n"
+                    "Use Help > SDR Device Installation to set up your device."
+                )
+            )
+            msg.setWordWrap(True)
+            msg.setStyleSheet("color: orange; font-weight: bold;")
+            layout.addWidget(msg)
+            layout.addStretch()
+            return
+
+        # -- Device selection row --
+        dev_group = QGroupBox(_("SDR Device"))
+        dev_form = QFormLayout(dev_group)
+
+        dev_row = QHBoxLayout()
+        self._dev_combo = QComboBox()
+        self._dev_combo.setMinimumWidth(260)
+        self._enum_btn = QPushButton(_("Enumerate"))
+        self._enum_btn.clicked.connect(self._on_enumerate)
+        dev_row.addWidget(self._dev_combo)
+        dev_row.addWidget(self._enum_btn)
+        dev_form.addRow(_("Device:"), dev_row)
+
+        self._driver_label = QLabel("—")
+        dev_form.addRow(_("Driver:"), self._driver_label)
+
+        self._serial_label = QLabel("—")
+        dev_form.addRow(_("Serial:"), self._serial_label)
+
+        layout.addWidget(dev_group)
+
+        # -- Configuration --
+        cfg_group = QGroupBox(_("Configuration"))
+        cfg_form = QFormLayout(cfg_group)
+
+        self._rate_combo = QComboBox()
+        for label, _hz in self._SAMPLE_RATES:
+            self._rate_combo.addItem(label)
+        self._rate_combo.setCurrentIndex(5)  # default 2.4 MHz
+        cfg_form.addRow(_("Sample Rate:"), self._rate_combo)
+
+        self._ppm_spin = QSpinBox()
+        self._ppm_spin.setRange(-200, 200)
+        self._ppm_spin.setValue(0)
+        self._ppm_spin.setSuffix(" ppm")
+        cfg_form.addRow(_("PPM Correction:"), self._ppm_spin)
+
+        gain_row = QHBoxLayout()
+        self._gain_auto_rb = QRadioButton(_("Auto"))
+        self._gain_manual_rb = QRadioButton(_("Manual"))
+        self._gain_auto_rb.setChecked(True)
+        self._gain_spin = QSpinBox()
+        self._gain_spin.setRange(0, 80)
+        self._gain_spin.setValue(40)
+        self._gain_spin.setSuffix(" dB")
+        self._gain_spin.setEnabled(False)
+        self._gain_auto_rb.toggled.connect(lambda on: self._gain_spin.setDisabled(on))
+        gain_row.addWidget(self._gain_auto_rb)
+        gain_row.addWidget(self._gain_manual_rb)
+        gain_row.addWidget(self._gain_spin)
+        cfg_form.addRow(_("RF Gain:"), gain_row)
+
+        layout.addWidget(cfg_group)
+
+        # -- Rig slot assignment --
+        assign_group = QGroupBox(_("Assign as"))
+        assign_layout = QHBoxLayout(assign_group)
+        self._rig1_rb = QRadioButton(_("Rig 1"))
+        self._rig2_rb = QRadioButton(_("Rig 2"))
+        self._rig_none_rb = QRadioButton(_("Not assigned"))
+        self._rig_none_rb.setChecked(True)
+        assign_layout.addWidget(self._rig1_rb)
+        assign_layout.addWidget(self._rig2_rb)
+        assign_layout.addWidget(self._rig_none_rb)
+        layout.addWidget(assign_group)
+
+        # -- IQ save directory --
+        iq_group = QGroupBox(_("IQ Recording"))
+        iq_form = QFormLayout(iq_group)
+        iq_row = QHBoxLayout()
+        self._iq_dir_edit = QLineEdit()
+        self._iq_dir_edit.setPlaceholderText(str(QWidget().fontMetrics()))  # overwritten below
+        self._iq_dir_edit.setText(str(__import__("pathlib").Path.home() / "iq_recordings"))
+        iq_browse_btn = QPushButton(_("Browse…"))
+        iq_browse_btn.clicked.connect(self._on_browse_iq_dir)
+        iq_row.addWidget(self._iq_dir_edit)
+        iq_row.addWidget(iq_browse_btn)
+        iq_form.addRow(_("Save directory:"), iq_row)
+        layout.addWidget(iq_group)
+
+        layout.addStretch()
+
+        # Enumerate on first show
+        self._on_enumerate()
+
+    # ------------------------------------------------------------------ #
+
+    def _on_enumerate(self) -> None:
+        if not SOAPY_AVAILABLE:
+            return
+        try:
+            from sdr.device import SdrDevice
+
+            self._devices = SdrDevice.enumerate()
+        except Exception:
+            self._devices = []
+
+        if not hasattr(self, "_dev_combo"):
+            return
+
+        self._dev_combo.clear()
+        if not self._devices:
+            self._dev_combo.addItem(_("(no devices found)"))
+            self._driver_label.setText("—")
+            self._serial_label.setText("—")
+        else:
+            for d in self._devices:
+                self._dev_combo.addItem(d.display_name)  # type: ignore[union-attr]
+            self._on_device_selected(0)
+            self._dev_combo.currentIndexChanged.connect(self._on_device_selected)
+
+    def _on_device_selected(self, idx: int) -> None:
+        if not self._devices or idx < 0 or idx >= len(self._devices):
+            return
+        d = self._devices[idx]
+        self._driver_label.setText(d.driver or "—")  # type: ignore[union-attr]
+        self._serial_label.setText(d.serial or "—")  # type: ignore[union-attr]
+
+    def _on_browse_iq_dir(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        path = QFileDialog.getExistingDirectory(
+            self, _("Select IQ Recording Directory"), self._iq_dir_edit.text()
+        )
+        if path:
+            self._iq_dir_edit.setText(path)
+
+    # ------------------------------------------------------------------ #
+    # Persistence
+    # ------------------------------------------------------------------ #
+
+    def save(self) -> dict[str, object]:
+        """Return a JSON-serialisable dict of current settings."""
+        if not SOAPY_AVAILABLE or not hasattr(self, "_dev_combo"):
+            return {"enabled": False}
+
+        idx = self._dev_combo.currentIndex()
+        device_args: dict[str, str] = {}
+        if self._devices and 0 <= idx < len(self._devices):
+            device_args = dict(self._devices[idx].args)  # type: ignore[union-attr]
+
+        rate_idx = self._rate_combo.currentIndex() if hasattr(self, "_rate_combo") else 5
+        rate_hz = (
+            self._SAMPLE_RATES[rate_idx][1]
+            if 0 <= rate_idx < len(self._SAMPLE_RATES)
+            else 2_400_000
+        )
+
+        assigned: int | None = None
+        if hasattr(self, "_rig1_rb") and self._rig1_rb.isChecked():
+            assigned = 1
+        elif hasattr(self, "_rig2_rb") and self._rig2_rb.isChecked():
+            assigned = 2
+
+        return {
+            "enabled": assigned is not None,
+            "assigned_rig": assigned,
+            "device_args": device_args,
+            "device_label": self._dev_combo.currentText(),
+            "sample_rate_hz": rate_hz,
+            "ppm": self._ppm_spin.value() if hasattr(self, "_ppm_spin") else 0,
+            "gain_auto": self._gain_auto_rb.isChecked() if hasattr(self, "_gain_auto_rb") else True,
+            "gain_db": self._gain_spin.value() if hasattr(self, "_gain_spin") else 40,
+            "iq_save_dir": self._iq_dir_edit.text() if hasattr(self, "_iq_dir_edit") else "",
+        }
+
+    def load(self, data: dict[str, object]) -> None:
+        """Restore settings from a previously saved dict."""
+        if not SOAPY_AVAILABLE or not hasattr(self, "_dev_combo"):
+            return
+
+        rate_hz = float(data.get("sample_rate_hz", 2_400_000))
+        for i, (_lbl, r) in enumerate(self._SAMPLE_RATES):
+            if abs(r - rate_hz) < 1:
+                self._rate_combo.setCurrentIndex(i)
+                break
+
+        self._ppm_spin.setValue(int(data.get("ppm", 0)))
+
+        gain_auto = bool(data.get("gain_auto", True))
+        self._gain_auto_rb.setChecked(gain_auto)
+        self._gain_manual_rb.setChecked(not gain_auto)
+        self._gain_spin.setValue(int(data.get("gain_db", 40)))
+
+        assigned = data.get("assigned_rig")
+        if assigned == 1:
+            self._rig1_rb.setChecked(True)
+        elif assigned == 2:
+            self._rig2_rb.setChecked(True)
+        else:
+            self._rig_none_rb.setChecked(True)
+
+        iq_dir = str(data.get("iq_save_dir", ""))
+        if iq_dir:
+            self._iq_dir_edit.setText(iq_dir)
+
+
 class RigSettingsDialog(QDialog):
     """Radio > Rig Settings dialog.
 
-    Two tabs — Rig 1 and Rig 2 — each backed by a ``_RigPanel``.
-    Hamlib models are loaded once and shared between both panels.
+    Three tabs — Rig 1, Rig 2, and SDR Settings — each backed by its panel.
+    Hamlib models are loaded once and shared between both rig panels.
 
     DB keys written on OK:
         ``rig1_settings`` — Rig 1 JSON dict
         ``rig2_settings`` — Rig 2 JSON dict (includes ``"enabled": bool``)
+        ``sdr_settings``  — SDR JSON dict
     """
 
     def __init__(self, conn: Any, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._conn = conn
         self.setWindowTitle(_("Rig Settings"))
-        self.resize(560, 600)
+        self.resize(560, 620)
 
         # Load models once; share between both panels to avoid double Hamlib scan
         self._all_models = _load_hamlib_models()
         self._panel1 = _RigPanel(1, self._all_models)
         self._panel2 = _RigPanel(2, self._all_models)
+        self._sdr_panel = _SdrSettingsPanel()
 
         self._setup_ui()
         self._load_settings()
@@ -688,6 +931,7 @@ class RigSettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._panel1, _("Rig 1"))
         tabs.addTab(self._panel2, _("Rig 2"))
+        tabs.addTab(self._sdr_panel, _("SDR Settings"))
         layout.addWidget(tabs)
 
         # Global info label: total model count
@@ -748,6 +992,14 @@ class RigSettingsDialog(QDialog):
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 self._panel2.load(json.loads(row2["value"]))
 
+        # --- SDR ---
+        row_sdr = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'sdr_settings'"
+        ).fetchone()
+        if row_sdr and row_sdr["value"]:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                self._sdr_panel.load(json.loads(row_sdr["value"]))
+
     def _save_settings(self) -> None:
         """Save Rig 1 and Rig 2 settings to the DB.
 
@@ -784,5 +1036,11 @@ class RigSettingsDialog(QDialog):
             "INSERT OR REPLACE INTO app_settings (key, value, updated_at) "
             "VALUES ('rig2_settings', ?, CURRENT_TIMESTAMP)",
             (json.dumps(s2),),
+        )
+        s_sdr = self._sdr_panel.save()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) "
+            "VALUES ('sdr_settings', ?, CURRENT_TIMESTAMP)",
+            (json.dumps(s_sdr),),
         )
         self._conn.commit()

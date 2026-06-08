@@ -72,6 +72,13 @@ packaging = [
 notifications = [
     "plyer>=2.1",
 ]
+# SDR support — SoapySDR itself is a system package (not pip-installable).
+# Install via: apt install python3-soapysdr  /  brew install soapysdr
+sdr = [
+    "pyusb>=1.2",        # USB VID/PID scan for SDR Device Installation dialog
+    "scipy>=1.12",       # DSP filters and Hilbert transform for demodulators
+    "sounddevice>=0.4",  # Audio output (PortAudio wrapper)
+]
 
 [project.scripts]
 gpredict-improved = "gpredict_improved.main:main"

@@ -368,6 +368,8 @@ class MainWindow(QMainWindow):
         self._radio_control.ctcss_activate_requested.connect(self._on_ctcss_activate)
         self._radio_control.rotator_connected.connect(self._on_rotator_connected)
         self._radio_control.south_init_changed.connect(self._on_south_init_changed)
+        self._radio_control.rig_connected.connect(lambda: self._on_rig_slot_connected(1))
+        self._radio_control.rig2_connected.connect(lambda: self._on_rig_slot_connected(2))
         self._restore_satellite_filter()
         # Load bundled community transmitters immediately (no network required).
         # This runs on the main thread so satellites are visible before any
@@ -463,6 +465,14 @@ class MainWindow(QMainWindow):
         )
         self._tab_widget.setTabVisible(self._group_chart_tab_idx, False)
         self._tab_widget.addTab(self._radio_control, _("Radio Control"))
+
+        # SDR Control tab — hidden until an SDR device is connected
+        from ui.sdr_control_widget import SdrControlWidget
+
+        self._sdr_control = SdrControlWidget()
+        self._sdr_control_tab_idx = self._tab_widget.addTab(self._sdr_control, _("SDR Control"))
+        self._tab_widget.setTabVisible(self._sdr_control_tab_idx, False)
+
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
         h_splitter.addWidget(self._tab_widget)
 
@@ -549,6 +559,8 @@ class MainWindow(QMainWindow):
         help_menu = mb.addMenu(_("Help"))
         if help_menu:
             help_menu.addAction(_("Satellite Color"), self._on_satellite_color)
+            help_menu.addSeparator()
+            help_menu.addAction(_("SDR Device Installation…"), self._on_sdr_install)
             help_menu.addSeparator()
             help_menu.addAction(_("About"), self._on_about)
             help_menu.addAction(_("GitHub"), self._on_github)
@@ -1843,6 +1855,10 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(None, None, None, None, None, None)
         self._send_mode_only_to_rig()
         self._send_ctcss_cat_to_rig()
+        # Auto-select SDR demod mode from transponder
+        if self._current_transmitter:
+            satnogs_mode = self._current_transmitter.get("mode") or ""
+            self._sdr_control.set_transponder_mode(satnogs_mode)
 
     def _disconnect_rig(self) -> None:
         """Disconnect the rig and refresh the UI status."""
@@ -2779,6 +2795,52 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QDesktopServices
 
         QDesktopServices.openUrl(QUrl("https://github.com/JF9SOM/gpredict-improved"))
+
+    def _on_sdr_install(self) -> None:
+        from ui.sdr_install_dialog import SdrInstallDialog
+
+        dlg = SdrInstallDialog(self)
+        dlg.exec()
+
+    def _on_rig_slot_connected(self, slot: int) -> None:
+        """Called when Rig 1 or Rig 2 connects.  Starts SDR pipeline if the slot is an SDR."""
+        from rig.controller import SdrRigAdapter
+        from sdr import SOAPY_AVAILABLE
+
+        if not SOAPY_AVAILABLE:
+            return
+
+        rig = self._rig1 if slot == 1 else self._rig2
+        if not isinstance(rig, SdrRigAdapter):
+            return
+
+        device = rig.sdr_device
+        if device is None:
+            return
+
+        # Load IQ save dir from settings
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key='sdr_settings'"
+            ).fetchone()
+            import json as _json
+
+            sdr_cfg = _json.loads(row["value"]) if row and row["value"] else {}
+        except Exception:
+            sdr_cfg = {}
+
+        iq_dir = sdr_cfg.get("iq_save_dir", "")
+        self._sdr_control.set_iq_save_dir(str(iq_dir))
+
+        from sdr.pipeline import SDRPipeline
+
+        pipeline = SDRPipeline(device, parent=self)
+        rig.attach_pipeline(pipeline)
+        self._sdr_control.set_pipeline(pipeline)
+        pipeline.start()
+
+        # Show the SDR Control tab
+        self._tab_widget.setTabVisible(self._sdr_control_tab_idx, True)
 
     def _on_show_qr(self) -> None:
         if not self._web_server_url:

@@ -1598,6 +1598,118 @@ class HamlibRotatorController(RotatorController):
 # ---------------------------------------------------------------------------
 # HamlibVersionChecker
 # ---------------------------------------------------------------------------
+# SdrRigAdapter — wraps an SdrDevice as a RigController slot
+# ---------------------------------------------------------------------------
+
+
+class SdrRigAdapter(RigController):
+    """
+    Adapter that presents an SDR device as a Rig 1 / Rig 2 controller.
+
+    The SDR does not transmit, so set_mode / set_ctcss_tone / set_dcs_code are
+    no-ops.  set_frequency / set_vfo_frequencies update the SDR center frequency
+    so the Doppler-correction loop drives the SDR tuning.
+
+    is_sdr = True lets the UI distinguish SDR slots from Hamlib rigs.
+    """
+
+    is_sdr: bool = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Lazily imported to avoid loading SoapySDR at startup
+        self._sdr_device: object = None
+        self._pipeline: object = None
+        self._device_info: object = None  # SdrDeviceInfo
+
+    def set_device_info(self, info: object) -> None:
+        """Attach an SdrDeviceInfo before calling connect()."""
+        self._device_info = info
+
+    def attach_pipeline(self, pipeline: object) -> None:
+        """Attach a running SDRPipeline (set after connect succeeds)."""
+        self._pipeline = pipeline
+
+    def connect(self) -> bool:
+        """Open the SoapySDR device. Returns True on success."""
+        if self._device_info is None:
+            logger.warning("SdrRigAdapter: no device_info set")
+            return False
+        try:
+            from sdr.device import SdrDevice  # type: ignore[import-untyped]
+
+            dev = SdrDevice(self._device_info)  # type: ignore[arg-type]
+            if dev.open():
+                self._sdr_device = dev
+                with self._lock:
+                    self._state = RigState.CONNECTED
+                logger.info("SDR connected: %s", self._device_info.display_name)  # type: ignore[union-attr]
+                return True
+        except Exception:
+            logger.exception("SdrRigAdapter.connect failed")
+        with self._lock:
+            self._state = RigState.ERROR
+        return False
+
+    def disconnect(self) -> None:
+        """Stop the pipeline and close the device."""
+        if self._pipeline is not None:
+            try:
+                self._pipeline.stop()  # type: ignore[union-attr]
+                self._pipeline.wait(3000)  # type: ignore[union-attr]
+            except Exception:
+                pass
+            self._pipeline = None
+        if self._sdr_device is not None:
+            with contextlib.suppress(Exception):
+                self._sdr_device.close()  # type: ignore[union-attr]
+            self._sdr_device = None
+        with self._lock:
+            self._state = RigState.DISCONNECTED
+
+    def set_frequency(self, freq_hz: float, vfo: str = "VFOA") -> bool:
+        """Retune the SDR center frequency (used by Doppler correction loop)."""
+        if self._sdr_device is not None:
+            return self._sdr_device.set_center_freq(freq_hz)  # type: ignore[union-attr]
+        return False
+
+    def get_frequency(self, vfo: str = "VFOA") -> float:
+        if self._sdr_device is not None:
+            return self._sdr_device.center_freq  # type: ignore[union-attr]
+        return -1.0
+
+    def set_vfo_frequencies(
+        self,
+        vfoa_hz: float | None,
+        vfob_hz: float | None,
+    ) -> bool:
+        """For SDR, only the downlink (vfoa_hz) matters."""
+        if vfoa_hz is not None:
+            return self.set_frequency(vfoa_hz)
+        return True
+
+    def set_mode(self, mode: str, passband_hz: int = 0, vfo: str = "VFOA") -> bool:
+        """SDR mode is controlled via SDR Control tab, not Hamlib."""
+        return True
+
+    def get_mode(self, vfo: str = "VFOA") -> str:
+        return self._freq_state.mode
+
+    def set_ctcss_tone(self, tone_hz: float) -> bool:
+        return True  # SDR RX only — no CTCSS
+
+    def set_dcs_code(self, code: int) -> bool:
+        return True
+
+    def set_vfo(self, vfo: str) -> bool:
+        return True
+
+    @property
+    def sdr_device(self) -> object:
+        return self._sdr_device
+
+
+# ---------------------------------------------------------------------------
 
 
 class HamlibVersionChecker:

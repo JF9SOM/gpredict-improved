@@ -556,10 +556,14 @@ class RadioControlWidget(QWidget):
         self._connect_rig1_btn.setEnabled(True)
         state = self._rig1.state
         if state == RigState.CONNECTED:
-            info = self._rig1.get_rig_info()
-            name = info.model_name if info else "—"
-            self._rig1_status_label.setText(f"{_('Connected')}: {name}")
-            self._rig1_status_label.setStyleSheet("color: green;")
+            if getattr(self._rig1, "is_sdr", False):
+                self._rig1_status_label.setText(_("SDR: Connected"))
+                self._rig1_status_label.setStyleSheet("color: #00dcff; font-weight: bold;")
+            else:
+                info = self._rig1.get_rig_info()
+                name = info.model_name if info else "—"
+                self._rig1_status_label.setText(f"{_('Connected')}: {name}")
+                self._rig1_status_label.setStyleSheet("color: green;")
             self._connect_rig1_btn.setText(_("Disconnect Rig 1"))
         elif state == RigState.CONNECTING:
             self._rig1_status_label.setText(_("Connecting..."))
@@ -584,10 +588,14 @@ class RadioControlWidget(QWidget):
         self._connect_rig2_btn.setEnabled(True)
         state = self._rig2.state
         if state == RigState.CONNECTED:
-            info = self._rig2.get_rig_info()
-            name = info.model_name if info else "—"
-            self._rig2_status_label.setText(f"{_('Connected')}: {name}")
-            self._rig2_status_label.setStyleSheet("color: green;")
+            if getattr(self._rig2, "is_sdr", False):
+                self._rig2_status_label.setText(_("SDR: Connected"))
+                self._rig2_status_label.setStyleSheet("color: #00dcff; font-weight: bold;")
+            else:
+                info = self._rig2.get_rig_info()
+                name = info.model_name if info else "—"
+                self._rig2_status_label.setText(f"{_('Connected')}: {name}")
+                self._rig2_status_label.setStyleSheet("color: green;")
             self._connect_rig2_btn.setText(_("Disconnect Rig 2"))
         elif state == RigState.CONNECTING:
             self._rig2_status_label.setText(_("Connecting..."))
