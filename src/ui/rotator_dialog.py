@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.hamlib_info import get_hamlib_version
 from i18n import _
 from ui.rig_dialog import _scan_serial_ports  # reuse port scanner
 
@@ -175,10 +176,21 @@ class RotatorSettingsDialog(QDialog):
         layout.addWidget(self._net_group)
         self._net_group.setVisible(False)
 
-        # --- Status ---
+        # --- Status + Hamlib version / update link ---
         self._status_label = QLabel("")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._status_label)
+
+        hamlib_row = QHBoxLayout()
+        hamlib_row.addWidget(QLabel(_("Hamlib {ver}").format(ver=get_hamlib_version())))
+        hamlib_row.addStretch()
+        hamlib_update_btn = QPushButton(_("Hamlib Update…"))
+        hamlib_update_btn.setFlat(True)
+        hamlib_update_btn.setStyleSheet("color: #3498db; text-decoration: underline;")
+        hamlib_update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        hamlib_update_btn.clicked.connect(self._on_hamlib_update)
+        hamlib_row.addWidget(hamlib_update_btn)
+        layout.addLayout(hamlib_row)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -260,6 +272,12 @@ class RotatorSettingsDialog(QDialog):
                 self._port_combo.setCurrentIndex(idx)
             else:
                 self._port_combo.setEditText(current)
+
+    # ------------------------------------------------------------------ #
+    def _on_hamlib_update(self) -> None:
+        from ui.hamlib_update_dialog import HamlibUpdateDialog
+
+        HamlibUpdateDialog(self).exec()
 
     # ------------------------------------------------------------------ #
     # Settings load / save

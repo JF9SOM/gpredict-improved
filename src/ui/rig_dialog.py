@@ -936,11 +936,25 @@ class RigSettingsDialog(QDialog):
         tabs.addTab(self._sdr_panel, _("SDR Settings"))
         layout.addWidget(tabs)
 
-        # Global info label: total model count
+        # Global info: model count + Hamlib version + update link
+        from core.hamlib_info import get_hamlib_version
+
         n = len(self._all_models)
-        self._status_label = QLabel(_("{n} rig models available").format(n=n))
-        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._status_label)
+        hamlib_ver = get_hamlib_version()
+        info_row = QHBoxLayout()
+        self._status_label = QLabel(
+            _("{n} rig models available  |  Hamlib {ver}").format(n=n, ver=hamlib_ver)
+        )
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        info_row.addWidget(self._status_label)
+        info_row.addStretch()
+        hamlib_update_btn = QPushButton(_("Hamlib Update…"))
+        hamlib_update_btn.setFlat(True)
+        hamlib_update_btn.setStyleSheet("color: #3498db; text-decoration: underline;")
+        hamlib_update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        hamlib_update_btn.clicked.connect(self._on_hamlib_update)
+        info_row.addWidget(hamlib_update_btn)
+        layout.addLayout(info_row)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -953,6 +967,11 @@ class RigSettingsDialog(QDialog):
     # ------------------------------------------------------------------ #
     # Settings persistence
     # ------------------------------------------------------------------ #
+
+    def _on_hamlib_update(self) -> None:
+        from ui.hamlib_update_dialog import HamlibUpdateDialog
+
+        HamlibUpdateDialog(self).exec()
 
     def _load_settings(self) -> None:
         """Load Rig 1 and Rig 2 settings from the DB.

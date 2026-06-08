@@ -81,9 +81,15 @@ jobs:
 
       - name: Build Hamlib 4.7.1 from source
         run: |
-          wget -q https://github.com/Hamlib/Hamlib/releases/download/4.7.1/hamlib-4.7.1.tar.gz
-          tar -xzf hamlib-4.7.1.tar.gz
-          cd hamlib-4.7.1
+          HAMLIB_VER="4.7.1"
+          PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+          PYTAG=$(python3 -c "import sys; print(f'py{sys.version_info.major}{sys.version_info.minor}')")
+
+          wget -q https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-${HAMLIB_VER}.tar.gz
+          tar -xzf hamlib-${HAMLIB_VER}.tar.gz
+
+          # --- Build 1: bundled (rpath = /opt/hamlib/4.7/lib for PyInstaller) ---
+          cd hamlib-${HAMLIB_VER}
           ./configure \
             --prefix=/opt/hamlib/4.7 \
             --enable-python \
@@ -93,9 +99,35 @@ jobs:
           sudo make install
           sudo ldconfig
           # Copy Python bindings into the CI Python's site-packages
-          PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
           PY_SITE=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
           cp -r /opt/hamlib/4.7/lib/python${PYVER}/site-packages/Hamlib* ${PY_SITE}/
+
+          # --- Build 2: portable (rpath = $ORIGIN for in-app user update) ---
+          make clean
+          ./configure \
+            --prefix=/tmp/hamlib-portable \
+            --enable-python \
+            --disable-static \
+            LDFLAGS="-Wl,-rpath,\$ORIGIN" \
+            PYTHON=$(which python3)
+          make -j$(nproc)
+          make install
+          cd ..
+
+          # Package: all files flat so $ORIGIN works (libhamlib.so.4 next to _Hamlib.so)
+          PKG="hamlib-linux-x86_64-${PYTAG}-${HAMLIB_VER}"
+          mkdir -p ${PKG}
+          # Shared library
+          SOFILE=$(ls /tmp/hamlib-portable/lib/libhamlib.so.4.*)
+          cp ${SOFILE} ${PKG}/
+          ln -sf $(basename ${SOFILE}) ${PKG}/libhamlib.so.4
+          # Python binding
+          cp /tmp/hamlib-portable/lib/python${PYVER}/site-packages/Hamlib.py ${PKG}/
+          cp /tmp/hamlib-portable/lib/python${PYVER}/site-packages/_Hamlib*.so ${PKG}/
+          # Version marker
+          echo "${HAMLIB_VER}" > ${PKG}/version.txt
+          tar -czf ${PKG}.tar.gz ${PKG}/
+          echo "HAMLIB_PORTABLE_PKG=${PKG}.tar.gz" >> $GITHUB_ENV
 
       - name: Install Python dependencies
         run: pip install -e ".[packaging]"
@@ -117,7 +149,9 @@ jobs:
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/GPredict-Improved-x86_64.AppImage
+          files: |
+            dist/GPredict-Improved-x86_64.AppImage
+            ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
 
   build-windows:

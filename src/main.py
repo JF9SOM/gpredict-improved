@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 # In a PyInstaller bundle the Python SSL CA bundle is not present on the system
 # path.  Point httpx (and the stdlib ssl module) at the certifi bundle that was
@@ -35,6 +36,19 @@ if getattr(sys, "frozen", False):
 # the older system package (4.5.5).  Loading both causes a "Hash collision"
 # fatal error in Hamlib's rig registry.  This block is a no-op when running
 # from a PyInstaller bundle or on Windows/macOS where /opt/hamlib does not exist.
+# If the user installed a newer Hamlib via the in-app updater, load it first
+# so it takes priority over the bundled version on all platforms.
+try:
+    from platformdirs import user_data_dir as _udd
+
+    _hamlib_user_dir = Path(_udd("gpredict-improved")) / "hamlib"
+except Exception:
+    _hamlib_user_dir = Path.home() / ".local" / "share" / "gpredict-improved" / "hamlib"
+if _hamlib_user_dir.exists():
+    _hamlib_user_str = str(_hamlib_user_dir)
+    if _hamlib_user_str not in sys.path:
+        sys.path.insert(0, _hamlib_user_str)
+
 if sys.platform == "linux":
     _pyver = f"{sys.version_info.major}.{sys.version_info.minor}"
     _HAMLIB_SITE = f"/opt/hamlib/4.7/lib/python{_pyver}/site-packages"
