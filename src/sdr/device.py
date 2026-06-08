@@ -98,7 +98,7 @@ class SdrDevice:
         if not SOAPY_AVAILABLE:
             return []
         try:
-            import SoapySDR  # type: ignore[import-untyped]
+            import SoapySDR
 
             results: list[SdrDeviceInfo] = []
             for kw in SoapySDR.Device.enumerate():
@@ -131,7 +131,7 @@ class SdrDevice:
         if not PYUSB_AVAILABLE:
             return []
         try:
-            import usb.core  # type: ignore[import-untyped]
+            import usb.core
 
             results: list[SdrDeviceInfo] = []
             for vid, pid, label, module in _KNOWN_USB_DEVICES:
@@ -179,7 +179,7 @@ class SdrDevice:
 
     def open(self) -> bool:
         """Open the device. Returns True on success."""
-        import SoapySDR  # type: ignore[import-untyped]
+        import SoapySDR
 
         with self._lock:
             if self._dev is not None:
@@ -208,7 +208,7 @@ class SdrDevice:
 
     def start_stream(self, mtu: int = 1024) -> bool:
         """Activate the RX stream. Returns True on success."""
-        import SoapySDR  # type: ignore[import-untyped]
+        import SoapySDR
 
         with self._lock:
             if self._dev is None:
@@ -365,7 +365,7 @@ class SdrDevice:
 
     def _apply_settings(self) -> None:
         """Push stored settings to the freshly opened device."""
-        import SoapySDR  # type: ignore[import-untyped]
+        import SoapySDR
 
         if self._dev is None:
             return

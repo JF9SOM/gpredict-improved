@@ -20,7 +20,10 @@ import contextlib
 import glob
 import json
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sdr.device import SdrDeviceInfo
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -677,7 +680,7 @@ class _SdrSettingsPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._devices: list[object] = []  # list[SdrDeviceInfo]
+        self._devices: list[SdrDeviceInfo] = []
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -804,7 +807,7 @@ class _SdrSettingsPanel(QWidget):
             self._serial_label.setText("—")
         else:
             for d in self._devices:
-                self._dev_combo.addItem(d.display_name)  # type: ignore[union-attr]
+                self._dev_combo.addItem(d.display_name)
             self._on_device_selected(0)
             self._dev_combo.currentIndexChanged.connect(self._on_device_selected)
 
@@ -812,8 +815,8 @@ class _SdrSettingsPanel(QWidget):
         if not self._devices or idx < 0 or idx >= len(self._devices):
             return
         d = self._devices[idx]
-        self._driver_label.setText(d.driver or "—")  # type: ignore[union-attr]
-        self._serial_label.setText(d.serial or "—")  # type: ignore[union-attr]
+        self._driver_label.setText(d.driver or "—")
+        self._serial_label.setText(d.serial or "—")
 
     def _on_browse_iq_dir(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -836,7 +839,7 @@ class _SdrSettingsPanel(QWidget):
         idx = self._dev_combo.currentIndex()
         device_args: dict[str, str] = {}
         if self._devices and 0 <= idx < len(self._devices):
-            device_args = dict(self._devices[idx].args)  # type: ignore[union-attr]
+            device_args = dict(self._devices[idx].args)
 
         rate_idx = self._rate_combo.currentIndex() if hasattr(self, "_rate_combo") else 5
         rate_hz = (
@@ -868,18 +871,18 @@ class _SdrSettingsPanel(QWidget):
         if not SOAPY_AVAILABLE or not hasattr(self, "_dev_combo"):
             return
 
-        rate_hz = float(data.get("sample_rate_hz", 2_400_000))
+        rate_hz = float(data.get("sample_rate_hz") or 2_400_000)
         for i, (_lbl, r) in enumerate(self._SAMPLE_RATES):
             if abs(r - rate_hz) < 1:
                 self._rate_combo.setCurrentIndex(i)
                 break
 
-        self._ppm_spin.setValue(int(data.get("ppm", 0)))
+        self._ppm_spin.setValue(int(data.get("ppm") or 0))
 
         gain_auto = bool(data.get("gain_auto", True))
         self._gain_auto_rb.setChecked(gain_auto)
         self._gain_manual_rb.setChecked(not gain_auto)
-        self._gain_spin.setValue(int(data.get("gain_db", 40)))
+        self._gain_spin.setValue(int(data.get("gain_db") or 40))
 
         assigned = data.get("assigned_rig")
         if assigned == 1:

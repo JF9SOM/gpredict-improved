@@ -176,8 +176,10 @@ class SdrInstallDialog(QDialog):
         # Clear device list
         while self._dev_layout.count():
             item = self._dev_layout.takeAt(0)
-            if item and item.widget():
-                item.widget().deleteLater()
+            if item:
+                w = item.widget()
+                if w:
+                    w.deleteLater()
 
         # 1. Try SoapySDR enumerate first (preferred — gives full info)
         soapy_devices: list[SdrDeviceInfo] = []

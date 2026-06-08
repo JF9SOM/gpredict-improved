@@ -25,7 +25,11 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sdr.device import SdrDevice, SdrDeviceInfo
+    from sdr.pipeline import SDRPipeline
 
 import httpx
 
@@ -1618,15 +1622,15 @@ class SdrRigAdapter(RigController):
     def __init__(self) -> None:
         super().__init__()
         # Lazily imported to avoid loading SoapySDR at startup
-        self._sdr_device: object = None
-        self._pipeline: object = None
-        self._device_info: object = None  # SdrDeviceInfo
+        self._sdr_device: SdrDevice | None = None
+        self._pipeline: SDRPipeline | None = None
+        self._device_info: SdrDeviceInfo | None = None
 
-    def set_device_info(self, info: object) -> None:
+    def set_device_info(self, info: SdrDeviceInfo) -> None:
         """Attach an SdrDeviceInfo before calling connect()."""
         self._device_info = info
 
-    def attach_pipeline(self, pipeline: object) -> None:
+    def attach_pipeline(self, pipeline: SDRPipeline) -> None:
         """Attach a running SDRPipeline (set after connect succeeds)."""
         self._pipeline = pipeline
 
@@ -1636,14 +1640,14 @@ class SdrRigAdapter(RigController):
             logger.warning("SdrRigAdapter: no device_info set")
             return False
         try:
-            from sdr.device import SdrDevice  # type: ignore[import-untyped]
+            from sdr.device import SdrDevice
 
-            dev = SdrDevice(self._device_info)  # type: ignore[arg-type]
+            dev = SdrDevice(self._device_info)
             if dev.open():
                 self._sdr_device = dev
                 with self._lock:
                     self._state = RigState.CONNECTED
-                logger.info("SDR connected: %s", self._device_info.display_name)  # type: ignore[union-attr]
+                logger.info("SDR connected: %s", self._device_info.display_name)
                 return True
         except Exception:
             logger.exception("SdrRigAdapter.connect failed")
@@ -1655,14 +1659,14 @@ class SdrRigAdapter(RigController):
         """Stop the pipeline and close the device."""
         if self._pipeline is not None:
             try:
-                self._pipeline.stop()  # type: ignore[union-attr]
-                self._pipeline.wait(3000)  # type: ignore[union-attr]
+                self._pipeline.stop()
+                self._pipeline.wait(3000)
             except Exception:
                 pass
             self._pipeline = None
         if self._sdr_device is not None:
             with contextlib.suppress(Exception):
-                self._sdr_device.close()  # type: ignore[union-attr]
+                self._sdr_device.close()
             self._sdr_device = None
         with self._lock:
             self._state = RigState.DISCONNECTED
@@ -1670,12 +1674,12 @@ class SdrRigAdapter(RigController):
     def set_frequency(self, freq_hz: float, vfo: str = "VFOA") -> bool:
         """Retune the SDR center frequency (used by Doppler correction loop)."""
         if self._sdr_device is not None:
-            return self._sdr_device.set_center_freq(freq_hz)  # type: ignore[union-attr]
+            return self._sdr_device.set_center_freq(freq_hz)
         return False
 
     def get_frequency(self, vfo: str = "VFOA") -> float:
         if self._sdr_device is not None:
-            return self._sdr_device.center_freq  # type: ignore[union-attr]
+            return self._sdr_device.center_freq
         return -1.0
 
     def set_vfo_frequencies(

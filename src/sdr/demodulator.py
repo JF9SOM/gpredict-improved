@@ -17,7 +17,7 @@ import logging
 from enum import Enum
 
 import numpy as np
-from scipy import signal as sp_signal  # type: ignore[import-untyped]
+from scipy import signal as sp_signal
 
 logger = logging.getLogger(__name__)
 

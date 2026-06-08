@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
-import scipy.io.wavfile as wav  # type: ignore[import-untyped]
+import scipy.io.wavfile as wav
 
 logger = logging.getLogger(__name__)
 
