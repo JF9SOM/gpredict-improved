@@ -342,9 +342,7 @@ class SdrInstallDialog(QDialog):
         self._log.append(f"\n{'✅' if success else '❌'}  {msg}")
         if success:
             self._refresh()
-            self._log.append(
-                _("\n⚠️  Restart GPredict-Improved to activate the installed drivers.")
-            )
+            self._log.append(_("\n⚠️  Restart GPredict-Improved to activate the installed drivers."))
 
     def _download_and_run(self, url: str) -> None:
         """Download a file and run it (Windows helper)."""
