@@ -560,6 +560,7 @@ class MainWindow(QMainWindow):
         if help_menu:
             help_menu.addAction(_("Satellite Color"), self._on_satellite_color)
             help_menu.addSeparator()
+            help_menu.addAction(_("Check for Updates…"), self._on_check_updates)
             help_menu.addAction(_("SDR Device Installation…"), self._on_sdr_install)
             help_menu.addAction(_("Hamlib Update…"), self._on_hamlib_update)
             help_menu.addSeparator()
@@ -2801,6 +2802,15 @@ class MainWindow(QMainWindow):
         from ui.sdr_install_dialog import SdrInstallDialog
 
         dlg = SdrInstallDialog(self)
+        dlg.exec()
+
+    def _on_check_updates(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        from ui.app_update_dialog import AppUpdateDialog
+
+        dlg = AppUpdateDialog(self)
+        dlg.quit_requested.connect(QApplication.quit)
         dlg.exec()
 
     def _on_hamlib_update(self) -> None:

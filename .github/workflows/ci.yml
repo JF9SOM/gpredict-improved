@@ -226,23 +226,27 @@ jobs:
           $env:PYTHONPATH = "src"
           pyinstaller scripts/gpredict-improved.spec --noconfirm
 
-      - name: Package as zip
+      - name: Build NSIS installer
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\gpredict-improved\* `
-            -DestinationPath dist\GPredict-Improved-Windows.zip
+          # Resolve version from git tag (e.g. v0.1.0-beta.33 → 0.1.0.33 for NSIS VIProductVersion)
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag.TrimStart("v")
+          # NSIS /DAPP_VERSION passes the raw tag version string (used for display)
+          makensis /DAPP_VERSION=$ver scripts\installer.nsi
+          Write-Host "Installer built: dist\GPredict-Improved-Setup.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: dist/GPredict-Improved-Windows.zip
+          path: dist/GPredict-Improved-Setup.exe
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/GPredict-Improved-Windows.zip
+            dist/GPredict-Improved-Setup.exe
             ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
 
