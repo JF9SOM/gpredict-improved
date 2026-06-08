@@ -48,6 +48,10 @@ if _hamlib_user_dir.exists():
     _hamlib_user_str = str(_hamlib_user_dir)
     if _hamlib_user_str not in sys.path:
         sys.path.insert(0, _hamlib_user_str)
+    # Windows: register the directory for DLL loading so _Hamlib.pyd finds
+    # hamlib.dll and its dependencies placed in the same flat directory.
+    if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(_hamlib_user_str)
 
 if sys.platform == "linux":
     _pyver = f"{sys.version_info.major}.{sys.version_info.minor}"

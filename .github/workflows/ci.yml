@@ -173,18 +173,17 @@ jobs:
       - name: Install Python dependencies
         run: pip install -e ".[packaging]"
 
-      - name: Download Hamlib 4.7.1 Windows binaries
+      - name: Download Hamlib 4.7.1 Windows binaries and build portable package
         shell: pwsh
         run: |
-          $url = "https://github.com/Hamlib/Hamlib/releases/download/4.7.1/hamlib-w32-4.7.1.zip"
+          $HAMLIB_VER = "4.7.1"
+          $PYTAG = python -c "import sys; print(f'py{sys.version_info.major}{sys.version_info.minor}')"
+          $url = "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-w32-${HAMLIB_VER}.zip"
           Invoke-WebRequest -Uri $url -OutFile hamlib.zip
           Expand-Archive -Path hamlib.zip -DestinationPath hamlib-extracted
           # Locate the extracted root directory (varies by release)
           $extracted = Get-ChildItem -Path hamlib-extracted -Directory | Select-Object -First 1
           Write-Host "Extracted to: $($extracted.FullName)"
-          New-Item -ItemType Directory -Force -Path hamlib-win64\bin | Out-Null
-          # Copy all DLLs (w32 package contains both 32-bit and 64-bit binaries)
-          Copy-Item "$($extracted.FullName)\bin\*.dll" -Destination hamlib-win64\bin\ -ErrorAction SilentlyContinue
           # Copy Python bindings into the CI Python's site-packages
           $sitePackages = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
           $pyFolders = @("python3.11", "python3.12", "python3", "python")
@@ -198,6 +197,28 @@ jobs:
           }
           # Verify Hamlib is importable
           python -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
+
+          # --- Build portable flat package for in-app user update ---
+          # Flat layout: all DLLs + .pyd + Hamlib.py in one directory.
+          # Python loads the .pyd and os.add_dll_directory() makes the DLLs visible.
+          $pkgName = "hamlib-windows-x86_64-${PYTAG}-${HAMLIB_VER}"
+          New-Item -ItemType Directory -Force -Path $pkgName | Out-Null
+          # Copy all DLLs from bin/
+          Copy-Item "$($extracted.FullName)\bin\*.dll" -Destination $pkgName\ -ErrorAction SilentlyContinue
+          # Copy Python bindings (.pyd + Hamlib.py) from the python3.X folder
+          foreach ($folder in $pyFolders) {
+            $src = "$($extracted.FullName)\$folder"
+            if (Test-Path $src) {
+              Copy-Item "$src\Hamlib.py" -Destination $pkgName\ -Force
+              Copy-Item "$src\_Hamlib*.pyd" -Destination $pkgName\ -Force
+              break
+            }
+          }
+          # Version marker
+          "${HAMLIB_VER}" | Out-File -FilePath "$pkgName\version.txt" -Encoding ascii -NoNewline
+          # Zip flat (no sub-directory, unlike Linux tar.gz which has one)
+          Compress-Archive -Path "${pkgName}\*" -DestinationPath "${pkgName}.zip"
+          echo "HAMLIB_PORTABLE_PKG=${pkgName}.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build with PyInstaller
         shell: pwsh
@@ -220,7 +241,9 @@ jobs:
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/GPredict-Improved-Windows.zip
+          files: |
+            dist/GPredict-Improved-Windows.zip
+            ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
 
   build-macos:
@@ -241,20 +264,68 @@ jobs:
 
       - name: Install Hamlib and Python dependencies
         run: |
-          brew install hamlib
-          # Verify version is 4.7+
-          HAMLIB_VER=$(hamlib-config --version 2>/dev/null || pkg-config --modversion hamlib 2>/dev/null || echo "unknown")
-          echo "Hamlib version: ${HAMLIB_VER}"
-          # Copy Python bindings into the CI Python's site-packages
+          # Install build tools and Hamlib 4.7 source dependencies via Homebrew
+          brew install autoconf automake libtool pkg-config libusb swig dylibbundler
+
+          HAMLIB_VER="4.7.1"
           PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+          PYTAG=$(python3 -c "import sys; print(f'py{sys.version_info.major}{sys.version_info.minor}')")
+          ARCH=$(uname -m)  # arm64 or x86_64
+
+          # Download Hamlib source
+          wget -q https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-${HAMLIB_VER}.tar.gz
+          tar -xzf hamlib-${HAMLIB_VER}.tar.gz
+
+          # --- Build 1: for PyInstaller bundle (standard prefix) ---
+          cd hamlib-${HAMLIB_VER}
+          ./configure \
+            --prefix=/usr/local/hamlib-bundle \
+            --enable-python \
+            --disable-static \
+            PYTHON=$(which python3)
+          make -j$(sysctl -n hw.logicalcpu)
+          sudo make install
+
+          # Copy Python bindings into CI Python's site-packages (for PyInstaller collection)
           PY_SITE=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
-          BREW_PREFIX=$(brew --prefix hamlib)
-          if ls ${BREW_PREFIX}/lib/python${PYVER}/site-packages/Hamlib* 2>/dev/null; then
-            cp ${BREW_PREFIX}/lib/python${PYVER}/site-packages/Hamlib* ${PY_SITE}/
-          elif ls ${BREW_PREFIX}/lib/python3/site-packages/Hamlib* 2>/dev/null; then
-            cp ${BREW_PREFIX}/lib/python3/site-packages/Hamlib* ${PY_SITE}/
-          fi
+          cp /usr/local/hamlib-bundle/lib/python${PYVER}/site-packages/Hamlib* ${PY_SITE}/
           python3 -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
+
+          # --- Build 2: portable with @loader_path for in-app user update ---
+          make clean
+          ./configure \
+            --prefix=/tmp/hamlib-portable-mac \
+            --enable-python \
+            --disable-static \
+            LDFLAGS="-Wl,-rpath,@loader_path" \
+            PYTHON=$(which python3)
+          make -j$(sysctl -n hw.logicalcpu)
+          make install
+          cd ..
+
+          # Fix transitive dylib dependencies using dylibbundler so
+          # the .so loads without Homebrew installed on the end user's machine.
+          PORTABLE_LIB=/tmp/hamlib-portable-mac/lib
+          HAMLIB_SO=$(ls ${PORTABLE_LIB}/python${PYVER}/site-packages/_Hamlib*.so)
+          dylibbundler \
+            --bundle-deps \
+            --fix-file ${HAMLIB_SO} \
+            --dest-dir ${PORTABLE_LIB} \
+            --install-path @loader_path/.. \
+            --overwrite-dir
+
+          # Package flat: all dylibs + Hamlib.py + _Hamlib.so in one directory
+          PKG="hamlib-macos-${ARCH}-${PYTAG}-${HAMLIB_VER}"
+          mkdir -p ${PKG}
+          cp ${PORTABLE_LIB}/python${PYVER}/site-packages/Hamlib.py ${PKG}/
+          cp ${PORTABLE_LIB}/python${PYVER}/site-packages/_Hamlib*.so ${PKG}/
+          cp ${PORTABLE_LIB}/*.dylib ${PKG}/ 2>/dev/null || true
+          # Fix rpath inside _Hamlib.so to point to @loader_path (flat layout)
+          install_name_tool -add_rpath @loader_path ${PKG}/_Hamlib*.so 2>/dev/null || true
+          echo "${HAMLIB_VER}" > ${PKG}/version.txt
+          tar -czf ${PKG}.tar.gz ${PKG}/
+          echo "HAMLIB_PORTABLE_PKG=${PKG}.tar.gz" >> $GITHUB_ENV
+
           pip install -e ".[packaging]"
 
       - name: Build with PyInstaller
@@ -273,5 +344,7 @@ jobs:
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/GPredict-Improved.dmg
+          files: |
+            dist/GPredict-Improved.dmg
+            ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true

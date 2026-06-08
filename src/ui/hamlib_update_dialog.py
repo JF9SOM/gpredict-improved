@@ -10,8 +10,8 @@ without touching the (possibly read-only) AppImage.
 
 Platforms:
   Linux   — downloads hamlib-linux-x86_64-pyXYZ-<ver>.tar.gz (custom CI asset)
-  Windows — downloads hamlib-w32-<ver>.zip (official Hamlib release)
-  macOS   — runs `brew upgrade hamlib`
+  Windows — downloads hamlib-windows-x86_64-pyXYZ-<ver>.zip (custom CI asset, flat layout)
+  macOS   — downloads hamlib-macos-<arch>-pyXYZ-<ver>.tar.gz (custom CI asset)
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import logging
 import platform
-import shutil
 import tarfile
 import urllib.request
 import zipfile
@@ -46,6 +45,7 @@ from core.hamlib_info import (
     get_user_hamlib_dir,
     get_user_hamlib_version,
     linux_asset_name,
+    macos_asset_name,
     windows_asset_name,
 )
 from i18n import _
@@ -71,7 +71,9 @@ class _CheckWorker(QThread):
             tag: str = str(data.get("tag_name", "")).lstrip("v")
             raw_assets = data.get("assets")
             assets: list[dict[str, object]] = (
-                [a for a in raw_assets if isinstance(a, dict)] if isinstance(raw_assets, list) else []
+                [a for a in raw_assets if isinstance(a, dict)]
+                if isinstance(raw_assets, list)
+                else []
             )
 
             url = self._find_asset_url(tag, assets)
@@ -85,8 +87,10 @@ class _CheckWorker(QThread):
             target = linux_asset_name(version)
         elif os_name == "Windows":
             target = windows_asset_name(version)
+        elif os_name == "Darwin":
+            target = macos_asset_name(version)
         else:
-            return ""  # macOS uses brew — no asset download
+            return ""
 
         for asset in assets:
             if str(asset.get("name", "")) == target:
@@ -151,41 +155,9 @@ class _DownloadWorker(QThread):
                 tf.extract(member, dest)
 
     def _extract_zip(self, path: Path, dest: Path) -> None:
+        # Windows package is flat (no top-level subdirectory), so extract as-is.
         with zipfile.ZipFile(path, "r") as zf:
-            for info in zf.infolist():
-                parts = Path(info.filename).parts
-                if len(parts) < 2:
-                    continue
-                info.filename = str(Path(*parts[1:]))
-                zf.extract(info, dest)
-
-
-class _BrewWorker(QThread):
-    """Runs `brew upgrade hamlib` on macOS."""
-
-    progress = Signal(str)
-    finished = Signal(bool, str)
-
-    def run(self) -> None:
-        import subprocess
-
-        try:
-            proc = subprocess.Popen(
-                ["brew", "upgrade", "hamlib"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                self.progress.emit(line.rstrip())
-            proc.wait()
-            if proc.returncode == 0:
-                self.finished.emit(True, _("Hamlib upgraded via Homebrew."))
-            else:
-                self.finished.emit(False, _("brew upgrade failed (see log)."))
-        except Exception as exc:
-            self.finished.emit(False, str(exc))
+            zf.extractall(dest)
 
 
 class HamlibUpdateDialog(QDialog):
@@ -201,7 +173,7 @@ class HamlibUpdateDialog(QDialog):
         self.setWindowTitle(_("Hamlib Update"))
         self.resize(560, 480)
         self._check_worker: _CheckWorker | None = None
-        self._action_worker: _DownloadWorker | _BrewWorker | None = None
+        self._action_worker: _DownloadWorker | None = None
         self._latest_version: str = ""
         self._download_url: str = ""
         self._setup_ui()
@@ -281,32 +253,14 @@ class HamlibUpdateDialog(QDialog):
             text = _("Active: <b>{ver}</b> (bundled)").format(ver=bundled)
         self._cur_label.setText(text)
 
-        os_name = platform.system()
-        if os_name == "Linux":
-            self._action_label.setText(
-                _(
-                    "A portable Hamlib package will be downloaded and installed to:\n"
-                    "{dir}\n\n"
-                    "A restart is required to activate the new version."
-                ).format(dir=get_user_hamlib_dir())
-            )
-        elif os_name == "Darwin":
-            if shutil.which("brew"):
-                self._action_label.setText(_("Hamlib will be upgraded via Homebrew."))
-            else:
-                self._action_label.setText(
-                    _(
-                        "Homebrew is not installed.\n"
-                        "Install Homebrew, then run:  brew install hamlib"
-                    )
-                )
-        elif os_name == "Windows":
-            self._action_label.setText(
-                _(
-                    "The official Hamlib Windows package will be downloaded and\n"
-                    "installed to:\n{dir}"
-                ).format(dir=get_user_hamlib_dir())
-            )
+        install_dir = get_user_hamlib_dir()
+        self._action_label.setText(
+            _(
+                "A portable Hamlib package will be downloaded and installed to:\n"
+                "{dir}\n\n"
+                "A restart is required to activate the new version."
+            ).format(dir=install_dir)
+        )
 
     # ------------------------------------------------------------------
     # Check for updates
@@ -328,17 +282,6 @@ class HamlibUpdateDialog(QDialog):
 
         current = get_hamlib_version()
         self._latest_label.setText(_("Latest: <b>{ver}</b>").format(ver=version))
-
-        os_name = platform.system()
-
-        if os_name == "Darwin":
-            # macOS always shows the upgrade button when brew is available
-            if shutil.which("brew"):
-                self._install_btn.setText(_("Upgrade via Homebrew"))
-                self._install_btn.setVisible(True)
-            else:
-                self._log.append(_("Homebrew not found. Please install it first."))
-            return
 
         if version == current:
             self._log.append(_("Already up to date ({ver}).").format(ver=current))
@@ -373,13 +316,7 @@ class HamlibUpdateDialog(QDialog):
         self._progress.setVisible(True)
         self._log.clear()
 
-        os_name = platform.system()
-        action_worker: _DownloadWorker | _BrewWorker
-        if os_name == "Darwin":
-            action_worker = _BrewWorker()
-        else:
-            action_worker = _DownloadWorker(self._download_url, self._latest_version)
-
+        action_worker = _DownloadWorker(self._download_url, self._latest_version)
         action_worker.progress.connect(self._on_progress)
         action_worker.finished.connect(self._on_finished)
         action_worker.start()
