@@ -527,7 +527,7 @@ sudo usermod -aG dialout $USER
 - **MainWindow `_shutdown_flag`（threading.Event）**: `closeEvent()` 冒頭でセット。バックグラウンドスレッド（`_refresh_satellite_names_sync`）が各 `asyncio.run()` 呼び出しの間でフラグを確認し、インタプリタシャットダウン後の `futures` スケジュールを防ぐ
 - **`is_source_stale(source_name)` (TLEManager)**: `sync_log` を照会し、一度もフェッチされていないソース（`never-fetched`）を検出。初回起動時に cubesat/weather/science/earth-obs グループを即時フェッチするトリガーとして使用
 - **`_sort_sources_by_priority()` (MainWindow)**: TLE_SOURCES の `priority` フィールドでソース名を昇順ソート。amateur より先に cubesat/weather 等を上書きしないよう順序を制御
-- **GitHub Actions: `make_latest: true`**（`prerelease: true` を廃止）。3プラットフォーム全ビルドジョブで設定済み。最新リリース: `v0.1.0-beta.29`
+- **GitHub Actions: `make_latest: true`**（`prerelease: true` を廃止）。3プラットフォーム全ビルドジョブで設定済み。最新リリース: `v0.1.0-beta.32`
 - CI緑（mypy strict + pytest）
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -596,13 +596,15 @@ CREATE TABLE custom_groups (
 - `cos(rho) = sin(lat0)*sin(lat) + cos(lat0)*cos(lat)*cos(dlon)` を解く
 - `is_full_width[i]` フラグ: `dlon ≥ 180°` の行は極域を包む全経度帯 → `xl=0, xr=w` を直接設定
 - Antimeridian（日付変更線）越え: `xl > xr` の行は左端・右端の2つの `QRectF` に分割
-- fill: `rgba(100,200,255,140)`、outline: シアン `#00DCFF` 3px（陸地・雪氷上でも視認可）
+- fill: `rgba(100,200,255,140)`、outline: シアン `#00DCFF` 1.5px
 
 **アウトラインスキップ規則（重要）**:
-- `is_full_width[i] and is_full_width[i+1]` のペアのみスキップ（両端が全幅行 → 画面端の縦線を防ぐ）
-- `is_full_width[i] or is_full_width[i+1]`（`or`）は使用禁止 → 極境界の弧が開いてしまう
+- `is_full_width[i] or is_full_width[i+1]` でスキップ（どちらか一方でも全幅行なら除外）
+- `xl=0` / `xr=w` という人工座標が通常行の実座標と結ばれて横線になるのを防ぐ
+- `and` 条件（両端とも全幅行のみスキップ）は横線を発生させるため使用禁止
 - 水平幅 `abs(x2 - x1) < w/3` のセグメントのみ描画（日付変更線越えの大ジャンプを除外）
-- 極冠境界（normal↔full_width 遷移）はスキップせず描画し、弧の閉合を確保
+- スキップにより極境界の弧は閉じない（開いて見える）が、1.5px の細線で目立たなくする妥協策を採用（beta.32）
+- 極境界を完全に閉じる根本修正は未解決。遷移点の通常行座標で水平閉じ線を引く方式を試みたが、遷移行の xl≈0/xr≈w により閉じ線自体も横線になる副作用があり断念
 
 **ズームモードの座標整合（重要）**:
 - `latlon_to_xy` は地図画像描画と同じクランプ済みlatレンジを使用する
