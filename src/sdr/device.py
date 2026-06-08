@@ -125,11 +125,17 @@ class SdrDevice:
         """
         Enumerate connected SDR devices via USB VID/PID without SoapySDR.
 
-        Used by SDR Device Installation dialog when SoapySDR is not yet
-        installed, to identify which driver the user needs to install.
+        Tries pyusb first; falls back to Linux sysfs (/sys/bus/usb/devices/)
+        when pyusb is not installed.  Used by the SDR Device Installation
+        dialog to identify devices before the driver is installed.
         """
-        if not PYUSB_AVAILABLE:
-            return []
+        if PYUSB_AVAILABLE:
+            return cls._enumerate_usb_pyusb()
+        return cls._enumerate_usb_sysfs()
+
+    @classmethod
+    def _enumerate_usb_pyusb(cls) -> list[SdrDeviceInfo]:
+        """USB scan via pyusb."""
         try:
             import usb.core
 
@@ -150,7 +156,50 @@ class SdrDevice:
                     )
             return results
         except Exception:
-            logger.exception("USB enumeration failed")
+            logger.exception("USB enumeration (pyusb) failed")
+            return []
+
+    @classmethod
+    def _enumerate_usb_sysfs(cls) -> list[SdrDeviceInfo]:
+        """USB scan via Linux sysfs — no extra packages required."""
+        import sys
+
+        if sys.platform != "linux":
+            return []
+        try:
+            from pathlib import Path
+
+            known = {(vid, pid): (label, module) for vid, pid, label, module in _KNOWN_USB_DEVICES}
+            results: list[SdrDeviceInfo] = []
+            sysfs = Path("/sys/bus/usb/devices")
+            if not sysfs.exists():
+                return []
+            for dev_path in sysfs.iterdir():
+                vid_file = dev_path / "idVendor"
+                pid_file = dev_path / "idProduct"
+                if not vid_file.exists() or not pid_file.exists():
+                    continue
+                try:
+                    vid = int(vid_file.read_text().strip(), 16)
+                    pid = int(pid_file.read_text().strip(), 16)
+                except ValueError:
+                    continue
+                if (vid, pid) in known:
+                    label, module = known[(vid, pid)]
+                    results.append(
+                        SdrDeviceInfo(
+                            driver=None,
+                            label=label,
+                            serial="",
+                            hardware="",
+                            vid=vid,
+                            pid=pid,
+                            soapy_module=module,
+                        )
+                    )
+            return results
+        except Exception:
+            logger.exception("USB enumeration (sysfs) failed")
             return []
 
     # ------------------------------------------------------------------

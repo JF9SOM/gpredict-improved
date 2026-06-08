@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from i18n import _
 from sdr import SOAPY_AVAILABLE
-from sdr.device import PYUSB_AVAILABLE, SdrDevice, SdrDeviceInfo
+from sdr.device import SdrDevice, SdrDeviceInfo
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +187,8 @@ class SdrInstallDialog(QDialog):
             soapy_devices = SdrDevice.enumerate()
 
         # 2. Fallback to USB scan when SoapySDR absent or no devices found
-        usb_devices: list[SdrDeviceInfo] = []
-        if PYUSB_AVAILABLE:
-            usb_devices = SdrDevice.enumerate_usb()
+        # enumerate_usb() tries pyusb first, then Linux sysfs — no guard needed
+        usb_devices: list[SdrDeviceInfo] = SdrDevice.enumerate_usb()
 
         all_devices = soapy_devices or usb_devices
 
