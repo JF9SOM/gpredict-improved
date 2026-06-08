@@ -871,18 +871,17 @@ class _SdrSettingsPanel(QWidget):
         if not SOAPY_AVAILABLE or not hasattr(self, "_dev_combo"):
             return
 
-        rate_hz = float(data.get("sample_rate_hz") or 2_400_000)
+        rate_hz = float(data.get("sample_rate_hz") or 2_400_000)  # type: ignore[arg-type]
         for i, (_lbl, r) in enumerate(self._SAMPLE_RATES):
             if abs(r - rate_hz) < 1:
                 self._rate_combo.setCurrentIndex(i)
                 break
 
-        self._ppm_spin.setValue(int(data.get("ppm") or 0))
+        self._ppm_spin.setValue(int(data.get("ppm") or 0))  # type: ignore[call-overload]
 
         gain_auto = bool(data.get("gain_auto", True))
         self._gain_auto_rb.setChecked(gain_auto)
-        self._gain_manual_rb.setChecked(not gain_auto)
-        self._gain_spin.setValue(int(data.get("gain_db") or 40))
+        self._gain_spin.setValue(int(data.get("gain_db") or 40))  # type: ignore[call-overload]
 
         assigned = data.get("assigned_rig")
         if assigned == 1:
