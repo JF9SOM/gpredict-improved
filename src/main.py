@@ -38,17 +38,20 @@ if getattr(sys, "frozen", False):
 if sys.platform == "linux":
     _HAMLIB_SITE = "/opt/hamlib/4.7/lib/python3.12/site-packages"
     _HAMLIB_SYS = "/usr/lib/python3/dist-packages"
-    # Pre-import SoapySDR before removing _HAMLIB_SYS so it stays in
-    # sys.modules even after the path is stripped (SoapySDR lives at the
-    # same dist-packages path as the old Hamlib we must exclude).
-    import contextlib
+    # Only apply the sys.path surgery when the custom Hamlib build is present.
+    # On standard installations /usr/lib/python3/dist-packages is the only
+    # Hamlib source, so removing it would break both Hamlib and SoapySDR.
+    if os.path.exists(_HAMLIB_SITE):
+        # Pre-import SoapySDR before stripping _HAMLIB_SYS so it stays in
+        # sys.modules (SoapySDR lives in the same dist-packages directory).
+        import contextlib
 
-    with contextlib.suppress(Exception):
-        import SoapySDR as _soapy_preload  # noqa: F401
-    if _HAMLIB_SYS in sys.path:
-        sys.path.remove(_HAMLIB_SYS)
-    if os.path.exists(_HAMLIB_SITE) and _HAMLIB_SITE not in sys.path:
-        sys.path.insert(0, _HAMLIB_SITE)
+        with contextlib.suppress(Exception):
+            import SoapySDR as _soapy_preload  # noqa: F401
+        if _HAMLIB_SYS in sys.path:
+            sys.path.remove(_HAMLIB_SYS)
+        if _HAMLIB_SITE not in sys.path:
+            sys.path.insert(0, _HAMLIB_SITE)
 
 from PySide6.QtWidgets import QApplication
 
