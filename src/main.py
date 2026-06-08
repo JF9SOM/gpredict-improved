@@ -36,7 +36,8 @@ if getattr(sys, "frozen", False):
 # fatal error in Hamlib's rig registry.  This block is a no-op when running
 # from a PyInstaller bundle or on Windows/macOS where /opt/hamlib does not exist.
 if sys.platform == "linux":
-    _HAMLIB_SITE = "/opt/hamlib/4.7/lib/python3.12/site-packages"
+    _pyver = f"{sys.version_info.major}.{sys.version_info.minor}"
+    _HAMLIB_SITE = f"/opt/hamlib/4.7/lib/python{_pyver}/site-packages"
     _HAMLIB_SYS = "/usr/lib/python3/dist-packages"
     # Only apply the sys.path surgery when the custom Hamlib build is present.
     # On standard installations /usr/lib/python3/dist-packages is the only

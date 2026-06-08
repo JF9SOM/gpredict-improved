@@ -74,15 +74,35 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libhamlib-dev python3-hamlib \
+            autoconf automake libtool pkg-config \
+            libusb-1.0-0-dev libxml2-dev swig python3-dev \
             libgl1 libegl1 libfuse2 \
             binutils coreutils
+
+      - name: Build Hamlib 4.7.1 from source
+        run: |
+          wget -q https://github.com/Hamlib/Hamlib/releases/download/4.7.1/hamlib-4.7.1.tar.gz
+          tar -xzf hamlib-4.7.1.tar.gz
+          cd hamlib-4.7.1
+          ./configure \
+            --prefix=/opt/hamlib/4.7 \
+            --enable-python \
+            --disable-static \
+            PYTHON=$(which python3)
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+          # Copy Python bindings into the CI Python's site-packages
+          PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+          PY_SITE=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+          cp -r /opt/hamlib/4.7/lib/python${PYVER}/site-packages/Hamlib* ${PY_SITE}/
 
       - name: Install Python dependencies
         run: pip install -e ".[packaging]"
 
       - name: Build with PyInstaller
         run: |
+          export LD_LIBRARY_PATH=/opt/hamlib/4.7/lib:${LD_LIBRARY_PATH}
           PYTHONPATH=src pyinstaller scripts/gpredict-improved.spec --noconfirm
 
       - name: Create AppImage
@@ -119,20 +139,21 @@ jobs:
       - name: Install Python dependencies
         run: pip install -e ".[packaging]"
 
-      - name: Download Hamlib Windows binaries
+      - name: Download Hamlib 4.7.1 Windows binaries
         shell: pwsh
         run: |
-          $url = "https://github.com/Hamlib/Hamlib/releases/download/4.6.2/hamlib-w64-4.6.2.zip"
+          $url = "https://github.com/Hamlib/Hamlib/releases/download/4.7.1/hamlib-w32-4.7.1.zip"
           Invoke-WebRequest -Uri $url -OutFile hamlib.zip
           Expand-Archive -Path hamlib.zip -DestinationPath hamlib-extracted
           # Locate the extracted root directory (varies by release)
           $extracted = Get-ChildItem -Path hamlib-extracted -Directory | Select-Object -First 1
+          Write-Host "Extracted to: $($extracted.FullName)"
           New-Item -ItemType Directory -Force -Path hamlib-win64\bin | Out-Null
-          # Copy all DLLs
+          # Copy all DLLs (w32 package contains both 32-bit and 64-bit binaries)
           Copy-Item "$($extracted.FullName)\bin\*.dll" -Destination hamlib-win64\bin\ -ErrorAction SilentlyContinue
-          # Copy Python bindings (3.11 or generic python3 folder)
+          # Copy Python bindings into the CI Python's site-packages
+          $sitePackages = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
           $pyFolders = @("python3.11", "python3.12", "python3", "python")
-          $sitePackages = python -c "import site; print(site.getsitepackages()[0])"
           foreach ($folder in $pyFolders) {
             $src = "$($extracted.FullName)\$folder"
             if (Test-Path $src) {
@@ -141,6 +162,8 @@ jobs:
               break
             }
           }
+          # Verify Hamlib is importable
+          python -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
 
       - name: Build with PyInstaller
         shell: pwsh
@@ -185,6 +208,19 @@ jobs:
       - name: Install Hamlib and Python dependencies
         run: |
           brew install hamlib
+          # Verify version is 4.7+
+          HAMLIB_VER=$(hamlib-config --version 2>/dev/null || pkg-config --modversion hamlib 2>/dev/null || echo "unknown")
+          echo "Hamlib version: ${HAMLIB_VER}"
+          # Copy Python bindings into the CI Python's site-packages
+          PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+          PY_SITE=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+          BREW_PREFIX=$(brew --prefix hamlib)
+          if ls ${BREW_PREFIX}/lib/python${PYVER}/site-packages/Hamlib* 2>/dev/null; then
+            cp ${BREW_PREFIX}/lib/python${PYVER}/site-packages/Hamlib* ${PY_SITE}/
+          elif ls ${BREW_PREFIX}/lib/python3/site-packages/Hamlib* 2>/dev/null; then
+            cp ${BREW_PREFIX}/lib/python3/site-packages/Hamlib* ${PY_SITE}/
+          fi
+          python3 -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
           pip install -e ".[packaging]"
 
       - name: Build with PyInstaller

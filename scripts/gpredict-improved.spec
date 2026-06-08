@@ -45,7 +45,17 @@ elif sys.platform == "darwin":
     for dylib in brew_lib.glob("libhamlib*.dylib"):
         hamlib_binaries.append((str(dylib), "."))
 
-# Linux: Hamlib .so files come from LD_LIBRARY_PATH / rpath — no explicit copy needed.
+elif sys.platform == "linux":
+    # When built in CI (or locally) with /opt/hamlib/4.7, collect the shared
+    # libraries explicitly so they are bundled and not required on the end-user's system.
+    _hamlib_lib = Path("/opt/hamlib/4.7/lib")
+    if _hamlib_lib.exists():
+        for _so in _hamlib_lib.glob("libhamlib*.so*"):
+            if not _so.is_symlink():
+                hamlib_binaries.append((str(_so), "."))
+        # Also collect the versioned symlink target (libhamlib.so.4 → libhamlib.so.4.x.y)
+        for _so in _hamlib_lib.glob("libhamlib.so.*"):
+            hamlib_binaries.append((str(_so), "."))
 
 # --------------------------------------------------------------------------- #
 # Data files
