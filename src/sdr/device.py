@@ -102,10 +102,11 @@ class SdrDevice:
 
             results: list[SdrDeviceInfo] = []
             for kw in SoapySDR.Device.enumerate():
-                driver = kw.get("driver", "")
-                label = kw.get("label", kw.get("device", driver))
-                serial = kw.get("serial", "")
-                hardware = kw.get("hardware", "")
+                d = dict(kw)  # SoapySDRKwargs has no .get(); convert first
+                driver = d.get("driver", "")
+                label = d.get("label", d.get("device", driver))
+                serial = d.get("serial", "")
+                hardware = d.get("hardware", "")
                 results.append(
                     SdrDeviceInfo(
                         driver=driver,
