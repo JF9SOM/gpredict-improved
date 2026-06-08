@@ -791,11 +791,13 @@ class TLEManager:
                     r.raise_for_status()
                     data = r.json()
                 except httpx.HTTPError as exc:
-                    print(f"[TLEManager] provisional TLE fetch error for {fake_id}: {exc}")
+                    ename = type(exc).__name__
+                    print(f"[TLEManager] provisional TLE fetch error for {fake_id}: {ename}: {exc}")
                     stats["errors"] += 1
                     continue
                 except Exception as exc:
-                    print(f"[TLEManager] provisional TLE unexpected error for {fake_id}: {exc}")
+                    ename = type(exc).__name__
+                    print(f"[TLEManager] prov TLE unexpected error for {fake_id}: {ename}: {exc}")
                     stats["errors"] += 1
                     continue
 

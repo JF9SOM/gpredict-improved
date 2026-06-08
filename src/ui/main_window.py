@@ -980,7 +980,7 @@ class MainWindow(QMainWindow):
             )
             logger.info("SATNOGS satellite names sync completed: %s", result)
         except Exception as exc:
-            logger.warning("SATNOGS satellite names sync failed: %s", exc)
+            logger.warning("SATNOGS satellite names sync failed: %s: %s", type(exc).__name__, exc)
 
         if self._shutdown_flag.is_set():
             return
