@@ -23,9 +23,9 @@ satellite tracker by Alexandru Csete OZ9AEC — built on a modern Python stack.
 | Radio control | Requires separate rigctld | **Built-in Hamlib** (700+ radios) — select your rig in the GUI |
 | SDR support | None | **HackRF / RTL-SDR via SoapySDR** — spectrum, demodulation, IQ recording |
 | Doppler correction | Frequency only | **Frequency + mode + CTCSS/DCS tone** set automatically |
-| Dual-rig | None | **Rig 1 + Rig 2** (e.g. transceiver + SDR dongle simultaneously) |
+| Dual-rig | Supported | **Rig 1 + Rig 2** — SDR dongle can be assigned as a rig |
 | Satellite frequency DB | SATNOGS only, text-file editing | SATNOGS auto-sync + **add/edit entries from the GUI** |
-| TLE updates | Manual | **Multi-source auto-update with quality scoring** |
+| TLE updates | Auto-update supported | **Multi-source auto-update with quality scoring** |
 | Pass prediction | List view | **Graphical pass chart + sky radar + footprint on world map** |
 | Rotator control | Separate rotctld | **Built-in rotator control with catch-up tracking** |
 | Supported OS | Linux, Windows, macOS (GTK+) | **Linux, Windows, macOS, Raspberry Pi** |
