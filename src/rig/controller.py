@@ -1664,6 +1664,15 @@ class SdrRigAdapter(RigController):
             from sdr.device import SdrDevice
 
             dev = SdrDevice(self._device_info)
+            logger.info(
+                "SdrRigAdapter.connect: sample_rate=%.0f ppm=%g gain_auto=%s "
+                "gain_db=%g bias_tee=%s",
+                self._sample_rate_hz,
+                self._ppm,
+                self._gain_auto,
+                self._gain_db,
+                self._bias_tee,
+            )
             if dev.open():
                 # Apply stored audio settings immediately after open
                 dev.set_sample_rate(self._sample_rate_hz)
