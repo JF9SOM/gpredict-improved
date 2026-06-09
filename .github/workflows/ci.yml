@@ -320,6 +320,9 @@ jobs:
           Copy-Item "$bindingsDir\Hamlib.py" "$PY_SITE\" -Force
           Copy-Item "_Hamlib$PY_EXT" "$PY_SITE\" -Force
           Copy-Item "$binDir\*.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
+          Copy-Item "C:\mingw64\bin\libstdc++-6.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
+          Copy-Item "C:\mingw64\bin\libgcc_s_seh-1.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
+          Copy-Item "C:\mingw64\bin\libwinpthread-1.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
           $env:PATH = "$PY_SITE;$binDir;$env:PATH"
           python -c "import os; os.add_dll_directory(r'$PY_SITE'); os.add_dll_directory(r'$binDir'); import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
 
