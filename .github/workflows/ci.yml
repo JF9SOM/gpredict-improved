@@ -399,6 +399,7 @@ jobs:
           BUNDLED_PYSITE=/usr/local/hamlib-bundle/lib/python${PYVER}/site-packages
           sudo mkdir -p ${BUNDLED_PYSITE}
           clang -shared -fPIC -O2 \
+            -undefined dynamic_lookup \
             -I/usr/local/hamlib-bundle/include \
             -Ihamlib-${HAMLIB_VER}/include \
             -I${PY_INC} \
@@ -430,6 +431,7 @@ jobs:
           PORT_PYSITE=/tmp/hamlib-portable-mac/lib/python${PYVER}/site-packages
           mkdir -p ${PORT_PYSITE}
           clang -shared -fPIC -O2 \
+            -undefined dynamic_lookup \
             -I/tmp/hamlib-portable-mac/include \
             -Ihamlib-${HAMLIB_VER}/include \
             -I${PY_INC} \
