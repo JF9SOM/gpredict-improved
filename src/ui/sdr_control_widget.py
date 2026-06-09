@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
-from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
     QComboBox,
@@ -45,6 +45,15 @@ logger = logging.getLogger(__name__)
 _SPECTRUM_YMIN: float = -90.0
 _SPECTRUM_YMAX: float = 0.0
 
+# Passband tune step options (label, Hz)
+_TUNE_STEPS: list[tuple[str, int]] = [
+    ("100 Hz", 100),
+    ("500 Hz", 500),
+    ("1 kHz", 1_000),
+    ("5 kHz", 5_000),
+    ("10 kHz", 10_000),
+]
+
 # IQ recording bandwidths offered in the dropdown
 _REC_BANDWIDTHS: list[tuple[str, int]] = [
     ("50 kHz", 50_000),
@@ -63,10 +72,15 @@ class SdrControlWidget(QWidget):
     Call set_pipeline(None) when it disconnects.
     """
 
+    # Emitted when the user tunes within the transponder passband.
+    # Value is the cumulative offset in Hz from the Doppler-corrected centre.
+    tune_offset_changed: Signal = Signal(float)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._pipeline: Any = None  # SDRPipeline | None
         self._recording = False
+        self._tune_offset_hz: float = 0.0  # cumulative passband tune offset
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(1_000)
         self._status_timer.timeout.connect(self._update_rec_status)
@@ -121,6 +135,13 @@ class SdrControlWidget(QWidget):
         idx = mode_map.get(mode, 1)
         self._mode_combo.setCurrentIndex(idx)
 
+    def reset_tune_offset(self) -> None:
+        """Reset passband tune offset to zero (called on transponder change)."""
+        self._tune_offset_hz = 0.0
+        if hasattr(self, "_tune_offset_label"):
+            self._tune_offset_label.setText("0.000 kHz")
+        self.tune_offset_changed.emit(0.0)
+
     def set_iq_save_dir(self, path: str) -> None:
         """Update the IQ recording save directory (from SDR settings)."""
         self._iq_save_dir = Path(path) if path else Path.home() / "iq_recordings"
@@ -155,6 +176,8 @@ class SdrControlWidget(QWidget):
 
         # Spectrum
         layout.addWidget(self._build_spectrum_panel())
+        # Passband tuning
+        layout.addWidget(self._build_tune_panel())
         # Demodulator
         layout.addWidget(self._build_demod_panel())
         # IQ recorder
@@ -226,6 +249,86 @@ class SdrControlWidget(QWidget):
 
         v.addWidget(chart_view)
         return grp
+
+    def _build_tune_panel(self) -> QGroupBox:
+        """Build the Passband Tune group box.
+
+        Provides ▼/▲ buttons to shift the SDR centre frequency within the
+        transponder passband.  When Lock is active in the main window, the
+        corresponding TX frequency (Rig 1) is adjusted automatically.
+        """
+        grp = QGroupBox(_("Passband Tune"))
+        row = QHBoxLayout(grp)
+        row.setSpacing(4)
+
+        # Step size selector
+        row.addWidget(QLabel(_("Step:")))
+        self._tune_step_combo = QComboBox()
+        for label, _hz in _TUNE_STEPS:
+            self._tune_step_combo.addItem(label)
+        self._tune_step_combo.setCurrentIndex(2)  # 1 kHz default
+        self._tune_step_combo.setFixedWidth(80)
+        row.addWidget(self._tune_step_combo)
+
+        row.addSpacing(8)
+
+        # Large-step down (×10)
+        btn_dd = QPushButton("◀◀")
+        btn_dd.setFixedWidth(36)
+        btn_dd.setToolTip(_("Tune down ×10 step"))
+        btn_dd.clicked.connect(lambda: self._apply_tune(-10))
+        row.addWidget(btn_dd)
+
+        # Single-step down
+        btn_d = QPushButton("◀")
+        btn_d.setFixedWidth(30)
+        btn_d.setToolTip(_("Tune down"))
+        btn_d.clicked.connect(lambda: self._apply_tune(-1))
+        row.addWidget(btn_d)
+
+        # Offset display
+        self._tune_offset_label = QLabel("0.000 kHz")
+        self._tune_offset_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._tune_offset_label.setStyleSheet(
+            "font-family: monospace; font-weight: bold; min-width: 90px;"
+        )
+        row.addWidget(self._tune_offset_label)
+
+        # Single-step up
+        btn_u = QPushButton("▶")
+        btn_u.setFixedWidth(30)
+        btn_u.setToolTip(_("Tune up"))
+        btn_u.clicked.connect(lambda: self._apply_tune(+1))
+        row.addWidget(btn_u)
+
+        # Large-step up (×10)
+        btn_uu = QPushButton("▶▶")
+        btn_uu.setFixedWidth(36)
+        btn_uu.setToolTip(_("Tune up ×10 step"))
+        btn_uu.clicked.connect(lambda: self._apply_tune(+10))
+        row.addWidget(btn_uu)
+
+        row.addSpacing(8)
+
+        # Reset
+        btn_rst = QPushButton(_("Reset"))
+        btn_rst.setFixedWidth(52)
+        btn_rst.setToolTip(_("Return to Doppler-corrected centre frequency"))
+        btn_rst.clicked.connect(self.reset_tune_offset)
+        row.addWidget(btn_rst)
+
+        row.addStretch()
+        return grp
+
+    def _apply_tune(self, multiplier: int) -> None:
+        """Shift the passband offset by multiplier × current step size."""
+        idx = self._tune_step_combo.currentIndex()
+        step_hz = _TUNE_STEPS[idx][1] if 0 <= idx < len(_TUNE_STEPS) else 1_000
+        self._tune_offset_hz += multiplier * step_hz
+        khz = self._tune_offset_hz / 1000.0
+        sign = "+" if khz >= 0 else ""
+        self._tune_offset_label.setText(f"{sign}{khz:.3f} kHz")
+        self.tune_offset_changed.emit(self._tune_offset_hz)
 
     def _build_demod_panel(self) -> QGroupBox:
         grp = QGroupBox(_("Demodulator"))

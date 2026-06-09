@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
 import httpx
-from PySide6.QtCore import QPoint, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -311,6 +311,9 @@ class MainWindow(QMainWindow):
         # A value -> transmit it once then reset to None.
         self._tune_dl_override: float | None = None
         self._tune_ul_override: float | None = None
+        # Passband tune offset applied to SDR (Rig 2) DL, and mirrored to
+        # Rig 1 UL when Lock is active (sign reversed for inverted transponders).
+        self._sdr_tune_offset: float = 0.0
         # L button: when True, uplink is slaved to downlink.
         self._trsp_lock: bool = False
         # Override for CTCSS label: set when a button is pressed, reset on transponder change.
@@ -472,6 +475,7 @@ class MainWindow(QMainWindow):
         self._sdr_control = SdrControlWidget()
         self._sdr_control_tab_idx = self._tab_widget.addTab(self._sdr_control, _("SDR Control"))
         self._tab_widget.setTabVisible(self._sdr_control_tab_idx, False)
+        self._sdr_control.tune_offset_changed.connect(self._on_sdr_tune_offset)
 
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
         h_splitter.addWidget(self._tab_widget)
@@ -1451,11 +1455,27 @@ class MainWindow(QMainWindow):
             # UI thread directly would block and freeze the display.
             # Use _rig_busy_lock: if the previous cycle has finished, transmit on a background
             # thread; if the previous cycle is still running, skip this tick.
+            # When SDR (Rig 2) passband tune offset is active and Lock is ON,
+            # mirror the offset to Rig 1 TX (sign reversed for inverted transponders).
+            sdr_is_rig2 = (
+                self._rig2_controller is not None
+                and getattr(self._rig2_controller, "is_sdr", False)
+                and self._rig2_controller.is_connected
+            )
+            ul_rig1 = ul_corr
+            if (
+                sdr_is_rig2
+                and self._trsp_lock
+                and self._sdr_tune_offset != 0.0
+                and ul_rig1 is not None
+            ):
+                ul_rig1 = ul_rig1 + (-self._sdr_tune_offset if invert else self._sdr_tune_offset)
+
             if self._rig_controller is not None and self._rig_controller.is_connected:
                 if self._rig_busy_lock.acquire(blocking=False):
                     rig = self._rig_controller
                     dl = dl_corr
-                    ul = ul_corr
+                    ul = ul_rig1
 
                     def _rig_send() -> None:
                         try:
@@ -1473,10 +1493,15 @@ class MainWindow(QMainWindow):
                     logger.debug("RigNet: previous cycle still running, skipping tick")
 
             # Transmit Doppler-corrected frequencies to Rig 2 (same non-blocking pattern).
+            # Apply passband tune offset to SDR DL centre frequency.
             if self._rig2_controller is not None and self._rig2_controller.is_connected:
                 if self._rig2_busy_lock.acquire(blocking=False):
                     rig2 = self._rig2_controller
-                    dl2 = dl_corr
+                    dl2 = (
+                        (dl_corr + self._sdr_tune_offset)
+                        if (dl_corr is not None and sdr_is_rig2)
+                        else dl_corr
+                    )
                     ul2 = ul_corr
 
                     def _rig2_send() -> None:
@@ -1857,10 +1882,12 @@ class MainWindow(QMainWindow):
             self._radio_control.update_doppler(None, None, None, None, None, None)
         self._send_mode_only_to_rig()
         self._send_ctcss_cat_to_rig()
-        # Auto-select SDR demod mode from transponder
+        # Auto-select SDR demod mode from transponder; reset passband tune offset
         if self._current_transmitter:
             satnogs_mode = self._current_transmitter.get("mode") or ""
             self._sdr_control.set_transponder_mode(satnogs_mode)
+        self._sdr_tune_offset = 0.0
+        self._sdr_control.reset_tune_offset()
 
     def _disconnect_rig(self) -> None:
         """Disconnect the rig and refresh the UI status."""
@@ -2555,6 +2582,11 @@ class MainWindow(QMainWindow):
     def _on_lock_changed(self, locked: bool) -> None:
         """Update the _trsp_lock flag when the L button is toggled."""
         self._trsp_lock = locked
+
+    @Slot(float)
+    def _on_sdr_tune_offset(self, offset_hz: float) -> None:
+        """Store the passband tune offset emitted by SdrControlWidget."""
+        self._sdr_tune_offset = offset_hz
 
     def _on_ctcss_activate(self) -> None:
         """Send the satellite's activation tone (tone_hz from CTCSS_DB)."""
