@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSlider,
+    QStackedLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -83,6 +84,7 @@ class SdrControlWidget(QWidget):
         if self._pipeline is not None:
             try:
                 self._pipeline.spectrum_ready.disconnect(self._on_spectrum)
+                self._pipeline.center_freq_changed.disconnect(self._on_center_freq)
                 self._pipeline.status_changed.disconnect(self._on_status)
             except Exception:
                 pass
@@ -92,6 +94,7 @@ class SdrControlWidget(QWidget):
 
         if pipeline is not None:
             pipeline.spectrum_ready.connect(self._on_spectrum)
+            pipeline.center_freq_changed.connect(self._on_center_freq)
             pipeline.status_changed.connect(self._on_status)
             self._status_label.setText(_("SDR Connected"))
             # Apply the currently selected demod mode to the new pipeline.
@@ -101,6 +104,7 @@ class SdrControlWidget(QWidget):
             self._on_mode_changed(self._mode_combo.currentIndex())
         else:
             self._status_label.setText(_("SDR Disconnected"))
+            self._freq_overlay.setText("—")
             self._stop_audio()
             self._stop_recording()
 
@@ -205,7 +209,37 @@ class SdrControlWidget(QWidget):
             __import__("PySide6.QtGui", fromlist=["QPainter"]).QPainter.RenderHint.Antialiasing,
             False,
         )
-        v.addWidget(chart_view)
+
+        # Centre-frequency overlay label — floats over the top-centre of the chart.
+        # QStackedLayout lets the label sit on top of chart_view without
+        # resizing either widget.
+        container = QWidget()
+        stack = QStackedLayout(container)
+        stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
+        stack.addWidget(chart_view)
+
+        overlay_host = QWidget(container)
+        overlay_host.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        overlay_host.setStyleSheet("background: transparent;")
+        overlay_layout = QVBoxLayout(overlay_host)
+        overlay_layout.setContentsMargins(0, 6, 0, 0)
+        overlay_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+
+        self._freq_overlay = QLabel("—")
+        self._freq_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._freq_overlay.setStyleSheet(
+            "color: white;"
+            "background-color: rgba(0,0,0,160);"
+            "font-size: 13px;"
+            "font-weight: bold;"
+            "padding: 1px 8px;"
+            "border-radius: 3px;"
+        )
+        overlay_layout.addWidget(self._freq_overlay)
+        overlay_layout.addStretch()
+        stack.addWidget(overlay_host)
+
+        v.addWidget(container)
         return grp
 
     def _build_demod_panel(self) -> QGroupBox:
@@ -315,6 +349,12 @@ class SdrControlWidget(QWidget):
         freqs = [f for f, _ in pts]
         if freqs:
             self._freq_axis.setRange(min(freqs), max(freqs))
+
+    @Slot(float)
+    def _on_center_freq(self, freq_hz: float) -> None:
+        """Update the centre-frequency overlay label."""
+        mhz = freq_hz / 1e6
+        self._freq_overlay.setText(f"{mhz:.6f} MHz")
 
     @Slot(str)
     def _on_status(self, msg: str) -> None:

@@ -55,6 +55,7 @@ class SDRPipeline(QThread):
     """
 
     spectrum_ready: Signal = Signal(list)  # [(freq_hz, power_dbfs), …]
+    center_freq_changed: Signal = Signal(float)  # current centre frequency (Hz)
     audio_ready: Signal = Signal(object)  # np.ndarray float32 PCM
     status_changed: Signal = Signal(str)
     error_occurred: Signal = Signal(str)
@@ -168,13 +169,14 @@ class SDRPipeline(QThread):
                 except Exception:
                     logger.exception("Demodulator error")
 
-            # FFT → spectrum
+            # FFT → spectrum + centre frequency overlay
             now = time.monotonic()
             if now - self._last_fft_time >= _FFT_INTERVAL:
                 self._last_fft_time = now
                 try:
                     spectrum = self._compute_fft(iq)
                     self.spectrum_ready.emit(spectrum)
+                    self.center_freq_changed.emit(self._device.center_freq)
                 except Exception:
                     logger.exception("FFT error")
 
