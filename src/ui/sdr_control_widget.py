@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSlider,
-    QStackedLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -210,36 +209,22 @@ class SdrControlWidget(QWidget):
             False,
         )
 
-        # Centre-frequency overlay label — floats over the top-centre of the chart.
-        # QStackedLayout lets the label sit on top of chart_view without
-        # resizing either widget.
-        container = QWidget()
-        stack = QStackedLayout(container)
-        stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
-        stack.addWidget(chart_view)
-
-        overlay_host = QWidget(container)
-        overlay_host.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        overlay_host.setStyleSheet("background: transparent;")
-        overlay_layout = QVBoxLayout(overlay_host)
-        overlay_layout.setContentsMargins(0, 6, 0, 0)
-        overlay_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-
+        # Centre-frequency display row — shown above the chart with dark
+        # styling to blend visually with the spectrum background.
+        freq_row = QHBoxLayout()
+        freq_row.addStretch()
+        freq_lbl = QLabel(_("RX:"))
+        freq_lbl.setStyleSheet("color: #aaaaaa; font-size: 12px;")
         self._freq_overlay = QLabel("—")
-        self._freq_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._freq_overlay.setStyleSheet(
-            "color: white;"
-            "background-color: rgba(0,0,0,160);"
-            "font-size: 13px;"
-            "font-weight: bold;"
-            "padding: 1px 8px;"
-            "border-radius: 3px;"
+            "color: #00dcff;font-size: 13px;font-weight: bold;font-family: monospace;"
         )
-        overlay_layout.addWidget(self._freq_overlay)
-        overlay_layout.addStretch()
-        stack.addWidget(overlay_host)
+        freq_row.addWidget(freq_lbl)
+        freq_row.addWidget(self._freq_overlay)
+        freq_row.addStretch()
+        v.addLayout(freq_row)
 
-        v.addWidget(container)
+        v.addWidget(chart_view)
         return grp
 
     def _build_demod_panel(self) -> QGroupBox:
