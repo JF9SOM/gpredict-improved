@@ -273,19 +273,17 @@ jobs:
           $configH = "$incDir\hamlib\config.h"
           if (-not (Test-Path $configH)) {
             Write-Host "Creating stub $configH"
-            @'
-/* Minimal config.h stub for Windows MSVC Python binding compilation */
-#ifndef HAMLIB_CONFIG_H
-#define HAMLIB_CONFIG_H
-#define PACKAGE_VERSION "4.7.1"
-#define VERSION "4.7.1"
-#define PACKAGE "hamlib"
-#define PACKAGE_NAME "Hamlib"
-#define PACKAGE_STRING "Hamlib 4.7.1"
-#define PACKAGE_TARNAME "hamlib"
-#define PACKAGE_URL "http://hamlib.org"
-#endif /* HAMLIB_CONFIG_H */
-'@ | Out-File -Encoding ASCII $configH
+            $stub = "/* Minimal config.h stub for Windows MSVC */" + "`n" +
+                    "#ifndef HAMLIB_CONFIG_H`n#define HAMLIB_CONFIG_H`n" +
+                    "#define PACKAGE_VERSION `"4.7.1`"`n" +
+                    "#define VERSION `"4.7.1`"`n" +
+                    "#define PACKAGE `"hamlib`"`n" +
+                    "#define PACKAGE_NAME `"Hamlib`"`n" +
+                    "#define PACKAGE_STRING `"Hamlib 4.7.1`"`n" +
+                    "#define PACKAGE_TARNAME `"hamlib`"`n" +
+                    "#define PACKAGE_URL `"http://hamlib.org`"`n" +
+                    "#endif`n"
+            Set-Content -Path $configH -Value $stub -Encoding ASCII
           }
 
           # Compile _Hamlib.pyd with MSVC cl.exe
