@@ -64,7 +64,7 @@ Section "Install" SecMain
   ExecWait 'taskkill /IM "${APP_EXE}" /F' $0
 
   SetOutPath "$INSTDIR"
-  File /r "dist\gpredict-improved\"
+  File /r "..\dist\gpredict-improved\"
 
   ; Store install dir in registry
   WriteRegStr HKLM "${REG_INSTALL_DIR}" "InstallDir" "$INSTDIR"
