@@ -119,6 +119,7 @@ jobs:
           sudo mkdir -p ${BUNDLED_PYSITE}
           sudo gcc -shared -fPIC -O2 \
             -I/opt/hamlib/4.7/include \
+            -Ihamlib-${HAMLIB_VER}/include \
             -I${PY_INC} \
             hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
             -L/opt/hamlib/4.7/lib \
@@ -150,6 +151,7 @@ jobs:
           mkdir -p ${PORT_PYSITE}
           gcc -shared -fPIC -O2 \
             -I/tmp/hamlib-portable/include \
+            -Ihamlib-${HAMLIB_VER}/include \
             -I${PY_INC} \
             hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
             -L/tmp/hamlib-portable/lib \
@@ -398,6 +400,7 @@ jobs:
           sudo mkdir -p ${BUNDLED_PYSITE}
           clang -shared -fPIC -O2 \
             -I/usr/local/hamlib-bundle/include \
+            -Ihamlib-${HAMLIB_VER}/include \
             -I${PY_INC} \
             hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
             -L/usr/local/hamlib-bundle/lib \
@@ -428,6 +431,7 @@ jobs:
           mkdir -p ${PORT_PYSITE}
           clang -shared -fPIC -O2 \
             -I/tmp/hamlib-portable-mac/include \
+            -Ihamlib-${HAMLIB_VER}/include \
             -I${PY_INC} \
             hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
             -L/tmp/hamlib-portable-mac/lib \
