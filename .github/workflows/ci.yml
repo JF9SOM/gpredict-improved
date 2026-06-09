@@ -311,6 +311,7 @@ jobs:
             "/I$PY_INC" `
             "$bindingsDir\hamlib_wrap.c" `
             /link hamlib.lib `
+            "/LIBPATH:$PY_SITE\..\..\..\libs" `
             "/OUT:_Hamlib$PY_EXT" `
             /IMPLIB:_Hamlib_import.lib
           if ($LASTEXITCODE -ne 0) { throw "cl.exe failed" }
