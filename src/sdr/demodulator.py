@@ -23,8 +23,7 @@ logger = logging.getLogger(__name__)
 
 AUDIO_RATE: int = 48_000  # Output sample rate (Hz)
 NFM_DEVIATION: float = 5_000.0  # Narrow FM deviation (Hz)
-CW_PITCH_HZ: float = 600.0  # CW sidetone pitch (Hz)
-CW_BPF_BW_HZ: float = 200.0  # CW BPF half-bandwidth (Hz)
+CW_PITCH_HZ: float = 600.0  # CW pitch reference (Hz) — kept for future use
 SSB_BW_HZ: float = 2_700.0  # SSB audio bandwidth (Hz)
 NFM_DEEMPH_TAU: float = 75e-6  # De-emphasis time constant (75 µs, US standard)
 
@@ -223,36 +222,33 @@ class Demodulator:
 
     def _demod_cw(self, iq: np.ndarray) -> np.ndarray:
         """
-        CW demodulation: direct decimation → BPF → envelope → sidetone.
+        CW demodulation: direct decimation → wide BPF → output.
 
-        Avoids the BFO-injection path used for SSB.  CW signals are narrow
-        carriers at a known offset from the SDR centre frequency, so we
-        simply decimate the I/Q to audio rate, take the real part, apply a
-        narrow BPF (sosfilt, numerically stable) around the CW pitch, and
-        envelope-detect to produce a clean sidetone.
+        SDR-based CW reception does NOT need envelope detection or sidetone
+        synthesis.  The CW carrier sits at some audio-frequency offset from
+        the SDR centre frequency.  After decimation and taking the real part,
+        that carrier is already an audible tone (turns on/off with the key).
+        Envelope detection of a bandpass-filtered noise floor produces a
+        *constant* non-zero amplitude → AGC cranks it up → permanent hum,
+        which is exactly what we want to avoid.
+
+        We apply a moderately wide bandpass (300–3000 Hz) so the user has
+        freedom to tune the satellite frequency without needing to hit an
+        exact CW pitch offset.
         """
-        # Remove DC offset (SDR spike)
+        # Remove DC offset (HackRF DC spike)
         iq = self._remove_dc(iq)
 
         # Decimate directly to AUDIO_RATE in two stages
         iq_ds = self._decimate(iq, self._cw_decim1)
         iq_ds = self._decimate(iq_ds, self._cw_decim2)
 
-        # Real part gives audio (CW tones sit at their natural offset freqs)
+        # Real part: CW tone appears at its natural carrier-offset frequency
         audio_raw = iq_ds.real.astype(np.float32)
 
-        # Narrow BPF around CW pitch using SOS (numerically stable for
-        # narrow bandpass — b,a Butterworth at these widths is ill-conditioned)
-        bpf_audio = sp_signal.sosfilt(self._cw_bpf_sos, audio_raw).astype(np.float32)
-
-        # Envelope via Hilbert transform
-        analytic = sp_signal.hilbert(bpf_audio)
-        envelope = np.abs(analytic).astype(np.float32)
-
-        # Multiply envelope by a sine at CW pitch for a pleasant sidetone
-        t = np.arange(len(envelope), dtype=np.float32) / AUDIO_RATE
-        tone = np.sin(2.0 * np.pi * self._cw_pitch * t).astype(np.float32)
-        return self._finalize(envelope * tone)
+        # Wide BPF (300–3000 Hz) — SOS format for numerical stability
+        audio = sp_signal.sosfilt(self._cw_bpf_sos, audio_raw).astype(np.float32)
+        return self._finalize(audio)
 
     # ------------------------------------------------------------------
     # AGC and output
@@ -327,15 +323,14 @@ class Demodulator:
         cw_mid_rate = rate / self._cw_decim1
         self._cw_decim2 = max(1, int(cw_mid_rate / AUDIO_RATE))
 
-        # CW BPF applied at AUDIO_RATE around the sidetone pitch.
-        # Use second-order-sections (SOS) format — b,a Butterworth with a
-        # normalised bandwidth this narrow (~0.017) is numerically ill-
-        # conditioned and produces filter oscillation / huge gain artefacts.
-        lo = max(50.0, self._cw_pitch - CW_BPF_BW_HZ)
-        hi = min(AUDIO_RATE / 2 - 50, self._cw_pitch + CW_BPF_BW_HZ)
+        # CW BPF applied at AUDIO_RATE.
+        # Wide passband (300–3000 Hz): the CW tone sits at its natural carrier
+        # offset, so the user can tune freely without hitting a fixed pitch.
+        # SOS format is used — b,a Butterworth at even moderate bandwidths
+        # can be numerically ill-conditioned at higher filter orders.
         nyq_audio = AUDIO_RATE / 2
         self._cw_bpf_sos = sp_signal.butter(
-            4, [lo / nyq_audio, hi / nyq_audio], btype="band", output="sos"
+            4, [300.0 / nyq_audio, 3000.0 / nyq_audio], btype="band", output="sos"
         )
 
     # ------------------------------------------------------------------
