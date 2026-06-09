@@ -755,6 +755,9 @@ class _SdrSettingsPanel(QWidget):
         gain_row.addWidget(self._gain_spin)
         cfg_form.addRow(_("RF Gain:"), gain_row)
 
+        self._bias_tee_chk = QCheckBox(_("Enable Bias-T (powers external LNA via antenna port)"))
+        cfg_form.addRow("", self._bias_tee_chk)
+
         layout.addWidget(cfg_group)
 
         # -- Rig slot assignment --
@@ -880,6 +883,7 @@ class _SdrSettingsPanel(QWidget):
             "ppm": self._ppm_spin.value() if hasattr(self, "_ppm_spin") else 0,
             "gain_auto": self._gain_auto_rb.isChecked() if hasattr(self, "_gain_auto_rb") else True,
             "gain_db": self._gain_spin.value() if hasattr(self, "_gain_spin") else 40,
+            "bias_tee": self._bias_tee_chk.isChecked() if hasattr(self, "_bias_tee_chk") else False,
             "iq_save_dir": self._iq_dir_edit.text() if hasattr(self, "_iq_dir_edit") else "",
         }
 
@@ -899,6 +903,7 @@ class _SdrSettingsPanel(QWidget):
         gain_auto = bool(data.get("gain_auto", True))
         self._gain_auto_rb.setChecked(gain_auto)
         self._gain_spin.setValue(int(data.get("gain_db") or 40))  # type: ignore[call-overload]
+        self._bias_tee_chk.setChecked(bool(data.get("bias_tee", False)))
 
         assigned = data.get("assigned_rig")
         if assigned == 1:

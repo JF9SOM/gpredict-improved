@@ -103,6 +103,7 @@ class SdrDevice:
         self._gain_mode: str = "auto"  # "auto" or "manual"
         self._gain_db: float = 40.0
         self._ppm: float = 0.0
+        self._bias_tee: bool = False
 
     # ------------------------------------------------------------------
     # Class methods
@@ -392,6 +393,34 @@ class SdrDevice:
                 logger.exception("set_gain_db failed")
                 return False
 
+    def set_bias_tee(self, enabled: bool) -> bool:
+        """Enable or disable the Bias-T power supply on the antenna port.
+
+        Bias-T injects DC voltage into the coax to power an external LNA or
+        active antenna.  The SoapySDR setting key differs by driver:
+          - RTL-SDR (soapyrtlsdr): "biastee"
+          - HackRF (soapyhackrf):  "bias_tx" (TX bias — use with care)
+          - AirSpy (soapyairspy):  "biastee"
+        We try each key in order and return True if at least one succeeds.
+        """
+        with self._lock:
+            self._bias_tee = enabled
+            if self._dev is None:
+                return True
+            value = "1" if enabled else "0"
+            success = False
+            for key in ("biastee", "bias_tx", "BiasT"):
+                try:
+                    self._dev.writeSetting(key, value)
+                    logger.info("Bias-T %s via key '%s'", "ON" if enabled else "OFF", key)
+                    success = True
+                    break
+                except Exception:
+                    pass
+            if not success:
+                logger.warning("Bias-T not supported by this device")
+            return success
+
     def set_ppm(self, ppm: float) -> bool:
         """Set frequency correction in parts per million."""
         with self._lock:
@@ -451,6 +480,12 @@ class SdrDevice:
         if self._ppm != 0.0:
             with contextlib.suppress(Exception):
                 self._dev.setFrequencyComponent(SoapySDR.SOAPY_SDR_RX, 0, "CORR", self._ppm)
+        if self._bias_tee:
+            value = "1"
+            for key in ("biastee", "bias_tx", "BiasT"):
+                with contextlib.suppress(Exception):
+                    self._dev.writeSetting(key, value)
+                    break
 
     def _stop_stream_locked(self) -> None:
         """Stop and release the stream. Must be called with _lock held."""

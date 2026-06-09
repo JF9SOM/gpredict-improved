@@ -2548,6 +2548,7 @@ class MainWindow(QMainWindow):
             ppm=float(sdr_cfg.get("ppm") or 0),
             gain_auto=bool(sdr_cfg.get("gain_auto", True)),
             gain_db=float(sdr_cfg.get("gain_db") or 40.0),
+            bias_tee=bool(sdr_cfg.get("bias_tee", False)),
         )
         return adapter
 

@@ -1630,6 +1630,7 @@ class SdrRigAdapter(RigController):
         self._ppm: float = 0.0
         self._gain_auto: bool = True
         self._gain_db: float = 40.0
+        self._bias_tee: bool = False
 
     def set_device_info(self, info: SdrDeviceInfo) -> None:
         """Attach an SdrDeviceInfo before calling connect()."""
@@ -1641,12 +1642,14 @@ class SdrRigAdapter(RigController):
         ppm: float = 0.0,
         gain_auto: bool = True,
         gain_db: float = 40.0,
+        bias_tee: bool = False,
     ) -> None:
-        """Store sample rate, PPM correction and gain settings applied on connect()."""
+        """Store sample rate, PPM correction, gain and Bias-T settings applied on connect()."""
         self._sample_rate_hz = sample_rate_hz
         self._ppm = ppm
         self._gain_auto = gain_auto
         self._gain_db = gain_db
+        self._bias_tee = bias_tee
 
     def attach_pipeline(self, pipeline: SDRPipeline) -> None:
         """Attach a running SDRPipeline (set after connect succeeds)."""
@@ -1669,6 +1672,7 @@ class SdrRigAdapter(RigController):
                     dev.set_gain_auto()
                 else:
                     dev.set_gain_db(self._gain_db)
+                dev.set_bias_tee(self._bias_tee)
                 self._sdr_device = dev
                 with self._lock:
                     self._state = RigState.CONNECTED
