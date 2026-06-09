@@ -213,15 +213,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
       - name: Install Python dependencies
         run: pip install -e ".[packaging]"
 
-      - name: Build Hamlib 4.7.1 Python binding (MSVC) and portable package
+      - name: Build Hamlib 4.7.1 Python binding (MinGW) and portable package
         shell: pwsh
         run: |
           $HAMLIB_VER = "4.7.1"
@@ -249,14 +244,6 @@ jobs:
           $hamlibDll = Get-ChildItem "$binDir\*.dll" | Where-Object { $_.Name -match "hamlib" } | Select-Object -First 1
           Write-Host "Hamlib DLL: $($hamlibDll.FullName)"
 
-          # Create import library (.lib) from the DLL via dumpbin + lib.exe (MSVC tools set up by ilammy/msvc-dev-cmd)
-          $exports = & dumpbin /exports $hamlibDll.FullName
-          $symbols = $exports | Select-String '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\w+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }
-          Write-Host "Exported $($symbols.Count) symbols"
-          "EXPORTS" | Out-File -Encoding ASCII hamlib.def
-          $symbols | ForEach-Object { "  $_" } | Out-File -Encoding ASCII -Append hamlib.def
-          & lib /def:hamlib.def /out:hamlib.lib /machine:x64
-
           # Generate SWIG Python wrapper from .swg sources
           # Use Windows zip headers (pre-compiled, includes rig.h etc.) for SWIG
           $bindingsDir = "hamlib-$HAMLIB_VER\bindings"
@@ -269,9 +256,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "swig failed" }
           Write-Host "SWIG generated: $(Get-Item $bindingsDir\hamlib_wrap.c)"
 
-          # The generated hamlib_wrap.c includes <hamlib/config.h> which is a
-          # build-time autotools artifact not present in the Windows binary zip.
-          # Create a minimal stub so MSVC can compile the wrapper.
+          # hamlib_wrap.c includes <hamlib/config.h> which is a build-time
+          # autotools artifact not present in the Windows binary zip.
+          # Create a minimal stub so GCC can compile the wrapper.
           $configH = "$incDir\hamlib\config.h"
           if (-not (Test-Path $configH)) {
             Write-Host "Creating stub $configH"
@@ -288,39 +275,33 @@ jobs:
             Set-Content -Path $configH -Value $stub -Encoding ASCII
           }
 
-          # rig.h includes <pthread.h> which is a MinGW/POSIX header not
-          # available in MSVC. Create a minimal stub so cl.exe can compile.
-          $pthreadH = "$incDir\pthread.h"
-          if (-not (Test-Path $pthreadH)) {
-            Write-Host "Creating stub $pthreadH"
-            $stub = "/* Minimal pthread.h stub for Windows MSVC */" + "`n" +
-                    "#ifndef PTHREAD_H`n#define PTHREAD_H`n" +
-                    "typedef void* pthread_mutex_t;`n" +
-                    "typedef void* pthread_t;`n" +
-                    "typedef void* pthread_attr_t;`n" +
-                    "typedef void* pthread_mutexattr_t;`n" +
-                    "#define PTHREAD_MUTEX_INITIALIZER NULL`n" +
-                    "#endif /* PTHREAD_H */`n"
-            Set-Content -Path $pthreadH -Value $stub -Encoding ASCII
-          }
+          # Compile _Hamlib.pyd with MinGW GCC (same toolchain as libhamlib-4.dll).
+          # MinGW provides pthread.h natively; no stub needed.
+          $gcc = "C:\mingw64\bin\gcc.exe"
 
-          # Compile _Hamlib.pyd with MSVC cl.exe
-          # PY_EXT on Windows is like ".cp311-win_amd64.pyd"
-          & cl /LD /O2 /nologo `
-            "/I$incDir" `
-            "/I$PY_INC" `
+          # Create MinGW-compatible import library for Python DLL
+          $pythonDir = Split-Path (Get-Command python).Source
+          $pyDll = Get-ChildItem $pythonDir -Filter "python3*.dll" |
+                   Where-Object { $_.Name -match "^python3\d+\.dll$" } |
+                   Select-Object -First 1
+          Write-Host "Python DLL: $($pyDll.FullName)"
+          $pyBase = [IO.Path]::GetFileNameWithoutExtension($pyDll.Name)
+          & C:\mingw64\bin\gendef $pyDll.FullName
+          & C:\mingw64\bin\dlltool -D $pyDll.Name -d "$pyBase.def" -l "lib$pyBase.dll.a"
+          if ($LASTEXITCODE -ne 0) { throw "dlltool failed" }
+
+          & $gcc -shared -O2 -DMS_WIN64 `
+            "-I$incDir" "-I$PY_INC" `
             "$bindingsDir\hamlib_wrap.c" `
-            /link hamlib.lib `
-            "/LIBPATH:$PY_SITE\..\..\libs" `
-            "/OUT:_Hamlib$PY_EXT" `
-            /IMPLIB:_Hamlib_import.lib
-          if ($LASTEXITCODE -ne 0) { throw "cl.exe failed" }
+            "-L$binDir" "-lhamlib-4" `
+            "-L." "-l$pyBase" `
+            "-o" "_Hamlib$PY_EXT"
+          if ($LASTEXITCODE -ne 0) { throw "gcc failed" }
 
           # Copy binding to site-packages; add DLL dir to PATH for import verification
           Copy-Item "$bindingsDir\Hamlib.py" "$PY_SITE\" -Force
           Copy-Item "_Hamlib$PY_EXT" "$PY_SITE\" -Force
           Copy-Item "$binDir\*.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
-          Copy-Item "C:\mingw64\bin\libstdc++-6.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
           Copy-Item "C:\mingw64\bin\libgcc_s_seh-1.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
           Copy-Item "C:\mingw64\bin\libwinpthread-1.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
           $env:PATH = "$PY_SITE;$binDir;$env:PATH"
@@ -330,6 +311,8 @@ jobs:
           $pkgName = "hamlib-windows-x86_64-$PYTAG-$HAMLIB_VER"
           New-Item -ItemType Directory -Force -Path $pkgName | Out-Null
           Copy-Item "$binDir\*.dll" "$pkgName\" -ErrorAction SilentlyContinue
+          Copy-Item "C:\mingw64\bin\libgcc_s_seh-1.dll" "$pkgName\" -ErrorAction SilentlyContinue
+          Copy-Item "C:\mingw64\bin\libwinpthread-1.dll" "$pkgName\" -ErrorAction SilentlyContinue
           Copy-Item "hamlib-$HAMLIB_VER\bindings\Hamlib.py" "$pkgName\" -Force
           Copy-Item "_Hamlib$PY_EXT" "$pkgName\" -Force
           "$HAMLIB_VER" | Out-File -FilePath "$pkgName\version.txt" -Encoding ASCII -NoNewline
