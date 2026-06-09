@@ -74,6 +74,12 @@ class SdrDeviceInfo:
         return self.label
 
 
+# SoapySDR drivers that expose non-hardware devices (audio cards, test sinks,
+# network proxies).  These are excluded from the Rig Settings SDR device list
+# so users only see real RF receivers (RTL-SDR, HackRF, AirSpy, etc.).
+_NON_SDR_DRIVERS: frozenset[str] = frozenset({"audio", "null", "remote", "mircsdr"})
+
+
 class SdrDevice:
     """
     Wrapper around a SoapySDR.Device.
@@ -103,8 +109,9 @@ class SdrDevice:
     # ------------------------------------------------------------------
 
     @classmethod
+    @classmethod
     def enumerate(cls) -> list[SdrDeviceInfo]:
-        """Return all SoapySDR-visible devices."""
+        """Return SoapySDR-visible hardware SDR devices (audio devices excluded)."""
         if not SOAPY_AVAILABLE:
             return []
         try:
@@ -114,6 +121,9 @@ class SdrDevice:
             for kw in SoapySDR.Device.enumerate():
                 d = dict(kw)  # SoapySDRKwargs has no .get(); convert first
                 driver = str(d.get("driver") or "")
+                # Skip non-hardware drivers (audio, null, remote, etc.)
+                if driver.lower() in _NON_SDR_DRIVERS:
+                    continue
                 label = str(d.get("label") or d.get("device") or driver)
                 serial = str(d.get("serial") or "")
                 hardware = str(d.get("hardware") or "")
