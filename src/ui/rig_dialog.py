@@ -956,12 +956,16 @@ class RigSettingsDialog(QDialog):
         # Gray out Rig 1 / Rig 2 tab when SDR is assigned to that slot
         self._sdr_panel.assigned_rig_changed.connect(self._on_sdr_assignment_changed)
 
-        # Global info: model count + Hamlib version + update link
+        # Hamlib info row: shown only on Rig 1 / Rig 2 tabs, hidden on SDR tab
+        from PySide6.QtWidgets import QWidget as _QWidget
+
         from core.hamlib_info import get_hamlib_version
 
         n = len(self._all_models)
         hamlib_ver = get_hamlib_version()
-        info_row = QHBoxLayout()
+        self._hamlib_info_widget = _QWidget()
+        info_row = QHBoxLayout(self._hamlib_info_widget)
+        info_row.setContentsMargins(0, 0, 0, 0)
         self._status_label = QLabel(
             _("{n} rig models available  |  Hamlib {ver}").format(n=n, ver=hamlib_ver)
         )
@@ -974,7 +978,10 @@ class RigSettingsDialog(QDialog):
         hamlib_update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         hamlib_update_btn.clicked.connect(self._on_hamlib_update)
         info_row.addWidget(hamlib_update_btn)
-        layout.addLayout(info_row)
+        layout.addWidget(self._hamlib_info_widget)
+
+        # Hide Hamlib info row when the SDR tab (index 2) is active
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -992,6 +999,11 @@ class RigSettingsDialog(QDialog):
         from ui.hamlib_update_dialog import HamlibUpdateDialog
 
         HamlibUpdateDialog(self).exec()
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Show Hamlib info row only on Rig 1 / Rig 2 tabs (not SDR tab)."""
+        # Tab 2 is SDR Settings
+        self._hamlib_info_widget.setVisible(index != 2)
 
     def _on_sdr_assignment_changed(self, assigned_rig: object) -> None:
         """Enable/disable Rig 1 / Rig 2 tabs based on SDR assignment.
