@@ -94,6 +94,11 @@ class SdrControlWidget(QWidget):
             pipeline.spectrum_ready.connect(self._on_spectrum)
             pipeline.status_changed.connect(self._on_status)
             self._status_label.setText(_("SDR Connected"))
+            # Apply the currently selected demod mode to the new pipeline.
+            # Without this, switching satellites before Connect leaves the
+            # pipeline in its default mode (USB) regardless of what the
+            # combo box shows.
+            self._on_mode_changed(self._mode_combo.currentIndex())
         else:
             self._status_label.setText(_("SDR Disconnected"))
             self._stop_audio()
