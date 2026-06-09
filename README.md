@@ -28,7 +28,7 @@ satellite tracker by Alexandru Csete OZ9AEC — built on a modern Python stack.
 | TLE updates | Manual | **Multi-source auto-update with quality scoring** |
 | Pass prediction | List view | **Graphical pass chart + sky radar + footprint on world map** |
 | Rotator control | Separate rotctld | **Built-in rotator control with catch-up tracking** |
-| Supported OS | Linux (GTK+) | **Linux, Windows, macOS, Raspberry Pi** |
+| Supported OS | Linux, Windows, macOS (GTK+) | **Linux, Windows, macOS, Raspberry Pi** |
 
 ---
 

@@ -28,7 +28,7 @@ GPredict-Improved は、長年アマチュア無線家に愛用されてきた
 | TLE更新 | 手動 | **複数ソースから自動更新・品質スコアリング** |
 | パス予測表示 | リスト表示のみ | **グラフィカルパスチャート + スカイレーダー + 世界地図フットプリント** |
 | ローテーター制御 | 別途 rotctld | **内蔵ローテーター制御・キャッチアップ追尾** |
-| 対応OS | Linux (GTK+) | **Linux・Windows・macOS・Raspberry Pi** |
+| 対応OS | Linux・Windows・macOS（GTK+）| **Linux・Windows・macOS・Raspberry Pi** |
 
 ---
 
