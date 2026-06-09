@@ -75,7 +75,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             autoconf automake libtool pkg-config \
-            libusb-1.0-0-dev libxml2-dev swig python3-dev \
+            libusb-1.0-0-dev libxml2-dev swig python3.11-dev \
             libgl1 libegl1 libfuse2 \
             binutils coreutils
 
@@ -89,12 +89,16 @@ jobs:
           tar -xzf hamlib-${HAMLIB_VER}.tar.gz
 
           # --- Build 1: bundled (rpath = /opt/hamlib/4.7/lib for PyInstaller) ---
-          # Note: --enable-python was removed in Hamlib 4.x; SWIG auto-detects Python
+          # Note: --enable-python was removed in Hamlib 4.x; provide Python headers explicitly
+          # so that AX_PYTHON_DEVEL finds the setup-python 3.11 headers (not system 3.10).
+          PY_INCLUDES=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
           cd hamlib-${HAMLIB_VER}
           ./configure \
             --prefix=/opt/hamlib/4.7 \
             --disable-static \
-            PYTHON=$(which python3)
+            PYTHON=$(which python3) \
+            PYTHON_CPPFLAGS="-I${PY_INCLUDES}" \
+            CPPFLAGS="-I${PY_INCLUDES}"
           make -j$(nproc)
           sudo make install
           sudo ldconfig
@@ -117,7 +121,9 @@ jobs:
             --prefix=/tmp/hamlib-portable \
             --disable-static \
             LDFLAGS="-Wl,-rpath,\$ORIGIN" \
-            PYTHON=$(which python3)
+            PYTHON=$(which python3) \
+            PYTHON_CPPFLAGS="-I${PY_INCLUDES}" \
+            CPPFLAGS="-I${PY_INCLUDES}"
           make -j$(nproc)
           make install
           cd ..
@@ -283,12 +289,15 @@ jobs:
           tar -xzf hamlib-${HAMLIB_VER}.tar.gz
 
           # --- Build 1: for PyInstaller bundle (standard prefix) ---
-          # Note: --enable-python was removed in Hamlib 4.x; SWIG auto-detects Python
+          # Note: --enable-python was removed in Hamlib 4.x; provide Python headers explicitly
+          PY_INCLUDES=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
           cd hamlib-${HAMLIB_VER}
           ./configure \
             --prefix=/usr/local/hamlib-bundle \
             --disable-static \
-            PYTHON=$(which python3)
+            PYTHON=$(which python3) \
+            PYTHON_CPPFLAGS="-I${PY_INCLUDES}" \
+            CPPFLAGS="-I${PY_INCLUDES}"
           make -j$(sysctl -n hw.logicalcpu)
           sudo make install
 
@@ -311,7 +320,9 @@ jobs:
             --prefix=/tmp/hamlib-portable-mac \
             --disable-static \
             LDFLAGS="-Wl,-rpath,@loader_path" \
-            PYTHON=$(which python3)
+            PYTHON=$(which python3) \
+            PYTHON_CPPFLAGS="-I${PY_INCLUDES}" \
+            CPPFLAGS="-I${PY_INCLUDES}"
           make -j$(sysctl -n hw.logicalcpu)
           make install
           cd ..
