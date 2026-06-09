@@ -331,11 +331,14 @@ jobs:
           choco install nsis -y --no-progress
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
 
+          Write-Host "=== dist contents ===" ; Get-ChildItem "dist" -ErrorAction SilentlyContinue | Select-Object Name
+
           # Resolve version from git tag (e.g. v0.1.0-beta.33 → 0.1.0.33 for NSIS VIProductVersion)
           $tag = "${{ github.ref_name }}"
           $ver = $tag.TrimStart("v")
           # NSIS /DAPP_VERSION passes the raw tag version string (used for display)
           makensis /DAPP_VERSION=$ver scripts\installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
           Write-Host "Installer built: dist\GPredict-Improved-Setup.exe"
 
       - name: Upload artifact
