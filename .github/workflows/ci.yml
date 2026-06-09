@@ -319,14 +319,18 @@ jobs:
           Compress-Archive -Path "$pkgName\*" -DestinationPath "$pkgName.zip"
           "HAMLIB_PORTABLE_PKG=$pkgName.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
 
+      - name: Disable Windows Defender real-time monitoring
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
       - name: Build with PyInstaller
         shell: pwsh
         run: |
           $env:PYTHONPATH = "src"
           pyinstaller scripts/gpredict-improved.spec --noconfirm --distpath dist
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
-          Write-Host "=== dist after PyInstaller (PWD: $(Get-Location)) ==="
-          Get-ChildItem dist -Recurse -ErrorAction SilentlyContinue | Select-Object FullName | Select-Object -First 20
+          Write-Host "=== dist after PyInstaller: $((Get-ChildItem dist -Recurse -File -ErrorAction SilentlyContinue).Count) files ==="
+          Get-ChildItem dist -Recurse -ErrorAction SilentlyContinue | Select-Object FullName | Select-Object -First 5
 
       - name: Build NSIS installer
         shell: pwsh
