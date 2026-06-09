@@ -24,7 +24,7 @@ Unicode True
 
 ; ---- General -----------------------------------------------------------
 Name            "${APP_NAME} ${APP_VERSION}"
-OutFile         "dist\GPredict-Improved-Setup.exe"
+OutFile         "..\dist\GPredict-Improved-Setup.exe"
 InstallDir      "$PROGRAMFILES64\${APP_NAME}"
 InstallDirRegKey HKLM "${REG_INSTALL_DIR}" "InstallDir"
 RequestExecutionLevel admin
