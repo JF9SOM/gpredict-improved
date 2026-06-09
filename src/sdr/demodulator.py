@@ -8,7 +8,7 @@ Supported modes:
   NFM   — Narrow FM (FM satellites, e.g. SO-50, AO-91)
   USB   — Upper Sideband (linear transponders)
   LSB   — Lower Sideband
-  CW    — Morse code (BPF + envelope detection on USB)
+  CW    — Morse code (direct decimation + BPF + envelope detection)
 """
 
 from __future__ import annotations
@@ -223,21 +223,35 @@ class Demodulator:
 
     def _demod_cw(self, iq: np.ndarray) -> np.ndarray:
         """
-        CW demodulation: USB demod → BPF at pitch → envelope detection.
+        CW demodulation: direct decimation → BPF → envelope → sidetone.
+
+        Avoids the BFO-injection path used for SSB.  CW signals are narrow
+        carriers at a known offset from the SDR centre frequency, so we
+        simply decimate the I/Q to audio rate, take the real part, apply a
+        narrow BPF (sosfilt, numerically stable) around the CW pitch, and
+        envelope-detect to produce a clean sidetone.
         """
-        # Reuse USB demod for the baseband audio
-        usb_audio = self._demod_ssb(iq, upper=True)
+        # Remove DC offset (SDR spike)
+        iq = self._remove_dc(iq)
 
-        # BPF around CW pitch
-        bpf_audio = sp_signal.lfilter(self._cw_bpf_b, self._cw_bpf_a, usb_audio)
+        # Decimate directly to AUDIO_RATE in two stages
+        iq_ds = self._decimate(iq, self._cw_decim1)
+        iq_ds = self._decimate(iq_ds, self._cw_decim2)
 
-        # Envelope via Hilbert transform → modulate onto pitch tone
+        # Real part gives audio (CW tones sit at their natural offset freqs)
+        audio_raw = iq_ds.real.astype(np.float32)
+
+        # Narrow BPF around CW pitch using SOS (numerically stable for
+        # narrow bandpass — b,a Butterworth at these widths is ill-conditioned)
+        bpf_audio = sp_signal.sosfilt(self._cw_bpf_sos, audio_raw).astype(np.float32)
+
+        # Envelope via Hilbert transform
         analytic = sp_signal.hilbert(bpf_audio)
         envelope = np.abs(analytic).astype(np.float32)
 
-        # Multiply envelope by a sine at CW pitch for pleasant sidetone
-        t = np.arange(len(envelope)) / AUDIO_RATE
-        tone = np.sin(2 * np.pi * self._cw_pitch * t).astype(np.float32)
+        # Multiply envelope by a sine at CW pitch for a pleasant sidetone
+        t = np.arange(len(envelope), dtype=np.float32) / AUDIO_RATE
+        tone = np.sin(2.0 * np.pi * self._cw_pitch * t).astype(np.float32)
         return self._finalize(envelope * tone)
 
     # ------------------------------------------------------------------
@@ -306,13 +320,22 @@ class Demodulator:
         cutoff_mid = float(np.clip(self._ssb_bw / nyq_mid, 0.001, 0.499))
         self._ssb_audio_b = sp_signal.firwin(63, cutoff_mid).astype(np.float32)
 
-        # ---- CW BPF ----
-        # Applied after SSB demod at AUDIO_RATE
+        # ---- CW chain ----
+        # CW uses a direct decimation path (bypasses SSB BFO injection).
+        # Two-stage decimation: input_rate → ~96 kHz → AUDIO_RATE
+        self._cw_decim1 = max(1, int(rate / 96_000))
+        cw_mid_rate = rate / self._cw_decim1
+        self._cw_decim2 = max(1, int(cw_mid_rate / AUDIO_RATE))
+
+        # CW BPF applied at AUDIO_RATE around the sidetone pitch.
+        # Use second-order-sections (SOS) format — b,a Butterworth with a
+        # normalised bandwidth this narrow (~0.017) is numerically ill-
+        # conditioned and produces filter oscillation / huge gain artefacts.
         lo = max(50.0, self._cw_pitch - CW_BPF_BW_HZ)
         hi = min(AUDIO_RATE / 2 - 50, self._cw_pitch + CW_BPF_BW_HZ)
         nyq_audio = AUDIO_RATE / 2
-        self._cw_bpf_b, self._cw_bpf_a = sp_signal.butter(
-            4, [lo / nyq_audio, hi / nyq_audio], btype="band"
+        self._cw_bpf_sos = sp_signal.butter(
+            4, [lo / nyq_audio, hi / nyq_audio], btype="band", output="sos"
         )
 
     # ------------------------------------------------------------------
