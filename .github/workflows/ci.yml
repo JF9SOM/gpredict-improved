@@ -238,7 +238,7 @@ jobs:
           # Download Hamlib source (for .swg binding sources) and Windows DLLs
           Invoke-WebRequest "https://github.com/Hamlib/Hamlib/releases/download/$HAMLIB_VER/hamlib-$HAMLIB_VER.tar.gz" -OutFile hamlib.tar.gz
           tar -xzf hamlib.tar.gz
-          Invoke-WebRequest "https://github.com/Hamlib/Hamlib/releases/download/$HAMLIB_VER/hamlib-w32-$HAMLIB_VER.zip" -OutFile hamlib-win.zip
+          Invoke-WebRequest "https://github.com/Hamlib/Hamlib/releases/download/$HAMLIB_VER/hamlib-w64-$HAMLIB_VER.zip" -OutFile hamlib-win.zip
           Expand-Archive -Path hamlib-win.zip -DestinationPath hamlib-extracted
           $extracted = Get-ChildItem -Path hamlib-extracted -Directory | Select-Object -First 1
           $binDir = "$($extracted.FullName)\bin"
