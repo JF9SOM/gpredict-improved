@@ -320,7 +320,7 @@ jobs:
           Copy-Item "$bindingsDir\Hamlib.py" "$PY_SITE\" -Force
           Copy-Item "_Hamlib$PY_EXT" "$PY_SITE\" -Force
           Copy-Item "$binDir\*.dll" "$PY_SITE\" -ErrorAction SilentlyContinue
-          $env:PATH = "$binDir;$env:PATH"
+          $env:PATH = "$PY_SITE;$binDir;$env:PATH"
           python -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
 
           # --- Build portable flat package for in-app user update ---
