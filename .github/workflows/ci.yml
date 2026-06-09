@@ -184,17 +184,27 @@ jobs:
           # Locate the extracted root directory (varies by release)
           $extracted = Get-ChildItem -Path hamlib-extracted -Directory | Select-Object -First 1
           Write-Host "Extracted to: $($extracted.FullName)"
+          # Show top-level contents for debugging
+          Get-ChildItem -Path $extracted.FullName | ForEach-Object { Write-Host "  $($_.Name)" }
+
+          # Find the Python bindings folder by locating Hamlib.py anywhere in the tree
+          $hamlibPy = Get-ChildItem -Path $extracted.FullName -Recurse -Filter "Hamlib.py" | Select-Object -First 1
+          if (-not $hamlibPy) {
+            Write-Error "Hamlib.py not found in extracted archive"; exit 1
+          }
+          $pyBindingsDir = $hamlibPy.DirectoryName
+          Write-Host "Found Python bindings in: $pyBindingsDir"
+
           # Copy Python bindings into the CI Python's site-packages
           $sitePackages = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
-          $pyFolders = @("python3.11", "python3.12", "python3", "python")
-          foreach ($folder in $pyFolders) {
-            $src = "$($extracted.FullName)\$folder"
-            if (Test-Path $src) {
-              Write-Host "Copying Hamlib Python bindings from $src"
-              Copy-Item "$src\*" -Destination $sitePackages -Recurse -Force
-              break
-            }
-          }
+          Copy-Item "$pyBindingsDir\Hamlib.py" -Destination $sitePackages -Force
+          Copy-Item "$pyBindingsDir\_Hamlib*.pyd" -Destination $sitePackages -Force
+
+          # Add Hamlib bin\ to PATH so the .pyd can load the DLLs
+          $binDir = "$($extracted.FullName)\bin"
+          $env:PATH = "$binDir;$env:PATH"
+          Write-Host "Added to PATH: $binDir"
+
           # Verify Hamlib is importable
           python -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
 
@@ -204,16 +214,10 @@ jobs:
           $pkgName = "hamlib-windows-x86_64-${PYTAG}-${HAMLIB_VER}"
           New-Item -ItemType Directory -Force -Path $pkgName | Out-Null
           # Copy all DLLs from bin/
-          Copy-Item "$($extracted.FullName)\bin\*.dll" -Destination $pkgName\ -ErrorAction SilentlyContinue
-          # Copy Python bindings (.pyd + Hamlib.py) from the python3.X folder
-          foreach ($folder in $pyFolders) {
-            $src = "$($extracted.FullName)\$folder"
-            if (Test-Path $src) {
-              Copy-Item "$src\Hamlib.py" -Destination $pkgName\ -Force
-              Copy-Item "$src\_Hamlib*.pyd" -Destination $pkgName\ -Force
-              break
-            }
-          }
+          Copy-Item "$binDir\*.dll" -Destination $pkgName\ -ErrorAction SilentlyContinue
+          # Copy Python bindings (.pyd + Hamlib.py)
+          Copy-Item "$pyBindingsDir\Hamlib.py" -Destination $pkgName\ -Force
+          Copy-Item "$pyBindingsDir\_Hamlib*.pyd" -Destination $pkgName\ -Force
           # Version marker
           "${HAMLIB_VER}" | Out-File -FilePath "$pkgName\version.txt" -Encoding ascii -NoNewline
           # Zip flat (no sub-directory, unlike Linux tar.gz which has one)
