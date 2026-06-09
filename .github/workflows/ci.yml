@@ -323,7 +323,10 @@ jobs:
         shell: pwsh
         run: |
           $env:PYTHONPATH = "src"
-          pyinstaller scripts/gpredict-improved.spec --noconfirm
+          pyinstaller scripts/gpredict-improved.spec --noconfirm --distpath dist
+          if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
+          Write-Host "=== dist after PyInstaller (PWD: $(Get-Location)) ==="
+          Get-ChildItem dist -Recurse -ErrorAction SilentlyContinue | Select-Object FullName | Select-Object -First 20
 
       - name: Build NSIS installer
         shell: pwsh
@@ -331,7 +334,7 @@ jobs:
           choco install nsis -y --no-progress
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
 
-          Write-Host "=== dist contents ===" ; Get-ChildItem "dist" -ErrorAction SilentlyContinue | Select-Object Name
+          Write-Host "=== dist contents (PWD: $(Get-Location)) ===" ; Get-ChildItem "dist" -ErrorAction SilentlyContinue | Select-Object Name
 
           # Resolve version from git tag (e.g. v0.1.0-beta.33 → 0.1.0.33 for NSIS VIProductVersion)
           $tag = "${{ github.ref_name }}"
