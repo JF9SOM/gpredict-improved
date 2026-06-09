@@ -88,59 +88,77 @@ jobs:
           wget -q https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-${HAMLIB_VER}.tar.gz
           tar -xzf hamlib-${HAMLIB_VER}.tar.gz
 
+          # Hamlib 4.x autotools removed --enable-python and AX_PYTHON_DEVEL
+          # detection fails on CI Python (setup-python prefix mismatch).
+          # Strategy: build the C library via autotools, then compile the Python
+          # binding manually from the pre-generated hamlib_wrap.c in the tarball.
+
+          PY_INC=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
+          PY_EXT=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+
+          # Confirm pre-generated wrapper is in the tarball
+          echo "=== bindings/ ===" && ls hamlib-${HAMLIB_VER}/bindings/
+
           # --- Build 1: bundled (rpath = /opt/hamlib/4.7/lib for PyInstaller) ---
-          # Note: --enable-python was removed in Hamlib 4.x; provide Python headers explicitly
-          # so that AX_PYTHON_DEVEL finds the setup-python 3.11 headers (not system 3.10).
-          PY_INCLUDES=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
           cd hamlib-${HAMLIB_VER}
-          ./configure \
-            --prefix=/opt/hamlib/4.7 \
-            --disable-static \
-            PYTHON=$(which python3) \
-            PYTHON_CPPFLAGS="-I${PY_INCLUDES}" \
-            CPPFLAGS="-I${PY_INCLUDES}"
+          ./configure --prefix=/opt/hamlib/4.7 --disable-static
           make -j$(nproc)
           sudo make install
           sudo ldconfig
-          # Find Python bindings (path varies; use find instead of hardcoding)
-          PY_BINDING_BUNDLED=$(find /opt/hamlib/4.7 -name "Hamlib.py" 2>/dev/null | head -1)
-          if [ -z "$PY_BINDING_BUNDLED" ]; then
-            echo "ERROR: Hamlib.py not found after bundled build"; find /opt/hamlib/4.7 -type f -name "*.py"; exit 1
-          fi
-          PY_BINDING_DIR_BUNDLED=$(dirname "$PY_BINDING_BUNDLED")
-          echo "Bundled Python binding: $PY_BINDING_DIR_BUNDLED"
-          # Copy Python bindings into the CI Python's site-packages
+          cd ..
+
+          # Compile Python binding from pre-generated SWIG wrapper
+          BUNDLED_PYSITE=/opt/hamlib/4.7/lib/python${PYVER}/site-packages
+          sudo mkdir -p ${BUNDLED_PYSITE}
+          sudo gcc -shared -fPIC -O2 \
+            -I/opt/hamlib/4.7/include \
+            -I${PY_INC} \
+            hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
+            -L/opt/hamlib/4.7/lib \
+            -lhamlib \
+            -Wl,-rpath,/opt/hamlib/4.7/lib \
+            -o ${BUNDLED_PYSITE}/_Hamlib${PY_EXT}
+          sudo cp hamlib-${HAMLIB_VER}/bindings/Hamlib.py ${BUNDLED_PYSITE}/
+
+          # Copy bindings into CI Python's site-packages and verify import
           PY_SITE=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
-          cp "$PY_BINDING_DIR_BUNDLED/Hamlib.py" "${PY_SITE}/"
-          cp "$PY_BINDING_DIR_BUNDLED"/_Hamlib*.so "${PY_SITE}/"
+          cp ${BUNDLED_PYSITE}/Hamlib.py ${PY_SITE}/
+          cp ${BUNDLED_PYSITE}/_Hamlib${PY_EXT} ${PY_SITE}/
+          export LD_LIBRARY_PATH=/opt/hamlib/4.7/lib:${LD_LIBRARY_PATH}
           python3 -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
 
           # --- Build 2: portable (rpath = $ORIGIN for in-app user update) ---
+          cd hamlib-${HAMLIB_VER}
           make clean
           ./configure \
             --prefix=/tmp/hamlib-portable \
             --disable-static \
-            LDFLAGS="-Wl,-rpath,\$ORIGIN" \
-            PYTHON=$(which python3) \
-            PYTHON_CPPFLAGS="-I${PY_INCLUDES}" \
-            CPPFLAGS="-I${PY_INCLUDES}"
+            LDFLAGS="-Wl,-rpath,\$ORIGIN"
           make -j$(nproc)
           make install
           cd ..
 
+          # Compile portable Python binding with $ORIGIN rpath
+          PORT_PYSITE=/tmp/hamlib-portable/lib/python${PYVER}/site-packages
+          mkdir -p ${PORT_PYSITE}
+          gcc -shared -fPIC -O2 \
+            -I/tmp/hamlib-portable/include \
+            -I${PY_INC} \
+            hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
+            -L/tmp/hamlib-portable/lib \
+            -lhamlib \
+            -Wl,-rpath,\$ORIGIN \
+            -o ${PORT_PYSITE}/_Hamlib${PY_EXT}
+          cp hamlib-${HAMLIB_VER}/bindings/Hamlib.py ${PORT_PYSITE}/
+
           # Package: all files flat so $ORIGIN works (libhamlib.so.4 next to _Hamlib.so)
           PKG="hamlib-linux-x86_64-${PYTAG}-${HAMLIB_VER}"
           mkdir -p ${PKG}
-          # Shared library
           SOFILE=$(ls /tmp/hamlib-portable/lib/libhamlib.so.4.*)
           cp ${SOFILE} ${PKG}/
           ln -sf $(basename ${SOFILE}) ${PKG}/libhamlib.so.4
-          # Python binding (find via glob)
-          PY_BINDING_PORT=$(find /tmp/hamlib-portable -name "Hamlib.py" 2>/dev/null | head -1)
-          PY_BINDING_DIR_PORT=$(dirname "$PY_BINDING_PORT")
-          cp "$PY_BINDING_DIR_PORT/Hamlib.py" ${PKG}/
-          cp "$PY_BINDING_DIR_PORT"/_Hamlib*.so ${PKG}/
-          # Version marker
+          cp ${PORT_PYSITE}/Hamlib.py ${PKG}/
+          cp ${PORT_PYSITE}/_Hamlib${PY_EXT} ${PKG}/
           echo "${HAMLIB_VER}" > ${PKG}/version.txt
           tar -czf ${PKG}.tar.gz ${PKG}/
           echo "HAMLIB_PORTABLE_PKG=${PKG}.tar.gz" >> $GITHUB_ENV
@@ -186,47 +204,75 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Install Python dependencies
         run: pip install -e ".[packaging]"
 
-      - name: Install Hamlib Python binding (PyPI) and build portable package
+      - name: Build Hamlib 4.7.1 Python binding (MSVC) and portable package
         shell: pwsh
         run: |
           $HAMLIB_VER = "4.7.1"
           $PYTAG = python -c "import sys; print(f'py{sys.version_info.major}{sys.version_info.minor}')"
+          $PY_INC  = python -c "import sysconfig; print(sysconfig.get_path('include'))"
+          $PY_EXT  = python -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"
+          $PY_SITE = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
+          Write-Host "PY_INC=$PY_INC  PY_EXT=$PY_EXT"
 
-          # Install Hamlib Python binding from PyPI (includes .pyd + Hamlib.py + bundled DLLs)
-          pip install Hamlib
+          # Download Hamlib source (has pre-generated hamlib_wrap.c) and Windows DLLs
+          Invoke-WebRequest "https://github.com/Hamlib/Hamlib/releases/download/$HAMLIB_VER/hamlib-$HAMLIB_VER.tar.gz" -OutFile hamlib.tar.gz
+          tar -xzf hamlib.tar.gz
+          Invoke-WebRequest "https://github.com/Hamlib/Hamlib/releases/download/$HAMLIB_VER/hamlib-w32-$HAMLIB_VER.zip" -OutFile hamlib-win.zip
+          Expand-Archive -Path hamlib-win.zip -DestinationPath hamlib-extracted
+          $extracted = Get-ChildItem -Path hamlib-extracted -Directory | Select-Object -First 1
+          $binDir = "$($extracted.FullName)\bin"
+          $incDir = "$($extracted.FullName)\include"
+          Write-Host "=== DLLs ===" ; Get-ChildItem "$binDir\*.dll" | Select-Object Name
+
+          # Find Hamlib DLL
+          $hamlibDll = Get-ChildItem "$binDir\*.dll" | Where-Object { $_.Name -match "hamlib" } | Select-Object -First 1
+          Write-Host "Hamlib DLL: $($hamlibDll.FullName)"
+
+          # Create import library (.lib) from the DLL via dumpbin + lib.exe (MSVC tools set up by ilammy/msvc-dev-cmd)
+          $exports = & dumpbin /exports $hamlibDll.FullName
+          $symbols = $exports | Select-String '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\w+)' | ForEach-Object { $_.Matches[0].Groups[1].Value }
+          Write-Host "Exported $($symbols.Count) symbols"
+          "EXPORTS" | Out-File -Encoding ASCII hamlib.def
+          $symbols | ForEach-Object { "  $_" } | Out-File -Encoding ASCII -Append hamlib.def
+          & lib /def:hamlib.def /out:hamlib.lib /machine:x64
+
+          # Show bindings dir contents
+          Write-Host "=== bindings/ ===" ; Get-ChildItem "hamlib-$HAMLIB_VER\bindings"
+
+          # Compile _Hamlib.pyd with MSVC cl.exe
+          # PY_EXT on Windows is like ".cp311-win_amd64.pyd"
+          & cl /LD /O2 /nologo `
+            "/I$incDir" `
+            "/I$PY_INC" `
+            "hamlib-$HAMLIB_VER\bindings\hamlib_wrap.c" `
+            /link hamlib.lib `
+            "/OUT:_Hamlib$PY_EXT" `
+            /IMPLIB:_Hamlib_import.lib
+          if ($LASTEXITCODE -ne 0) { throw "cl.exe failed" }
+
+          # Copy binding to site-packages; add DLL dir to PATH for import verification
+          Copy-Item "hamlib-$HAMLIB_VER\bindings\Hamlib.py" "$PY_SITE\" -Force
+          Copy-Item "_Hamlib$PY_EXT" "$PY_SITE\" -Force
+          $env:PATH = "$binDir;$env:PATH"
           python -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
 
-          # Download official Hamlib Windows binary zip for the DLLs (no Python bindings in zip)
-          $url = "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-w32-${HAMLIB_VER}.zip"
-          Invoke-WebRequest -Uri $url -OutFile hamlib.zip
-          Expand-Archive -Path hamlib.zip -DestinationPath hamlib-extracted
-          $extracted = Get-ChildItem -Path hamlib-extracted -Directory | Select-Object -First 1
-          Write-Host "Extracted to: $($extracted.FullName)"
-          $binDir = "$($extracted.FullName)\bin"
-
-          # Locate Python binding files installed by pip
-          $sitePackages = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
-          $hamlibPyd = Get-ChildItem -Path $sitePackages -Filter "_Hamlib*.pyd" | Select-Object -First 1
-
           # --- Build portable flat package for in-app user update ---
-          # Flat layout: all DLLs + .pyd + Hamlib.py in one directory.
-          $pkgName = "hamlib-windows-x86_64-${PYTAG}-${HAMLIB_VER}"
+          $pkgName = "hamlib-windows-x86_64-$PYTAG-$HAMLIB_VER"
           New-Item -ItemType Directory -Force -Path $pkgName | Out-Null
-          # DLLs from official zip
-          Copy-Item "$binDir\*.dll" -Destination "$pkgName\" -ErrorAction SilentlyContinue
-          # Python binding from pip's site-packages
-          Copy-Item "$sitePackages\Hamlib.py" -Destination "$pkgName\" -Force
-          if ($hamlibPyd) {
-            Copy-Item $hamlibPyd.FullName -Destination "$pkgName\" -Force
-          }
-          # Version marker
-          "${HAMLIB_VER}" | Out-File -FilePath "$pkgName\version.txt" -Encoding ascii -NoNewline
-          # Zip flat (no sub-directory, unlike Linux tar.gz which has one)
-          Compress-Archive -Path "${pkgName}\*" -DestinationPath "${pkgName}.zip"
-          echo "HAMLIB_PORTABLE_PKG=${pkgName}.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Copy-Item "$binDir\*.dll" "$pkgName\" -ErrorAction SilentlyContinue
+          Copy-Item "hamlib-$HAMLIB_VER\bindings\Hamlib.py" "$pkgName\" -Force
+          Copy-Item "_Hamlib$PY_EXT" "$pkgName\" -Force
+          "$HAMLIB_VER" | Out-File -FilePath "$pkgName\version.txt" -Encoding ASCII -NoNewline
+          Compress-Archive -Path "$pkgName\*" -DestinationPath "$pkgName.zip"
+          "HAMLIB_PORTABLE_PKG=$pkgName.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
 
       - name: Build with PyInstaller
         shell: pwsh
@@ -276,65 +322,75 @@ jobs:
 
       - name: Install Hamlib and Python dependencies
         run: |
-          # Install build tools and Hamlib 4.7 source dependencies via Homebrew
-          brew install autoconf automake libtool pkg-config libusb swig dylibbundler
+          # Install build tools via Homebrew (swig not needed; compile wrapper directly)
+          brew install autoconf automake libtool pkg-config libusb dylibbundler
 
           HAMLIB_VER="4.7.1"
           PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
           PYTAG=$(python3 -c "import sys; print(f'py{sys.version_info.major}{sys.version_info.minor}')")
           ARCH=$(uname -m)  # arm64 or x86_64
 
+          PY_INC=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
+          PY_EXT=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+
           # Download Hamlib source
           wget -q https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-${HAMLIB_VER}.tar.gz
           tar -xzf hamlib-${HAMLIB_VER}.tar.gz
 
+          echo "=== bindings/ ===" && ls hamlib-${HAMLIB_VER}/bindings/
+
           # --- Build 1: for PyInstaller bundle (standard prefix) ---
-          # Note: --enable-python was removed in Hamlib 4.x; provide Python headers explicitly
-          PY_INCLUDES=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
           cd hamlib-${HAMLIB_VER}
-          ./configure \
-            --prefix=/usr/local/hamlib-bundle \
-            --disable-static \
-            PYTHON=$(which python3) \
-            PYTHON_CPPFLAGS="-I${PY_INCLUDES}" \
-            CPPFLAGS="-I${PY_INCLUDES}"
+          ./configure --prefix=/usr/local/hamlib-bundle --disable-static
           make -j$(sysctl -n hw.logicalcpu)
           sudo make install
+          cd ..
 
-          # Find Python bindings (path varies; use find instead of hardcoding)
-          PY_BINDING_BUNDLED=$(find /usr/local/hamlib-bundle -name "Hamlib.py" 2>/dev/null | head -1)
-          if [ -z "$PY_BINDING_BUNDLED" ]; then
-            echo "ERROR: Hamlib.py not found after bundled build"; find /usr/local/hamlib-bundle -type f -name "*.py"; exit 1
-          fi
-          PY_BINDING_DIR_BUNDLED=$(dirname "$PY_BINDING_BUNDLED")
-          echo "Bundled Python binding: $PY_BINDING_DIR_BUNDLED"
-          # Copy Python bindings into CI Python's site-packages (for PyInstaller collection)
+          # Compile Python binding from pre-generated SWIG wrapper
+          BUNDLED_PYSITE=/usr/local/hamlib-bundle/lib/python${PYVER}/site-packages
+          sudo mkdir -p ${BUNDLED_PYSITE}
+          clang -shared -fPIC -O2 \
+            -I/usr/local/hamlib-bundle/include \
+            -I${PY_INC} \
+            hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
+            -L/usr/local/hamlib-bundle/lib \
+            -lhamlib \
+            -Wl,-rpath,/usr/local/hamlib-bundle/lib \
+            -o ${BUNDLED_PYSITE}/_Hamlib${PY_EXT}
+          sudo cp hamlib-${HAMLIB_VER}/bindings/Hamlib.py ${BUNDLED_PYSITE}/
+
+          # Copy bindings into CI Python's site-packages and verify
           PY_SITE=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
-          cp "$PY_BINDING_DIR_BUNDLED/Hamlib.py" "${PY_SITE}/"
-          cp "$PY_BINDING_DIR_BUNDLED"/_Hamlib*.so "${PY_SITE}/"
-          python3 -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
+          cp ${BUNDLED_PYSITE}/Hamlib.py ${PY_SITE}/
+          cp ${BUNDLED_PYSITE}/_Hamlib${PY_EXT} ${PY_SITE}/
+          DYLD_LIBRARY_PATH=/usr/local/hamlib-bundle/lib python3 -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
 
           # --- Build 2: portable with @loader_path for in-app user update ---
+          cd hamlib-${HAMLIB_VER}
           make clean
           ./configure \
             --prefix=/tmp/hamlib-portable-mac \
             --disable-static \
-            LDFLAGS="-Wl,-rpath,@loader_path" \
-            PYTHON=$(which python3) \
-            PYTHON_CPPFLAGS="-I${PY_INCLUDES}" \
-            CPPFLAGS="-I${PY_INCLUDES}"
+            LDFLAGS="-Wl,-rpath,@loader_path"
           make -j$(sysctl -n hw.logicalcpu)
           make install
           cd ..
 
-          # Find portable Python binding via glob
+          # Compile portable Python binding with @loader_path rpath
+          PORT_PYSITE=/tmp/hamlib-portable-mac/lib/python${PYVER}/site-packages
+          mkdir -p ${PORT_PYSITE}
+          clang -shared -fPIC -O2 \
+            -I/tmp/hamlib-portable-mac/include \
+            -I${PY_INC} \
+            hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
+            -L/tmp/hamlib-portable-mac/lib \
+            -lhamlib \
+            -Wl,-rpath,@loader_path \
+            -o ${PORT_PYSITE}/_Hamlib${PY_EXT}
+          cp hamlib-${HAMLIB_VER}/bindings/Hamlib.py ${PORT_PYSITE}/
+
           PORTABLE_LIB=/tmp/hamlib-portable-mac/lib
-          PY_BINDING_PORT=$(find /tmp/hamlib-portable-mac -name "Hamlib.py" 2>/dev/null | head -1)
-          if [ -z "$PY_BINDING_PORT" ]; then
-            echo "ERROR: Hamlib.py not found after portable build"; exit 1
-          fi
-          PY_BINDING_DIR_PORT=$(dirname "$PY_BINDING_PORT")
-          HAMLIB_SO=$(ls "$PY_BINDING_DIR_PORT"/_Hamlib*.so)
+          HAMLIB_SO=${PORT_PYSITE}/_Hamlib${PY_EXT}
 
           # Fix transitive dylib dependencies using dylibbundler so
           # the .so loads without Homebrew installed on the end user's machine.
@@ -348,11 +404,11 @@ jobs:
           # Package flat: all dylibs + Hamlib.py + _Hamlib.so in one directory
           PKG="hamlib-macos-${ARCH}-${PYTAG}-${HAMLIB_VER}"
           mkdir -p ${PKG}
-          cp "$PY_BINDING_DIR_PORT/Hamlib.py" ${PKG}/
-          cp "$PY_BINDING_DIR_PORT"/_Hamlib*.so ${PKG}/
+          cp ${PORT_PYSITE}/Hamlib.py ${PKG}/
+          cp ${PORT_PYSITE}/_Hamlib${PY_EXT} ${PKG}/
           cp ${PORTABLE_LIB}/*.dylib ${PKG}/ 2>/dev/null || true
           # Fix rpath inside _Hamlib.so to point to @loader_path (flat layout)
-          install_name_tool -add_rpath @loader_path ${PKG}/_Hamlib*.so 2>/dev/null || true
+          install_name_tool -add_rpath @loader_path "${PKG}/_Hamlib${PY_EXT}" 2>/dev/null || true
           echo "${HAMLIB_VER}" > ${PKG}/version.txt
           tar -czf ${PKG}.tar.gz ${PKG}/
           echo "HAMLIB_PORTABLE_PKG=${PKG}.tar.gz" >> $GITHUB_ENV
