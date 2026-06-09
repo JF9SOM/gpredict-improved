@@ -397,29 +397,39 @@ class SdrDevice:
         """Enable or disable the Bias-T power supply on the antenna port.
 
         Bias-T injects DC voltage into the coax to power an external LNA or
-        active antenna.  The SoapySDR setting key differs by driver:
-          - RTL-SDR (soapyrtlsdr): "biastee"
-          - HackRF (soapyhackrf):  "bias_tx" (TX bias — use with care)
-          - AirSpy (soapyairspy):  "biastee"
-        We try each key in order and return True if at least one succeeds.
+        active antenna.  The SoapySDR writeSetting key and value format differ
+        by driver:
+          - RTL-SDR (soapyrtlsdr): key="biastee",  value="1" / "0"
+          - HackRF  (soapyhackrf): key="bias_tx",  value="true" / "false"
+          - AirSpy  (soapyairspy): key="biastee",  value="true" / "false"
+        We try all known combinations in order and return True on first success.
         """
         with self._lock:
             self._bias_tee = enabled
             if self._dev is None:
                 return True
-            value = "1" if enabled else "0"
-            success = False
-            for key in ("biastee", "bias_tx", "BiasT"):
+            # (key, value_on, value_off) — driver-specific combinations
+            candidates: list[tuple[str, str, str]] = [
+                ("biastee", "1", "0"),  # RTL-SDR
+                ("bias_tx", "true", "false"),  # HackRF
+                ("biastee", "true", "false"),  # AirSpy / generic
+                ("BiasT", "true", "false"),  # some other drivers
+            ]
+            for key, val_on, val_off in candidates:
+                value = val_on if enabled else val_off
                 try:
                     self._dev.writeSetting(key, value)
-                    logger.info("Bias-T %s via key '%s'", "ON" if enabled else "OFF", key)
-                    success = True
-                    break
+                    logger.info(
+                        "Bias-T %s (key='%s', value='%s')",
+                        "ON" if enabled else "OFF",
+                        key,
+                        value,
+                    )
+                    return True
                 except Exception:
                     pass
-            if not success:
-                logger.warning("Bias-T not supported by this device")
-            return success
+            logger.warning("Bias-T: no supported writeSetting key found for this device")
+            return False
 
     def set_ppm(self, ppm: float) -> bool:
         """Set frequency correction in parts per million."""
@@ -481,11 +491,17 @@ class SdrDevice:
             with contextlib.suppress(Exception):
                 self._dev.setFrequencyComponent(SoapySDR.SOAPY_SDR_RX, 0, "CORR", self._ppm)
         if self._bias_tee:
-            value = "1"
-            for key in ("biastee", "bias_tx", "BiasT"):
-                with contextlib.suppress(Exception):
-                    self._dev.writeSetting(key, value)
+            for key, val_on, _val_off in [
+                ("biastee", "1", "0"),
+                ("bias_tx", "true", "false"),
+                ("biastee", "true", "false"),
+                ("BiasT", "true", "false"),
+            ]:
+                try:
+                    self._dev.writeSetting(key, val_on)
                     break
+                except Exception:
+                    pass
 
     def _stop_stream_locked(self) -> None:
         """Stop and release the stream. Must be called with _lock held."""
