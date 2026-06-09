@@ -420,7 +420,7 @@ jobs:
           cd hamlib-${HAMLIB_VER}
           make clean
           ./configure \
-            --prefix=/tmp/hamlib-portable-mac \
+            --prefix=$HOME/hamlib-portable-mac \
             --disable-static \
             LDFLAGS="-Wl,-rpath,@loader_path"
           make -j$(sysctl -n hw.logicalcpu)
@@ -428,21 +428,21 @@ jobs:
           cd ..
 
           # Compile portable Python binding (reuse SWIG-generated files)
-          PORT_PYSITE=/tmp/hamlib-portable-mac/lib/python${PYVER}/site-packages
+          PORT_PYSITE=$HOME/hamlib-portable-mac/lib/python${PYVER}/site-packages
           mkdir -p ${PORT_PYSITE}
           clang -shared -fPIC -O2 \
             -undefined dynamic_lookup \
-            -I/tmp/hamlib-portable-mac/include \
+            -I$HOME/hamlib-portable-mac/include \
             -Ihamlib-${HAMLIB_VER}/include \
             -I${PY_INC} \
             hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
-            -L/tmp/hamlib-portable-mac/lib \
+            -L$HOME/hamlib-portable-mac/lib \
             -lhamlib \
             -Wl,-rpath,@loader_path \
             -o ${PORT_PYSITE}/_Hamlib${PY_EXT}
           cp hamlib-${HAMLIB_VER}/bindings/Hamlib.py ${PORT_PYSITE}/
 
-          PORTABLE_LIB=/tmp/hamlib-portable-mac/lib
+          PORTABLE_LIB=$HOME/hamlib-portable-mac/lib
           HAMLIB_SO=${PORT_PYSITE}/_Hamlib${PY_EXT}
 
           # Fix transitive dylib dependencies using dylibbundler so
