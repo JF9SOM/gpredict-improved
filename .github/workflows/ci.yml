@@ -450,8 +450,8 @@ jobs:
           dylibbundler \
             --bundle-deps \
             --fix-file ${HAMLIB_SO} \
-            --dest-dir ${PORTABLE_LIB} \
-            --install-path @loader_path/.. \
+            --dest-dir ${PORTABLE_LIB}/deps \
+            --install-path @loader_path/../deps \
             --overwrite-dir
 
           # Package flat: all dylibs + Hamlib.py + _Hamlib.so in one directory
