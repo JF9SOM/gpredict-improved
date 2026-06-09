@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sdr.device import SdrDeviceInfo
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -667,6 +667,9 @@ class _SdrSettingsPanel(QWidget):
     When SoapySDR is not installed, the panel shows an install prompt instead.
     """
 
+    # Emitted when the assigned rig slot changes: value is 1, 2, or None.
+    assigned_rig_changed = Signal(object)
+
     # Sample rates offered in the dropdown (Hz)
     _SAMPLE_RATES: list[tuple[str, float]] = [
         ("250 kHz", 250_000),
@@ -761,6 +764,9 @@ class _SdrSettingsPanel(QWidget):
         self._rig2_rb = QRadioButton(_("Rig 2"))
         self._rig_none_rb = QRadioButton(_("Not assigned"))
         self._rig_none_rb.setChecked(True)
+        self._rig1_rb.toggled.connect(self._on_assignment_changed)
+        self._rig2_rb.toggled.connect(self._on_assignment_changed)
+        self._rig_none_rb.toggled.connect(self._on_assignment_changed)
         assign_layout.addWidget(self._rig1_rb)
         assign_layout.addWidget(self._rig2_rb)
         assign_layout.addWidget(self._rig_none_rb)
@@ -817,6 +823,17 @@ class _SdrSettingsPanel(QWidget):
         d = self._devices[idx]
         self._driver_label.setText(d.driver or "—")
         self._serial_label.setText(d.serial or "—")
+
+    def _on_assignment_changed(self, _checked: bool = False) -> None:
+        """Emit assigned_rig_changed whenever the rig-slot radio buttons change."""
+        if not hasattr(self, "_rig1_rb"):
+            return
+        if self._rig1_rb.isChecked():
+            self.assigned_rig_changed.emit(1)
+        elif self._rig2_rb.isChecked():
+            self.assigned_rig_changed.emit(2)
+        else:
+            self.assigned_rig_changed.emit(None)
 
     def _on_browse_iq_dir(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -930,11 +947,14 @@ class RigSettingsDialog(QDialog):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._panel1, _("Rig 1"))
-        tabs.addTab(self._panel2, _("Rig 2"))
-        tabs.addTab(self._sdr_panel, _("SDR Settings"))
-        layout.addWidget(tabs)
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._panel1, _("Rig 1"))
+        self._tabs.addTab(self._panel2, _("Rig 2"))
+        self._tabs.addTab(self._sdr_panel, _("SDR Settings"))
+        layout.addWidget(self._tabs)
+
+        # Gray out Rig 1 / Rig 2 tab when SDR is assigned to that slot
+        self._sdr_panel.assigned_rig_changed.connect(self._on_sdr_assignment_changed)
 
         # Global info: model count + Hamlib version + update link
         from core.hamlib_info import get_hamlib_version
@@ -972,6 +992,16 @@ class RigSettingsDialog(QDialog):
         from ui.hamlib_update_dialog import HamlibUpdateDialog
 
         HamlibUpdateDialog(self).exec()
+
+    def _on_sdr_assignment_changed(self, assigned_rig: object) -> None:
+        """Enable/disable Rig 1 / Rig 2 tabs based on SDR assignment.
+
+        When SDR is assigned to a slot, that slot's Hamlib tab is grayed out
+        to prevent conflicting configuration.
+        """
+        # Tab indices: 0 = Rig 1, 1 = Rig 2
+        self._tabs.setTabEnabled(0, assigned_rig != 1)
+        self._tabs.setTabEnabled(1, assigned_rig != 2)
 
     def _load_settings(self) -> None:
         """Load Rig 1 and Rig 2 settings from the DB.
@@ -1020,6 +1050,9 @@ class RigSettingsDialog(QDialog):
         if row_sdr and row_sdr["value"]:
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 self._sdr_panel.load(json.loads(row_sdr["value"]))
+
+        # Apply initial tab enable/disable state based on loaded SDR assignment
+        self._sdr_panel._on_assignment_changed()
 
     def _save_settings(self) -> None:
         """Save Rig 1 and Rig 2 settings to the DB.
