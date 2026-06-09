@@ -1455,26 +1455,31 @@ class MainWindow(QMainWindow):
             # UI thread directly would block and freeze the display.
             # Use _rig_busy_lock: if the previous cycle has finished, transmit on a background
             # thread; if the previous cycle is still running, skip this tick.
-            # When SDR (Rig 2) passband tune offset is active and Lock is ON,
-            # mirror the offset to Rig 1 TX (sign reversed for inverted transponders).
+            # Passband tune offset: apply to the SDR rig's DL, and when Lock is
+            # ON mirror it to the other rig's TX (sign inverted for inverted
+            # transponders).  Works regardless of whether SDR is Rig 1 or Rig 2.
+            tune = self._sdr_tune_offset
+            sdr_is_rig1 = (
+                self._rig_controller is not None
+                and getattr(self._rig_controller, "is_sdr", False)
+                and self._rig_controller.is_connected
+            )
             sdr_is_rig2 = (
                 self._rig2_controller is not None
                 and getattr(self._rig2_controller, "is_sdr", False)
                 and self._rig2_controller.is_connected
             )
+            # DL for Rig 1: add tune offset when SDR is Rig 1
+            dl_rig1 = (dl_corr + tune) if (dl_corr is not None and sdr_is_rig1) else dl_corr
+            # UL for Rig 1: mirror tune offset when SDR is Rig 2 and Lock is ON
             ul_rig1 = ul_corr
-            if (
-                sdr_is_rig2
-                and self._trsp_lock
-                and self._sdr_tune_offset != 0.0
-                and ul_rig1 is not None
-            ):
-                ul_rig1 = ul_rig1 + (-self._sdr_tune_offset if invert else self._sdr_tune_offset)
+            if sdr_is_rig2 and self._trsp_lock and tune != 0.0 and ul_rig1 is not None:
+                ul_rig1 = ul_rig1 + (-tune if invert else tune)
 
             if self._rig_controller is not None and self._rig_controller.is_connected:
                 if self._rig_busy_lock.acquire(blocking=False):
                     rig = self._rig_controller
-                    dl = dl_corr
+                    dl = dl_rig1
                     ul = ul_rig1
 
                     def _rig_send() -> None:
@@ -1493,16 +1498,15 @@ class MainWindow(QMainWindow):
                     logger.debug("RigNet: previous cycle still running, skipping tick")
 
             # Transmit Doppler-corrected frequencies to Rig 2 (same non-blocking pattern).
-            # Apply passband tune offset to SDR DL centre frequency.
             if self._rig2_controller is not None and self._rig2_controller.is_connected:
                 if self._rig2_busy_lock.acquire(blocking=False):
                     rig2 = self._rig2_controller
-                    dl2 = (
-                        (dl_corr + self._sdr_tune_offset)
-                        if (dl_corr is not None and sdr_is_rig2)
-                        else dl_corr
-                    )
+                    # DL for Rig 2: add tune offset when SDR is Rig 2
+                    dl2 = (dl_corr + tune) if (dl_corr is not None and sdr_is_rig2) else dl_corr
+                    # UL for Rig 2: mirror tune offset when SDR is Rig 1 and Lock is ON
                     ul2 = ul_corr
+                    if sdr_is_rig1 and self._trsp_lock and tune != 0.0 and ul2 is not None:
+                        ul2 = ul2 + (-tune if invert else tune)
 
                     def _rig2_send() -> None:
                         try:
