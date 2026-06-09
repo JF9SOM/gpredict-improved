@@ -1625,10 +1625,28 @@ class SdrRigAdapter(RigController):
         self._sdr_device: SdrDevice | None = None
         self._pipeline: SDRPipeline | None = None
         self._device_info: SdrDeviceInfo | None = None
+        # Audio params applied after open()
+        self._sample_rate_hz: float = 2_400_000
+        self._ppm: float = 0.0
+        self._gain_auto: bool = True
+        self._gain_db: float = 40.0
 
     def set_device_info(self, info: SdrDeviceInfo) -> None:
         """Attach an SdrDeviceInfo before calling connect()."""
         self._device_info = info
+
+    def set_audio_params(
+        self,
+        sample_rate_hz: float = 2_400_000,
+        ppm: float = 0.0,
+        gain_auto: bool = True,
+        gain_db: float = 40.0,
+    ) -> None:
+        """Store sample rate, PPM correction and gain settings applied on connect()."""
+        self._sample_rate_hz = sample_rate_hz
+        self._ppm = ppm
+        self._gain_auto = gain_auto
+        self._gain_db = gain_db
 
     def attach_pipeline(self, pipeline: SDRPipeline) -> None:
         """Attach a running SDRPipeline (set after connect succeeds)."""
@@ -1644,6 +1662,13 @@ class SdrRigAdapter(RigController):
 
             dev = SdrDevice(self._device_info)
             if dev.open():
+                # Apply stored audio settings immediately after open
+                dev.set_sample_rate(self._sample_rate_hz)
+                dev.set_ppm(self._ppm)
+                if self._gain_auto:
+                    dev.set_gain_auto()
+                else:
+                    dev.set_gain_db(self._gain_db)
                 self._sdr_device = dev
                 with self._lock:
                     self._state = RigState.CONNECTED
@@ -1707,6 +1732,18 @@ class SdrRigAdapter(RigController):
 
     def set_vfo(self, vfo: str) -> bool:
         return True
+
+    def get_rig_info(self) -> RigInfo | None:
+        """Return a minimal RigInfo for the SDR device (RX-only)."""
+        if self._device_info is None:
+            return None
+        return RigInfo(
+            model_id=0,
+            model_name=self._device_info.display_name,
+            port="SoapySDR",
+            baud_rate=0,
+            state=self._state,
+        )
 
     @property
     def sdr_device(self) -> SdrDevice | None:

@@ -2404,50 +2404,77 @@ class MainWindow(QMainWindow):
           1. 'rig1_settings' (new key written by the tabbed dialog)
           2. 'rig_settings'  (legacy key — backward compatibility)
         Rig 2 is loaded only when its 'enabled' flag is True.
+        If an SDR device is assigned to a slot in 'sdr_settings', that slot
+        gets a SdrRigAdapter instead of a Hamlib controller.
         """
+        # Load SDR settings once so both rig slots can check assigned_rig
+        sdr_cfg: dict[str, Any] = {}
+        try:
+            sdr_row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'sdr_settings'"
+            ).fetchone()
+            if sdr_row and sdr_row["value"]:
+                sdr_cfg = json.loads(sdr_row["value"])
+        except Exception as exc:
+            logger.warning("Failed to load SDR settings: %s", exc)
+
         # ---------- Rig 1 ----------
         try:
-            row = self._conn.execute(
-                "SELECT value FROM app_settings WHERE key = 'rig1_settings'"
-            ).fetchone()
-            if row is None:
-                # Fallback: legacy key written by the old single-rig dialog
-                row = self._conn.execute(
-                    "SELECT value FROM app_settings WHERE key = 'rig_settings'"
-                ).fetchone()
-            if row is not None:
-                settings: dict[str, Any] = json.loads(row["value"])
-                self._rig_controller = self._build_rig_controller(settings)
-                self._ctcss_method = str(settings.get("ctcss_method", "hamlib"))
-                # For preset methods, always use the current authoritative template from
-                # CTCSS_PRESET_TEMPLATES rather than the DB value, which may be stale.
-                if self._ctcss_method in CTCSS_PRESET_TEMPLATES:
-                    self._ctcss_cat_on, self._ctcss_cat_off = CTCSS_PRESET_TEMPLATES[
-                        self._ctcss_method
-                    ]
-                else:
-                    self._ctcss_cat_on = str(settings.get("ctcss_cat_on", ""))
-                    self._ctcss_cat_off = str(settings.get("ctcss_cat_off", ""))
-                logger.info(
-                    "Rig1Settings: method=%s cat_on=%r", self._ctcss_method, self._ctcss_cat_on
-                )
+            # If SDR is assigned to slot 1, build an SdrRigAdapter
+            if sdr_cfg.get("assigned_rig") == 1 and sdr_cfg.get("enabled", False):
+                self._rig_controller = self._build_sdr_rig_adapter(sdr_cfg)
+                logger.info("Rig1: SDR assigned — %s", sdr_cfg.get("device_label", ""))
                 self._radio_control.set_rig(self._rig_controller)
+            else:
+                row = self._conn.execute(
+                    "SELECT value FROM app_settings WHERE key = 'rig1_settings'"
+                ).fetchone()
+                if row is None:
+                    # Fallback: legacy key written by the old single-rig dialog
+                    row = self._conn.execute(
+                        "SELECT value FROM app_settings WHERE key = 'rig_settings'"
+                    ).fetchone()
+                if row is not None:
+                    settings: dict[str, Any] = json.loads(row["value"])
+                    self._rig_controller = self._build_rig_controller(settings)
+                    self._ctcss_method = str(settings.get("ctcss_method", "hamlib"))
+                    # For preset methods, always use the current authoritative template from
+                    # CTCSS_PRESET_TEMPLATES rather than the DB value, which may be stale.
+                    if self._ctcss_method in CTCSS_PRESET_TEMPLATES:
+                        self._ctcss_cat_on, self._ctcss_cat_off = CTCSS_PRESET_TEMPLATES[
+                            self._ctcss_method
+                        ]
+                    else:
+                        self._ctcss_cat_on = str(settings.get("ctcss_cat_on", ""))
+                        self._ctcss_cat_off = str(settings.get("ctcss_cat_off", ""))
+                    logger.info(
+                        "Rig1Settings: method=%s cat_on=%r",
+                        self._ctcss_method,
+                        self._ctcss_cat_on,
+                    )
+                    self._radio_control.set_rig(self._rig_controller)
         except Exception as exc:
             logger.warning("Failed to load Rig 1 settings: %s", exc)
 
         # ---------- Rig 2 ----------
         try:
-            row2 = self._conn.execute(
-                "SELECT value FROM app_settings WHERE key = 'rig2_settings'"
-            ).fetchone()
-            if row2 is not None:
-                s2: dict[str, Any] = json.loads(row2["value"])
-                if s2.get("enabled", False):
-                    self._rig2_controller = self._build_rig_controller(s2)
-                    logger.info("Rig2Settings: loaded, radio_type=%s", s2.get("radio_type"))
-                else:
-                    self._rig2_controller = None
+            # If SDR is assigned to slot 2, build an SdrRigAdapter
+            if sdr_cfg.get("assigned_rig") == 2 and sdr_cfg.get("enabled", False):
+                self._rig2_controller = self._build_sdr_rig_adapter(sdr_cfg)
+                logger.info("Rig2: SDR assigned — %s", sdr_cfg.get("device_label", ""))
                 self._radio_control.set_rig2(self._rig2_controller)
+            else:
+                row2 = self._conn.execute(
+                    "SELECT value FROM app_settings WHERE key = 'rig2_settings'"
+                ).fetchone()
+                if row2 is not None:
+                    s2: dict[str, Any] = json.loads(row2["value"])
+                    if s2.get("enabled", False):
+                        self._rig2_controller = self._build_rig_controller(s2)
+                        logger.info("Rig2Settings: loaded, radio_type=%s", s2.get("radio_type"))
+                    else:
+                        self._rig2_controller = None
+                    self._radio_control.set_rig2(self._rig2_controller)
         except Exception as exc:
             logger.warning("Failed to load Rig 2 settings: %s", exc)
 
@@ -2480,6 +2507,49 @@ class MainWindow(QMainWindow):
             port=str(settings.get("port", "/dev/ttyUSB0")),
             baud_rate=int(settings.get("baud_rate", 9600)),
         )
+
+    def _build_sdr_rig_adapter(self, sdr_cfg: dict[str, Any]) -> RigController:
+        """Build a SdrRigAdapter from the sdr_settings dict.
+
+        The adapter is returned unconfigured (connect() has not been called).
+        device_info and audio settings are stored so that connect() opens the
+        correct SoapySDR device with the right sample rate / gain.
+
+        Args:
+            sdr_cfg: dict as written by _SdrPanel.collect() in rig_dialog.py.
+
+        Returns:
+            A SdrRigAdapter with device_info set.
+        """
+        from rig.controller import SdrRigAdapter
+        from sdr.device import SdrDeviceInfo
+
+        adapter = SdrRigAdapter()
+
+        device_args: dict[str, str] = {}
+        raw = sdr_cfg.get("device_args")
+        if isinstance(raw, dict):
+            device_args = {str(k): str(v) for k, v in raw.items()}
+
+        # SdrDeviceInfo stores identity (args / label); audio params are set
+        # on the SdrDevice after open() via adapter.set_audio_params().
+        info = SdrDeviceInfo(
+            driver=device_args.get("driver"),
+            label=str(sdr_cfg.get("device_label", "SDR")),
+            serial=device_args.get("serial", ""),
+            hardware=device_args.get("hardware", ""),
+            args=device_args,
+        )
+        adapter.set_device_info(info)
+
+        # Store audio params so the pipeline can apply them after open()
+        adapter.set_audio_params(
+            sample_rate_hz=float(sdr_cfg.get("sample_rate_hz") or 2_400_000),
+            ppm=float(sdr_cfg.get("ppm") or 0),
+            gain_auto=bool(sdr_cfg.get("gain_auto", True)),
+            gain_db=float(sdr_cfg.get("gain_db") or 40.0),
+        )
+        return adapter
 
     def _on_lock_changed(self, locked: bool) -> None:
         """Update the _trsp_lock flag when the L button is toggled."""
