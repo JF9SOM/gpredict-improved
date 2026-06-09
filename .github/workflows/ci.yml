@@ -88,15 +88,14 @@ jobs:
           wget -q https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VER}/hamlib-${HAMLIB_VER}.tar.gz
           tar -xzf hamlib-${HAMLIB_VER}.tar.gz
 
-          # Hamlib 4.x autotools removed --enable-python and AX_PYTHON_DEVEL
-          # detection fails on CI Python (setup-python prefix mismatch).
-          # Strategy: build the C library via autotools, then compile the Python
-          # binding manually from the pre-generated hamlib_wrap.c in the tarball.
+          # Hamlib 4.x autotools removed --enable-python; AX_PYTHON_DEVEL
+          # detection fails on CI (setup-python prefix mismatch).
+          # Strategy: build the C library via autotools, then use SWIG to
+          # generate hamlib_wrap.c from bindings/hamlib.swg, and compile it.
 
           PY_INC=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))")
           PY_EXT=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
 
-          # Confirm pre-generated wrapper is in the tarball
           echo "=== bindings/ ===" && ls hamlib-${HAMLIB_VER}/bindings/
 
           # --- Build 1: bundled (rpath = /opt/hamlib/4.7/lib for PyInstaller) ---
@@ -107,7 +106,15 @@ jobs:
           sudo ldconfig
           cd ..
 
-          # Compile Python binding from pre-generated SWIG wrapper
+          # Generate SWIG Python wrapper from .swg sources
+          # swig puts Hamlib.py in the -outdir directory, hamlib_wrap.c at -o path
+          swig -python -Wall \
+            -I/opt/hamlib/4.7/include \
+            -I hamlib-${HAMLIB_VER}/bindings \
+            -o hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
+            -outdir hamlib-${HAMLIB_VER}/bindings \
+            hamlib-${HAMLIB_VER}/bindings/hamlib.swg
+
           BUNDLED_PYSITE=/opt/hamlib/4.7/lib/python${PYVER}/site-packages
           sudo mkdir -p ${BUNDLED_PYSITE}
           sudo gcc -shared -fPIC -O2 \
@@ -138,7 +145,7 @@ jobs:
           make install
           cd ..
 
-          # Compile portable Python binding with $ORIGIN rpath
+          # Compile portable Python binding with $ORIGIN rpath (reuse SWIG-generated files)
           PORT_PYSITE=/tmp/hamlib-portable/lib/python${PYVER}/site-packages
           mkdir -p ${PORT_PYSITE}
           gcc -shared -fPIC -O2 \
@@ -222,7 +229,11 @@ jobs:
           $PY_SITE = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
           Write-Host "PY_INC=$PY_INC  PY_EXT=$PY_EXT"
 
-          # Download Hamlib source (has pre-generated hamlib_wrap.c) and Windows DLLs
+          # Install SWIG (needed to generate hamlib_wrap.c from .swg sources)
+          choco install swig -y --no-progress
+          $env:PATH = "C:\ProgramData\chocolatey\bin;$env:PATH"
+
+          # Download Hamlib source (for .swg binding sources) and Windows DLLs
           Invoke-WebRequest "https://github.com/Hamlib/Hamlib/releases/download/$HAMLIB_VER/hamlib-$HAMLIB_VER.tar.gz" -OutFile hamlib.tar.gz
           tar -xzf hamlib.tar.gz
           Invoke-WebRequest "https://github.com/Hamlib/Hamlib/releases/download/$HAMLIB_VER/hamlib-w32-$HAMLIB_VER.zip" -OutFile hamlib-win.zip
@@ -244,22 +255,31 @@ jobs:
           $symbols | ForEach-Object { "  $_" } | Out-File -Encoding ASCII -Append hamlib.def
           & lib /def:hamlib.def /out:hamlib.lib /machine:x64
 
-          # Show bindings dir contents
-          Write-Host "=== bindings/ ===" ; Get-ChildItem "hamlib-$HAMLIB_VER\bindings"
+          # Generate SWIG Python wrapper from .swg sources
+          # Use Windows zip headers (pre-compiled, includes rig.h etc.) for SWIG
+          $bindingsDir = "hamlib-$HAMLIB_VER\bindings"
+          & swig -python -Wall `
+            "-I$incDir" `
+            "-I$bindingsDir" `
+            -o "$bindingsDir\hamlib_wrap.c" `
+            -outdir "$bindingsDir" `
+            "$bindingsDir\hamlib.swg"
+          if ($LASTEXITCODE -ne 0) { throw "swig failed" }
+          Write-Host "SWIG generated: $(Get-Item $bindingsDir\hamlib_wrap.c)"
 
           # Compile _Hamlib.pyd with MSVC cl.exe
           # PY_EXT on Windows is like ".cp311-win_amd64.pyd"
           & cl /LD /O2 /nologo `
             "/I$incDir" `
             "/I$PY_INC" `
-            "hamlib-$HAMLIB_VER\bindings\hamlib_wrap.c" `
+            "$bindingsDir\hamlib_wrap.c" `
             /link hamlib.lib `
             "/OUT:_Hamlib$PY_EXT" `
             /IMPLIB:_Hamlib_import.lib
           if ($LASTEXITCODE -ne 0) { throw "cl.exe failed" }
 
           # Copy binding to site-packages; add DLL dir to PATH for import verification
-          Copy-Item "hamlib-$HAMLIB_VER\bindings\Hamlib.py" "$PY_SITE\" -Force
+          Copy-Item "$bindingsDir\Hamlib.py" "$PY_SITE\" -Force
           Copy-Item "_Hamlib$PY_EXT" "$PY_SITE\" -Force
           $env:PATH = "$binDir;$env:PATH"
           python -c "import Hamlib; print('Hamlib version:', Hamlib.hamlib_version)"
@@ -322,8 +342,8 @@ jobs:
 
       - name: Install Hamlib and Python dependencies
         run: |
-          # Install build tools via Homebrew (swig not needed; compile wrapper directly)
-          brew install autoconf automake libtool pkg-config libusb dylibbundler
+          # Install build tools via Homebrew (swig generates hamlib_wrap.c from .swg)
+          brew install autoconf automake libtool pkg-config libusb dylibbundler swig
 
           HAMLIB_VER="4.7.1"
           PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
@@ -346,7 +366,14 @@ jobs:
           sudo make install
           cd ..
 
-          # Compile Python binding from pre-generated SWIG wrapper
+          # Generate SWIG Python wrapper from .swg sources
+          swig -python -Wall \
+            -I/usr/local/hamlib-bundle/include \
+            -I hamlib-${HAMLIB_VER}/bindings \
+            -o hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
+            -outdir hamlib-${HAMLIB_VER}/bindings \
+            hamlib-${HAMLIB_VER}/bindings/hamlib.swg
+
           BUNDLED_PYSITE=/usr/local/hamlib-bundle/lib/python${PYVER}/site-packages
           sudo mkdir -p ${BUNDLED_PYSITE}
           clang -shared -fPIC -O2 \
@@ -376,7 +403,7 @@ jobs:
           make install
           cd ..
 
-          # Compile portable Python binding with @loader_path rpath
+          # Compile portable Python binding (reuse SWIG-generated files)
           PORT_PYSITE=/tmp/hamlib-portable-mac/lib/python${PYVER}/site-packages
           mkdir -p ${PORT_PYSITE}
           clang -shared -fPIC -O2 \
