@@ -71,6 +71,10 @@ class Demodulator:
         self._ssb_bw: float = SSB_BW_HZ
         self._cw_pitch: float = CW_PITCH_HZ
         self._fm_phase: float = 0.0  # accumulated FM demod phase
+        # DC blocking IIR state (applied to I and Q separately before NFM,
+        # and to real PCM output before SSB/CW to remove SDR DC offset hum)
+        self._dc_zi_i: np.ndarray = np.zeros(1)
+        self._dc_zi_q: np.ndarray = np.zeros(1)
         self._build_filters()
 
     # ------------------------------------------------------------------
@@ -81,12 +85,16 @@ class Demodulator:
         """Switch demodulation mode. Rebuilds filters."""
         self._mode = mode
         self._fm_phase = 0.0
+        self._dc_zi_i = np.zeros(1)
+        self._dc_zi_q = np.zeros(1)
         self._build_filters()
 
     def set_input_rate(self, rate: float) -> None:
         """Update the I/Q input sample rate and rebuild filters."""
         self._input_rate = rate
         self._fm_phase = 0.0
+        self._dc_zi_i = np.zeros(1)
+        self._dc_zi_q = np.zeros(1)
         self._build_filters()
 
     def set_audio_gain(self, gain: float) -> None:
@@ -133,10 +141,33 @@ class Demodulator:
     # Demodulation internals
     # ------------------------------------------------------------------
 
+    def _remove_dc(self, iq: np.ndarray) -> np.ndarray:
+        """Remove DC offset from I and Q channels using a high-pass IIR filter.
+
+        The HackRF (and most SDRs) produce a significant DC spike at the center
+        frequency. Without this step, the DC component appears as a low-frequency
+        hum in the audio output.
+        """
+        i_dc_raw, self._dc_zi_i = sp_signal.lfilter(
+            self._dc_b, self._dc_a, iq.real.astype(np.float32), zi=self._dc_zi_i
+        )
+        q_dc_raw, self._dc_zi_q = sp_signal.lfilter(
+            self._dc_b, self._dc_a, iq.imag.astype(np.float32), zi=self._dc_zi_q
+        )
+        i_dc = np.asarray(i_dc_raw, dtype=np.float32)
+        q_dc = np.asarray(q_dc_raw, dtype=np.float32)
+        return (i_dc + 1j * q_dc).astype(np.complex64)
+
     def _demod_nfm(self, iq: np.ndarray) -> np.ndarray:
         """Narrow FM demodulation via phase-difference method."""
-        # Downsample to intermediate rate first for efficiency
-        iq_ds = self._decimate(iq, self._fm_decim)
+        # Remove DC offset from the SDR first
+        iq = self._remove_dc(iq)
+
+        # Apply IF bandpass filter to limit bandwidth to ±(deviation + audio_bw)
+        iq_if = sp_signal.lfilter(self._nfm_if_b, [1.0], iq)
+
+        # Downsample to intermediate rate
+        iq_ds = self._decimate(iq_if, self._fm_decim)
 
         # Phase discriminator: arg(x[n] * conj(x[n-1]))
         prev = np.empty_like(iq_ds)
@@ -156,20 +187,35 @@ class Demodulator:
 
     def _demod_ssb(self, iq: np.ndarray, upper: bool) -> np.ndarray:
         """
-        SSB demodulation via Weaver / Hilbert method.
+        SSB demodulation via complex mixing (Weaver / BFO injection) method.
 
-        Shift the desired sideband to baseband, apply LPF, take real part.
+        For USB: mix the I/Q signal by e^(-j*2π*f_bfo*t) to shift the upper
+        sideband audio to baseband, apply real LPF, decimate, take real part.
+        For LSB: conjugate the I/Q first to mirror the spectrum, then same.
+
+        This correctly removes the DC spike and isolates one sideband.
         """
-        # Apply channel filter (LPF around SSB bandwidth)
-        iq_filt = sp_signal.lfilter(self._ssb_b, [1.0], iq)
+        # Remove DC offset (HackRF DC spike → 50 Hz hum without this)
+        iq = self._remove_dc(iq)
+
+        # Mirror spectrum for LSB (converts LSB → USB processing)
+        if not upper:
+            iq = np.conj(iq)
+
+        # BFO injection: shift signal so the SSB audio sits at baseband.
+        # We inject at SSB_BW/2 so the centre of the voice band lands at DC.
+        # This means 300–2700 Hz voice → -1200 to +1200 Hz after mixing.
+        bfo_hz = self._ssb_bw / 2.0
+        n = len(iq)
+        t = np.arange(n, dtype=np.float32) / self._input_rate
+        mix = np.exp(-1j * 2.0 * np.pi * bfo_hz * t).astype(np.complex64)
+        iq_mixed = iq * mix
 
         # Decimate to intermediate rate
-        iq_ds = self._decimate(iq_filt, self._ssb_decim)
+        iq_ds = self._decimate(iq_mixed, self._ssb_decim)
 
-        # Both sides take the real part here; LSB inversion is applied via the
-        # channel LPF shift (negative frequency offset) before decimation.
-        _ = upper  # parameter reserved for future LO-shift implementation
-        audio_raw = iq_ds.real
+        # Apply real LPF at SSB_BW to the real (I) channel
+        audio_raw = sp_signal.lfilter(self._ssb_audio_b, [1.0], iq_ds.real)
 
         # Decimate to audio rate
         audio = self._decimate(audio_raw, self._ssb_audio_decim)
@@ -220,12 +266,26 @@ class Demodulator:
         """(Re)build all FIR/IIR filter coefficients for the current settings."""
         rate = self._input_rate
 
+        # ---- DC blocking high-pass IIR (applied before all modes) ----
+        # Single-pole HPF at 30 Hz to remove DC offset without affecting audio.
+        # α = 1 - 2π * f_c / f_s  (first-order IIR high-pass)
+        alpha_dc = 1.0 - (2.0 * np.pi * 30.0 / rate)
+        alpha_dc = float(np.clip(alpha_dc, 0.0, 0.9999))
+        self._dc_b = np.array([1.0, -1.0], dtype=np.float64)
+        self._dc_a = np.array([1.0, -alpha_dc], dtype=np.float64)
+
         # ---- NFM chain ----
         # Stage 1: decimate to ~200 kHz intermediate rate
         self._fm_decim = max(1, int(rate / 200_000))
         self._fm_rate = rate / self._fm_decim
         # Stage 2: decimate fm_rate → AUDIO_RATE
         self._fm_audio_decim = max(1, int(self._fm_rate / AUDIO_RATE))
+
+        # IF bandpass for NFM: pass ±(deviation + audio_bw) around centre.
+        # Limits interference from strong out-of-band signals before decimation.
+        nfm_if_bw = (NFM_DEVIATION + 4_000.0) / (rate / 2.0)
+        nfm_if_bw = float(np.clip(nfm_if_bw, 0.001, 0.499))
+        self._nfm_if_b = sp_signal.firwin(63, nfm_if_bw).astype(np.float32)
 
         # De-emphasis IIR (single pole low-pass, τ = 75 µs)
         dt = 1.0 / self._fm_rate
@@ -234,15 +294,17 @@ class Demodulator:
         self._deemph_a = np.array([1.0, -(1.0 - alpha)], dtype=np.float64)
 
         # ---- SSB chain ----
-        # Decimate input → ~48 kHz in two stages
+        # Stage 1: decimate input to ~96 kHz
         self._ssb_decim = max(1, int(rate / 96_000))
         ssb_mid_rate = rate / self._ssb_decim
+        # Stage 2: decimate to AUDIO_RATE
         self._ssb_audio_decim = max(1, int(ssb_mid_rate / AUDIO_RATE))
 
-        # Channel LPF at SSB bandwidth
-        nyq = rate / 2
-        cutoff = min(self._ssb_bw / nyq, 0.499)
-        self._ssb_b = sp_signal.firwin(63, cutoff).astype(np.float32)
+        # Real LPF applied at ssb_mid_rate after BFO mixing.
+        # Passes ±SSB_BW/2 (the mixed voice band) and rejects the image.
+        nyq_mid = ssb_mid_rate / 2.0
+        cutoff_mid = float(np.clip(self._ssb_bw / nyq_mid, 0.001, 0.499))
+        self._ssb_audio_b = sp_signal.firwin(63, cutoff_mid).astype(np.float32)
 
         # ---- CW BPF ----
         # Applied after SSB demod at AUDIO_RATE

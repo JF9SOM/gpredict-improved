@@ -73,6 +73,9 @@ class SDRPipeline(QThread):
         # Audio output
         self._audio_enabled: bool = False
         self._sounddevice_stream: Any = None
+        # Lock protecting _sounddevice_stream: both the pipeline thread (writes
+        # PCM) and the main Qt thread (stop/disable) access the stream object.
+        self._audio_lock = threading.Lock()
 
         # FFT timing
         self._last_fft_time: float = 0.0
@@ -109,7 +112,10 @@ class SDRPipeline(QThread):
     def set_audio_enabled(self, enabled: bool) -> None:
         self._audio_enabled = enabled
         if not enabled:
-            self._close_audio_stream()
+            # Close stream from whichever thread calls this; lock prevents
+            # concurrent access with the pipeline thread's _play_audio().
+            with self._audio_lock:
+                self._close_audio_stream_locked()
 
     # -- Recorder control --
 
@@ -173,7 +179,8 @@ class SDRPipeline(QThread):
                     logger.exception("FFT error")
 
         self._device.stop_stream()
-        self._close_audio_stream()
+        with self._audio_lock:
+            self._close_audio_stream_locked()
         logger.info("SDRPipeline stopped")
         self.status_changed.emit("SDR stopped")
 
@@ -198,24 +205,29 @@ class SDRPipeline(QThread):
     # ------------------------------------------------------------------
 
     def _play_audio(self, pcm: np.ndarray) -> None:
-        """Write PCM to sounddevice output stream, opening it on first call."""
-        try:
-            import sounddevice as sd
+        """Write PCM to sounddevice output stream, opening it on first call.
 
-            if self._sounddevice_stream is None:
-                self._sounddevice_stream = sd.OutputStream(
-                    samplerate=AUDIO_RATE,
-                    channels=1,
-                    dtype="float32",
-                    blocksize=len(pcm),
-                )
-                self._sounddevice_stream.start()
-            self._sounddevice_stream.write(pcm)
-        except Exception:
-            logger.exception("Audio output error")
-            self._sounddevice_stream = None
+        Must only be called from the pipeline thread.
+        """
+        with self._audio_lock:
+            try:
+                import sounddevice as sd
 
-    def _close_audio_stream(self) -> None:
+                if self._sounddevice_stream is None:
+                    self._sounddevice_stream = sd.OutputStream(
+                        samplerate=AUDIO_RATE,
+                        channels=1,
+                        dtype="float32",
+                        blocksize=len(pcm),
+                    )
+                    self._sounddevice_stream.start()
+                self._sounddevice_stream.write(pcm)
+            except Exception:
+                logger.exception("Audio output error")
+                self._sounddevice_stream = None
+
+    def _close_audio_stream_locked(self) -> None:
+        """Close sounddevice stream. Caller must hold _audio_lock."""
         if self._sounddevice_stream is not None:
             try:
                 self._sounddevice_stream.stop()
