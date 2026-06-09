@@ -341,7 +341,12 @@ jobs:
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
           $tag = "${{ github.ref_name }}"
           $ver = $tag.TrimStart("v")
-          makensis /DAPP_VERSION=$ver scripts\installer.nsi
+          # VIProductVersion requires X.X.X.X numeric format; strip pre-release suffix
+          $numericVer = ($ver -replace '-.*$', '')
+          $parts = $numericVer.Split('.')
+          while ($parts.Count -lt 4) { $parts += '0' }
+          $viVer = ($parts[0..3] -join '.')
+          makensis /DAPP_VERSION=$ver /DVIVERSION=$viVer scripts\installer.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
           Write-Host "Installer built: dist\GPredict-Improved-Setup.exe"
 

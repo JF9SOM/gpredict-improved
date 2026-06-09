@@ -50,11 +50,12 @@ SetCompressor   /SOLID lzma
 !insertmacro MUI_LANGUAGE "English"
 
 ; ---- Version resource (visible in file properties) --------------------
-VIProductVersion "${APP_VERSION}.0"
+; VIVERSION must be X.X.X.X (numeric only) for Windows resource; APP_VERSION may contain pre-release suffix
+VIProductVersion "${VIVERSION}"
 VIAddVersionKey "ProductName"     "${APP_NAME}"
 VIAddVersionKey "ProductVersion"  "${APP_VERSION}"
 VIAddVersionKey "CompanyName"     "${PUBLISHER}"
-VIAddVersionKey "FileVersion"     "${APP_VERSION}.0"
+VIAddVersionKey "FileVersion"     "${VIVERSION}"
 VIAddVersionKey "FileDescription" "${APP_NAME} Installer"
 
 ; ---- Install section ---------------------------------------------------
