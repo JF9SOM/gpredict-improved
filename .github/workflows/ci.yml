@@ -107,10 +107,10 @@ jobs:
           cd ..
 
           # Generate SWIG Python wrapper from .swg sources
-          # swig puts Hamlib.py in the -outdir directory, hamlib_wrap.c at -o path
+          # Note: -I flags must NOT have spaces between -I and the path
           swig -python -Wall \
             -I/opt/hamlib/4.7/include \
-            -I hamlib-${HAMLIB_VER}/bindings \
+            -Ihamlib-${HAMLIB_VER}/bindings \
             -o hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
             -outdir hamlib-${HAMLIB_VER}/bindings \
             hamlib-${HAMLIB_VER}/bindings/hamlib.swg
@@ -267,6 +267,27 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "swig failed" }
           Write-Host "SWIG generated: $(Get-Item $bindingsDir\hamlib_wrap.c)"
 
+          # The generated hamlib_wrap.c includes <hamlib/config.h> which is a
+          # build-time autotools artifact not present in the Windows binary zip.
+          # Create a minimal stub so MSVC can compile the wrapper.
+          $configH = "$incDir\hamlib\config.h"
+          if (-not (Test-Path $configH)) {
+            Write-Host "Creating stub $configH"
+            @'
+/* Minimal config.h stub for Windows MSVC Python binding compilation */
+#ifndef HAMLIB_CONFIG_H
+#define HAMLIB_CONFIG_H
+#define PACKAGE_VERSION "4.7.1"
+#define VERSION "4.7.1"
+#define PACKAGE "hamlib"
+#define PACKAGE_NAME "Hamlib"
+#define PACKAGE_STRING "Hamlib 4.7.1"
+#define PACKAGE_TARNAME "hamlib"
+#define PACKAGE_URL "http://hamlib.org"
+#endif /* HAMLIB_CONFIG_H */
+'@ | Out-File -Encoding ASCII $configH
+          }
+
           # Compile _Hamlib.pyd with MSVC cl.exe
           # PY_EXT on Windows is like ".cp311-win_amd64.pyd"
           & cl /LD /O2 /nologo `
@@ -367,9 +388,10 @@ jobs:
           cd ..
 
           # Generate SWIG Python wrapper from .swg sources
+          # Note: -I flags must NOT have spaces between -I and the path
           swig -python -Wall \
             -I/usr/local/hamlib-bundle/include \
-            -I hamlib-${HAMLIB_VER}/bindings \
+            -Ihamlib-${HAMLIB_VER}/bindings \
             -o hamlib-${HAMLIB_VER}/bindings/hamlib_wrap.c \
             -outdir hamlib-${HAMLIB_VER}/bindings \
             hamlib-${HAMLIB_VER}/bindings/hamlib.swg
