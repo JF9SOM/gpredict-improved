@@ -288,6 +288,22 @@ jobs:
             Set-Content -Path $configH -Value $stub -Encoding ASCII
           }
 
+          # rig.h includes <pthread.h> which is a MinGW/POSIX header not
+          # available in MSVC. Create a minimal stub so cl.exe can compile.
+          $pthreadH = "$incDir\pthread.h"
+          if (-not (Test-Path $pthreadH)) {
+            Write-Host "Creating stub $pthreadH"
+            $stub = "/* Minimal pthread.h stub for Windows MSVC */" + "`n" +
+                    "#ifndef PTHREAD_H`n#define PTHREAD_H`n" +
+                    "typedef void* pthread_mutex_t;`n" +
+                    "typedef void* pthread_t;`n" +
+                    "typedef void* pthread_attr_t;`n" +
+                    "typedef void* pthread_mutexattr_t;`n" +
+                    "#define PTHREAD_MUTEX_INITIALIZER NULL`n" +
+                    "#endif /* PTHREAD_H */`n"
+            Set-Content -Path $pthreadH -Value $stub -Encoding ASCII
+          }
+
           # Compile _Hamlib.pyd with MSVC cl.exe
           # PY_EXT on Windows is like ".cp311-win_amd64.pyd"
           & cl /LD /O2 /nologo `
