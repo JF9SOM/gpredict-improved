@@ -319,9 +319,11 @@ jobs:
           Compress-Archive -Path "$pkgName\*" -DestinationPath "$pkgName.zip"
           "HAMLIB_PORTABLE_PKG=$pkgName.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
 
-      - name: Disable Windows Defender real-time monitoring
+      - name: Disable Windows Defender and install NSIS
         shell: pwsh
-        run: Set-MpPreference -DisableRealtimeMonitoring $true
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true
+          choco install nsis -y --no-progress
 
       - name: Build with PyInstaller
         shell: pwsh
@@ -329,21 +331,16 @@ jobs:
           $env:PYTHONPATH = "src"
           pyinstaller scripts/gpredict-improved.spec --noconfirm --distpath dist
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
-          Write-Host "=== dist after PyInstaller: $((Get-ChildItem dist -Recurse -File -ErrorAction SilentlyContinue).Count) files ==="
-          Get-ChildItem dist -Recurse -ErrorAction SilentlyContinue | Select-Object FullName | Select-Object -First 5
+          $count = (Get-ChildItem dist -Recurse -File -ErrorAction SilentlyContinue).Count
+          Write-Host "=== dist after PyInstaller: $count files ==="
+          if ($count -eq 0) { throw "PyInstaller produced empty dist" }
 
       - name: Build NSIS installer
         shell: pwsh
         run: |
-          choco install nsis -y --no-progress
           $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-
-          Write-Host "=== dist contents (PWD: $(Get-Location)) ===" ; Get-ChildItem "dist" -ErrorAction SilentlyContinue | Select-Object Name
-
-          # Resolve version from git tag (e.g. v0.1.0-beta.33 → 0.1.0.33 for NSIS VIProductVersion)
           $tag = "${{ github.ref_name }}"
           $ver = $tag.TrimStart("v")
-          # NSIS /DAPP_VERSION passes the raw tag version string (used for display)
           makensis /DAPP_VERSION=$ver scripts\installer.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
           Write-Host "Installer built: dist\GPredict-Improved-Setup.exe"
