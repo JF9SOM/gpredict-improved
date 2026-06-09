@@ -217,7 +217,7 @@ class SdrControlWidget(QWidget):
         freq_lbl.setStyleSheet("color: #aaaaaa; font-size: 12px;")
         self._freq_overlay = QLabel("—")
         self._freq_overlay.setStyleSheet(
-            "color: #00dcff;font-size: 13px;font-weight: bold;font-family: monospace;"
+            "color: black;font-size: 13px;font-weight: bold;font-family: monospace;"
         )
         freq_row.addWidget(freq_lbl)
         freq_row.addWidget(self._freq_overlay)
