@@ -113,26 +113,48 @@ logger = logging.getLogger(__name__)
 def _get_version() -> str:
     """Return the application version string.
 
-    In a PyInstaller bundle the version is baked into CFBundleShortVersionString
-    (macOS) and the EXE version resource (Windows).  At runtime we resolve it via
-    importlib.metadata so that ``pip install -e .`` and tagged wheel builds both
-    work without hard-coding.  Falls back to "0.1.0" when metadata is unavailable.
+    Tagged release  (v0.1.0)      → "0.1.0"
+    Dev build after tag           → "0.1.0.dev3"  (last tag + commit count)
+    Fallback (no metadata/git)    → "0.1.0"
 
-    setuptools-scm produces ``X.Y.Z.devN+gHASH`` for commits after a tag.
-    We strip the dev/local suffix so the UI always shows a clean version number.
+    setuptools-scm default scheme produces ``X.(Y+1).0.devN+gHASH`` for commits
+    after a tag, which is confusing because it implies the *next* version.
+    Instead we reformat it as ``<last-tag>.devN`` using ``git describe``.
     """
     try:
-        from importlib.metadata import version
+        from importlib.metadata import version as _meta_version
 
-        ver = version("gpredict-improved")
-        # Strip dev/local suffix produced by setuptools-scm on untagged commits
-        # e.g. "0.1.1.dev2+g5052f48" -> "0.1.1.dev2" is still shown as-is so
-        # developers know they are on a pre-release build, but the local hash is removed.
-        if "+" in ver:
-            ver = ver.split("+")[0]
-        return ver
+        ver = _meta_version("gpredict-improved")
     except Exception:
         return "0.1.0"
+
+    # Clean release tag — no rewriting needed
+    if ".dev" not in ver and "+" not in ver:
+        return ver
+
+    # Dev build: reformat "X.Y+1.0.devN+gHASH" → "<last-tag>.devN"
+    # Extract the dev count from the raw string first
+    dev_count = ""
+    if ".dev" in ver:
+        dev_count = ver.split(".dev")[1].split("+")[0]
+
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0:
+            base_tag = result.stdout.strip().lstrip("v")
+            return f"{base_tag}.dev{dev_count}" if dev_count else base_tag
+    except Exception:
+        pass
+
+    # Fallback: strip only the local hash suffix
+    return ver.split("+")[0]
 
 
 APP_VERSION = _get_version()
