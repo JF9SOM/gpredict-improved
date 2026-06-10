@@ -117,11 +117,20 @@ def _get_version() -> str:
     (macOS) and the EXE version resource (Windows).  At runtime we resolve it via
     importlib.metadata so that ``pip install -e .`` and tagged wheel builds both
     work without hard-coding.  Falls back to "0.1.0" when metadata is unavailable.
+
+    setuptools-scm produces ``X.Y.Z.devN+gHASH`` for commits after a tag.
+    We strip the dev/local suffix so the UI always shows a clean version number.
     """
     try:
         from importlib.metadata import version
 
-        return version("gpredict-improved")
+        ver = version("gpredict-improved")
+        # Strip dev/local suffix produced by setuptools-scm on untagged commits
+        # e.g. "0.1.1.dev2+g5052f48" -> "0.1.1.dev2" is still shown as-is so
+        # developers know they are on a pre-release build, but the local hash is removed.
+        if "+" in ver:
+            ver = ver.split("+")[0]
+        return ver
     except Exception:
         return "0.1.0"
 

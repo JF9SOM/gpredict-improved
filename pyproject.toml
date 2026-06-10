@@ -92,7 +92,7 @@ Issues = "https://github.com/JF9SOM/gpredict-improved/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools-scm]
+[tool.setuptools_scm]
 write_to = "src/gpredict_improved/_version.py"
 
 # --- Ruff (リンター・フォーマッター) ---
