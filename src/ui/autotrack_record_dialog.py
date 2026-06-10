@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QDateTime, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -141,6 +143,21 @@ class AutotrackRecordDialog(QDialog):
     def is_iq_record_enabled(self) -> bool:
         return bool(self._iq_rec_cb.isChecked())
 
+    def get_timer_start_utc(self) -> datetime:
+        """Return the configured start time as UTC datetime."""
+        qdt = self._timer_start_dt.dateTime()
+        local_dt = qdt.toPython()  # type: ignore[attr-defined]
+        # toPython() returns a naive datetime in local time; attach local tz then convert
+        import time as _time  # noqa: PLC0415
+
+        offset = timedelta(seconds=-_time.timezone if not _time.daylight else -_time.altzone)
+        return (local_dt - offset).replace(tzinfo=UTC)
+
+    def get_timer_stop_utc(self) -> datetime:
+        """Return the configured stop time (start + duration) as UTC datetime."""
+        hours: int = self._timer_dur_combo.currentData()
+        return self.get_timer_start_utc() + timedelta(hours=hours)
+
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
@@ -251,6 +268,40 @@ class AutotrackRecordDialog(QDialog):
         rec_layout.addWidget(self._iq_rec_cb)
         rec_layout.addStretch()
         outer.addWidget(rec_group)
+
+        # ── Autotrack Timer ───────────────────────────────────────────
+        timer_group = QGroupBox(_("Autotrack Timer"))
+        timer_form = QFormLayout(timer_group)
+        timer_form.setSpacing(6)
+
+        # Start time: QDateTimeEdit with calendar popup + "Now" reset button
+        start_row = QHBoxLayout()
+        self._timer_start_dt = QDateTimeEdit()
+        self._timer_start_dt.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self._timer_start_dt.setCalendarPopup(True)
+        self._timer_start_dt.setDateTime(QDateTime.currentDateTime())
+        start_row.addWidget(self._timer_start_dt)
+        now_btn = QPushButton(_("Now"))
+        now_btn.setFixedWidth(48)
+        now_btn.setToolTip(_("Reset start time to current time"))
+        now_btn.clicked.connect(
+            lambda: self._timer_start_dt.setDateTime(QDateTime.currentDateTime())
+        )
+        start_row.addWidget(now_btn)
+        timer_form.addRow(_("Start:"), start_row)
+
+        # Stop: duration combo
+        self._timer_dur_combo = QComboBox()
+        for label, hours in [
+            (_("3 hours"), 3),
+            (_("6 hours"), 6),
+            (_("12 hours"), 12),
+            (_("24 hours"), 24),
+        ]:
+            self._timer_dur_combo.addItem(label, userData=hours)
+        timer_form.addRow(_("Stop after:"), self._timer_dur_combo)
+
+        outer.addWidget(timer_group)
 
         # Close button
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)

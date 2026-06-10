@@ -1212,6 +1212,30 @@ class MainWindow(QMainWindow):
 
     def _check_autotrack(self) -> None:
         """Run one autotrack evaluation cycle (called every second from _on_tick)."""
+        # Timer-based auto start/stop
+        if self._autotrack_enabled:
+            now_utc = datetime.now(UTC)
+            stop_utc = self._at_dialog.get_timer_stop_utc()
+            if now_utc >= stop_utc:
+                # Timer expired — disable autotrack
+                self._autotrack_on_los()
+                self._autotrack_enabled = False
+                self._autotrack.reset()
+                self._at_dialog.set_autotrack_enabled(False)
+                self._radio_control.set_autotrack_indicator(False)
+                self._at_dialog.set_autotrack_status(
+                    _("Timer expired — Autotrack stopped"), ok=False
+                )
+                return
+        elif self._autotrack.is_ready:
+            # Auto start when start time is reached and autotrack is not yet running
+            now_utc = datetime.now(UTC)
+            start_utc = self._at_dialog.get_timer_start_utc()
+            if now_utc >= start_utc:
+                self._autotrack_enabled = True
+                self._at_dialog.set_autotrack_enabled(True)
+                self._radio_control.set_autotrack_indicator(True)
+
         if not self._autotrack_enabled or self._engine is None:
             return
         if not self._autotrack.is_ready:
@@ -1237,7 +1261,6 @@ class MainWindow(QMainWindow):
             if info is not None:
                 next_name, next_aos = info
                 if next_aos is not None:
-                    from datetime import UTC  # noqa: PLC0415
 
                     now = datetime.now(UTC)
                     mins = int((next_aos - now).total_seconds() / 60)
