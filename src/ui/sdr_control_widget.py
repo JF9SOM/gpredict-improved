@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from i18n import _
-from sdr import SOAPY_AVAILABLE
+from sdr import LAMEENC_AVAILABLE, SOAPY_AVAILABLE, AudioRecorder
 
 if SOAPY_AVAILABLE:
     from sdr.demodulator import DemodMode
@@ -120,6 +120,7 @@ class SdrControlWidget(QWidget):
             self._freq_overlay.setText("—")
             self._stop_audio()
             self._stop_recording()
+            self._stop_audio_recording()
 
     def set_transponder_mode(self, satnogs_mode: str) -> None:
         """Auto-select demodulator mode from a SATNOGS transponder mode string."""
@@ -145,6 +146,11 @@ class SdrControlWidget(QWidget):
     def set_iq_save_dir(self, path: str) -> None:
         """Update the IQ recording save directory (from SDR settings)."""
         self._iq_save_dir = Path(path) if path else Path.home() / "iq_recordings"
+
+    def set_audio_save_dir(self, path: str) -> None:
+        """Update the audio (MP3) recording save directory."""
+        self._audio_save_dir = Path(path) if path else Path.home() / "audio_recordings"
+        self._audio_recorder = AudioRecorder(self._audio_save_dir)
 
     def set_satellite_info(self, norad: int, name: str) -> None:
         """Store satellite info used to name IQ recordings."""
@@ -186,8 +192,13 @@ class SdrControlWidget(QWidget):
 
         # Private state
         self._iq_save_dir = Path.home() / "iq_recordings"
+        self._audio_save_dir = Path.home() / "audio_recordings"
         self._sat_norad = 0
         self._sat_name = "unknown"
+        self._audio_recorder = AudioRecorder(self._audio_save_dir)
+        self._audio_rec_timer = QTimer(self)
+        self._audio_rec_timer.setInterval(1_000)
+        self._audio_rec_timer.timeout.connect(self._update_audio_rec_status)
 
     def _build_spectrum_panel(self) -> QGroupBox:
         grp = QGroupBox(_("Spectrum"))
@@ -369,7 +380,7 @@ class SdrControlWidget(QWidget):
         agc_row.addStretch()
         form.addLayout(agc_row)
 
-        # Audio buttons
+        # Audio playback + MP3 recording buttons
         btn_row = QHBoxLayout()
         self._start_audio_btn = QPushButton(_("▶ Start Audio"))
         self._stop_audio_btn = QPushButton(_("■ Stop Audio"))
@@ -379,6 +390,27 @@ class SdrControlWidget(QWidget):
         btn_row.addWidget(self._start_audio_btn)
         btn_row.addWidget(self._stop_audio_btn)
         btn_row.addStretch()
+
+        self._audio_rec_btn = QPushButton(_("● REC Audio"))
+        self._audio_rec_btn.setStyleSheet("color: red; font-weight: bold;")
+        self._audio_rec_btn.setEnabled(LAMEENC_AVAILABLE)
+        if not LAMEENC_AVAILABLE:
+            self._audio_rec_btn.setToolTip(_("lameenc not installed — pip install lameenc"))
+        self._audio_stop_rec_btn = QPushButton(_("■ STOP"))
+        self._audio_stop_rec_btn.setEnabled(False)
+        self._audio_rec_status_label = QLabel("")
+        self._audio_rec_btn.clicked.connect(self._start_audio_recording)
+        self._audio_stop_rec_btn.clicked.connect(self._stop_audio_recording)
+        btn_row.addWidget(self._audio_rec_btn)
+        btn_row.addWidget(self._audio_stop_rec_btn)
+        btn_row.addWidget(self._audio_rec_status_label)
+
+        self._open_audio_folder_btn = QPushButton(_("📁"))
+        self._open_audio_folder_btn.setToolTip(_("Open audio recordings folder in file manager"))
+        self._open_audio_folder_btn.setFixedWidth(32)
+        self._open_audio_folder_btn.clicked.connect(self._open_audio_folder)
+        btn_row.addWidget(self._open_audio_folder_btn)
+
         form.addLayout(btn_row)
         return grp
 
@@ -523,6 +555,52 @@ class SdrControlWidget(QWidget):
         """Open the IQ recordings save directory in the OS file manager."""
         self._iq_save_dir.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._iq_save_dir)))
+
+    def _start_audio_recording(self) -> None:
+        """Start MP3 audio recording (requires lameenc and active audio stream)."""
+        if not LAMEENC_AVAILABLE or self._pipeline is None:
+            return
+        if self._audio_recorder.is_active:
+            return
+        file_path = self._audio_recorder.start(
+            norad=self._sat_norad,
+            sat_name=self._sat_name,
+        )
+        self._pipeline.audio_ready.connect(self._audio_recorder.put_pcm)
+        self._audio_rec_btn.setEnabled(False)
+        self._audio_stop_rec_btn.setEnabled(True)
+        self._audio_rec_status_label.setText(file_path.name)
+        self._audio_rec_timer.start()
+
+    def _stop_audio_recording(self) -> None:
+        """Stop MP3 audio recording and disconnect the pipeline signal."""
+        if not self._audio_recorder.is_active:
+            return
+        if self._pipeline is not None:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                self._pipeline.audio_ready.disconnect(self._audio_recorder.put_pcm)
+        self._audio_recorder.stop()
+        self._audio_rec_timer.stop()
+        self._audio_rec_btn.setEnabled(LAMEENC_AVAILABLE)
+        self._audio_stop_rec_btn.setEnabled(False)
+        self._audio_rec_status_label.setText("")
+
+    def _open_audio_folder(self) -> None:
+        """Open the audio recordings save directory in the OS file manager."""
+        self._audio_save_dir.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._audio_save_dir)))
+
+    def _update_audio_rec_status(self) -> None:
+        """Update elapsed time and file size label during audio recording."""
+        if not self._audio_recorder.is_active:
+            return
+        elapsed = int(self._audio_recorder.elapsed_seconds)
+        h, rem = divmod(elapsed, 3600)
+        m, s = divmod(rem, 60)
+        mb = self._audio_recorder.bytes_written / 1e6
+        self._audio_rec_status_label.setText(f"{h:02d}:{m:02d}:{s:02d}  {mb:.1f} MB")
 
     def _update_rec_status(self) -> None:
         if self._pipeline is None:
