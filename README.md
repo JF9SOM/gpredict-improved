@@ -219,13 +219,26 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture reference used during devel
 
 ### Phase 2 — Planned
 
-#### Digital Modes (SDR)
+#### Digital Modes — Amateur Satellites (SDR)
 - **HRPT / LRPT** — weather satellite image reception via SatDump
 - **APRS** — receive and decode via Direwolf (TCP KISS)
 - **FT4 / FT8** — integration with WSJT-X (UDP)
 - **Satellite telemetry** — gr-satellites support (100+ satellites)
 - **CW decode** — AI-based decoder (ML inference, no zero-crossing artefacts)
 - **SSTV** — receive via pySSTV
+
+#### Operational Satellite Reception (SDR) — Planned
+Receivable with HackRF / RTL-SDR + appropriate LNA/filter. Open-source decoders exist for all of these and will be integrated as SDR plugins.
+
+| System | Band | Content | OSS Decoder |
+|---|---|---|---|
+| **Inmarsat-C (STD-C)** | 1.5 GHz L-band | Maritime Safety Info (MSI), EGC, LRIT | [JAERO](https://github.com/jontio/JAERO) |
+| **Cospas-Sarsat L-band** | 1544.5 MHz | Search & rescue beacon positions (PLB/EPIRB/ELT) | gr-satellites |
+| **Iridium L-band ACARS** | 1616–1626.5 MHz | Aviation ACARS messages over Iridium | [iridium-toolkit](https://github.com/dholm/iridium-toolkit) |
+| **Orbcomm** | 137–138 MHz VHF | IoT/M2M data messages, AIS supplemental | [gr-orbcomm](https://github.com/dholm/gr-orbcomm) |
+| **QZSS (Michibiki) data broadcast** | 1278.75 MHz L6 | High-precision MADOCA-PPP augmentation, disaster alerts | [qzsl6tool](https://github.com/yoronneko/qzsl6tool) |
+
+Each decoder will run as a subprocess with results displayed in a dedicated plugin panel inside the SDR Control tab. Offline re-analysis from saved IQ recordings is also planned.
 
 #### UI / UX
 - **Japanese UI** — translation files are already prepared; full JP mode coming in Phase 2
