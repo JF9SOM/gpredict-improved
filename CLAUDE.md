@@ -1579,7 +1579,7 @@ HackRF / RTL-SDR + 適切な LNA・フィルターで受信可能な業務用衛
 - USB VID/PID スキャン（`pyusb`）でデバイスを識別
 - SoapySDR インストール状態を表示
 - **Linux**: `pkexec apt-get install` でボタン操作による自動インストール
-- **Windows**: PothosSDR インストーラー / Zadig を自動ダウンロードして起動（Zadig 操作のみ手動）
+- **Windows**: PothosSDR はブラウザでダウンロードページを開く（`QDesktopServices.openUrl`）、Zadig は直リンク `.exe` をダウンロードして起動。いずれもウィザード操作はユーザーが手動で行う
 - **macOS**: Homebrew があれば `brew install` を自動実行
 - すでにインストール済み環境では即 `✅ Ready` 表示
 
