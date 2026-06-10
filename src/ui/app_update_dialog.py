@@ -146,12 +146,15 @@ class _DownloadWorker(QThread):
 
     def _install_windows(self, setup_exe: Path) -> None:
         """Launch the NSIS installer with UAC elevation via ShellExecute."""
-        # os.startfile uses ShellExecuteW which triggers the UAC prompt
-        # when the installer's manifest requires admin rights.
+        # Use ShellExecuteW so Windows shows the UAC elevation prompt.
+        # subprocess.Popen cannot trigger UAC and would be denied when
+        # the installer tries to write to Program Files.
         # Do NOT pass /S (silent) — the UAC dialog and NSIS UI must be visible.
-        import os
+        import ctypes
 
-        os.startfile(str(setup_exe))
+        ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
+            None, "runas", str(setup_exe), None, None, 1
+        )
         self.finished.emit(
             True,
             _(
