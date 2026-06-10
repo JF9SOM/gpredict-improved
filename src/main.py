@@ -121,40 +121,39 @@ def _get_version() -> str:
     after a tag, which is confusing because it implies the *next* version.
     Instead we reformat it as ``<last-tag>.devN`` using ``git describe``.
     """
-    try:
-        from importlib.metadata import version as _meta_version
-
-        ver = _meta_version("gpredict-improved")
-    except Exception:
-        return "0.1.0"
-
-    # Clean release tag — no rewriting needed
-    if ".dev" not in ver and "+" not in ver:
-        return ver
-
-    # Dev build: reformat "X.Y+1.0.devN+gHASH" → "<last-tag>.devN"
-    # Extract the dev count from the raw string first
-    dev_count = ""
-    if ".dev" in ver:
-        dev_count = ver.split(".dev")[1].split("+")[0]
-
+    # Prefer git describe for accuracy — always reflects the current commit count
+    # without requiring ``pip install -e .`` to be re-run after every commit.
     try:
         import subprocess
 
         result = subprocess.run(
-            ["git", "describe", "--tags", "--abbrev=0"],
+            ["git", "describe", "--tags", "--long"],
             capture_output=True,
             text=True,
             timeout=3,
         )
         if result.returncode == 0:
-            base_tag = result.stdout.strip().lstrip("v")
-            return f"{base_tag}.dev{dev_count}" if dev_count else base_tag
+            # Output format: "v0.1.0-4-gf1dd166"
+            parts = result.stdout.strip().split("-")
+            # parts[-1] = hash, parts[-2] = commit count, parts[:-2] = tag
+            tag = "-".join(parts[:-2]).lstrip("v")
+            count = int(parts[-2])
+            if count == 0:
+                return tag  # exactly on a tag → clean release version
+            return f"{tag}.dev{count}"
     except Exception:
         pass
 
-    # Fallback: strip only the local hash suffix
-    return ver.split("+")[0]
+    # Fallback: importlib.metadata (may lag by one commit when using -e install)
+    try:
+        from importlib.metadata import version as _meta_version
+
+        ver = _meta_version("gpredict-improved")
+        if ".dev" not in ver and "+" not in ver:
+            return ver
+        return ver.split("+")[0]
+    except Exception:
+        return "0.1.0"
 
 
 APP_VERSION = _get_version()
