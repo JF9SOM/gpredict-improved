@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
-from PySide6.QtCore import Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QPen
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QColor, QDesktopServices, QPen
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
@@ -415,6 +415,11 @@ class SdrControlWidget(QWidget):
         ctrl_row.addWidget(self._stop_rec_btn)
         ctrl_row.addWidget(self._rec_status_label)
         ctrl_row.addStretch()
+        self._open_folder_btn = QPushButton(_("📁"))
+        self._open_folder_btn.setToolTip(_("Open IQ recordings folder in file manager"))
+        self._open_folder_btn.setFixedWidth(32)
+        self._open_folder_btn.clicked.connect(self._open_iq_folder)
+        ctrl_row.addWidget(self._open_folder_btn)
         v.addLayout(ctrl_row)
         return grp
 
@@ -513,6 +518,11 @@ class SdrControlWidget(QWidget):
         self._rec_btn.setEnabled(True)
         self._stop_rec_btn.setEnabled(False)
         self._rec_status_label.setText("00:00:00  0 MB")
+
+    def _open_iq_folder(self) -> None:
+        """Open the IQ recordings save directory in the OS file manager."""
+        self._iq_save_dir.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._iq_save_dir)))
 
     def _update_rec_status(self) -> None:
         if self._pipeline is None:
