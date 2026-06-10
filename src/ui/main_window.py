@@ -547,10 +547,8 @@ class MainWindow(QMainWindow):
             radio_menu.addAction(_("Rig Settings..."), self._on_rig_settings)
             radio_menu.addAction(_("Rotator Settings..."), self._on_rotator_settings)
 
-        # Autotrack / Record
-        at_menu = mb.addMenu(_("Autotrack/Record"))
-        if at_menu:
-            at_menu.addAction(_("Autotrack/Record Settings..."), self._on_open_autotrack_dialog)
+        # Autotrack / Record — direct action, no submenu
+        mb.addAction(_("Autotrack/Record"), self._on_open_autotrack_dialog)
 
         # View
         view_menu = mb.addMenu(_("View"))
