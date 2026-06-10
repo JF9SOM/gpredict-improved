@@ -1900,6 +1900,7 @@ class MainWindow(QMainWindow):
             if is_sdr:
                 self._sdr_control.set_pipeline(None)
         self._radio_control.refresh_status()
+        self._update_rig_label()
 
     def _send_mode_only_to_rig(self) -> None:
         """Set mode on both VFOs via an independent connection on transponder change.
@@ -2964,6 +2965,7 @@ class MainWindow(QMainWindow):
         rig.attach_pipeline(pipeline)
         self._sdr_control.set_pipeline(pipeline)
         pipeline.start()
+        self._update_rig_label()
 
     def _on_show_qr(self) -> None:
         if not self._web_server_url:
