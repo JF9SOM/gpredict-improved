@@ -1261,7 +1261,6 @@ class MainWindow(QMainWindow):
             if info is not None:
                 next_name, next_aos = info
                 if next_aos is not None:
-
                     now = datetime.now(UTC)
                     mins = int((next_aos - now).total_seconds() / 60)
                     self._at_dialog.set_autotrack_status(
