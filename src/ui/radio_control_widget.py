@@ -51,8 +51,6 @@ class RadioControlWidget(QWidget):
     south_init_changed: Signal = Signal(bool)
     ctcss_send_requested: Signal = Signal(float)
     ctcss_activate_requested: Signal = Signal()  # activation-tone button pressed
-    autotrack_toggled: Signal = Signal(bool)  # autotrack on/off
-    autotrack_list_changed: Signal = Signal(object)  # selected list_id (int | None)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -262,71 +260,14 @@ class RadioControlWidget(QWidget):
 
         layout.addWidget(status_group)
 
-        # ── Autotrack ──────────────────────────────────────────────────
-        _AUTOTRACK_HELP = (
-            "Autotrack — Sequential Satellite Tracking\n"
-            "\n"
-            "Autotrack automatically switches the rig's Doppler correction\n"
-            "from one satellite to the next as passes begin and end.\n"
-            "\n"
-            "How to use:\n"
-            "  1. Open File > Settings > Autotrack Lists.\n"
-            "  2. Create a list and add satellites, selecting the specific\n"
-            "     transponder (frequency + mode) for each one.\n"
-            "  3. In the Upcoming Passes > Group tab, run a pass search.\n"
-            "     (Autotrack requires a completed search to know AOS times.)\n"
-            "  4. Back here, select your list in the 'List' combo and\n"
-            "     check 'Enable Autotrack'.\n"
-            "\n"
-            "Switching rules:\n"
-            "  • Current satellite above Min El → keep tracking.\n"
-            "  • Current satellite drops below Min El → switch to the\n"
-            "    next visible satellite, or the one with the earliest AOS.\n"
-            "  • List order is used as tiebreak (top = highest priority).\n"
-            "  • A pass already in progress is never interrupted."
-        )
-        at_group = QGroupBox()
-        # Custom title row: "Autotrack" label + "?" help button
-        at_title_row = QHBoxLayout()
-        at_title_row.setContentsMargins(0, 0, 0, 0)
-        at_title_row.setSpacing(4)
-        at_title_lbl = QLabel(f"<b>{_('Autotrack')}</b>")
-        at_help_btn = QPushButton("?")
-        at_help_btn.setFixedSize(18, 18)
-        at_help_btn.setFlat(True)
-        at_help_btn.setToolTip(_AUTOTRACK_HELP)
-        at_help_btn.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 9px;"
-            " font-weight: bold; color: #e74c3c; }"
-        )
-        at_title_row.addWidget(at_title_lbl)
-        at_title_row.addWidget(at_help_btn)
-        at_title_row.addStretch()
-        at_group.setLayout(QVBoxLayout())
-        at_group.layout().setContentsMargins(4, 4, 4, 4)  # type: ignore[union-attr]
-        at_group.layout().setSpacing(4)  # type: ignore[union-attr]
-        at_group.layout().addLayout(at_title_row)  # type: ignore[union-attr]
-
-        at_inner = QWidget()
-        at_form = QFormLayout(at_inner)
-        at_form.setContentsMargins(0, 0, 0, 0)
-        at_form.setSpacing(3)
-        at_group.layout().addWidget(at_inner)  # type: ignore[union-attr]
-
-        self._at_list_combo = QComboBox()
-        self._at_list_combo.setEnabled(False)
-        self._at_list_combo.currentIndexChanged.connect(self._on_at_list_changed)
-        at_form.addRow(_("List:"), self._at_list_combo)
-
-        self._at_enable_cb = QCheckBox(_("Enable Autotrack"))
-        self._at_enable_cb.setEnabled(False)
-        self._at_enable_cb.toggled.connect(self._on_at_toggled)
-        at_form.addRow(self._at_enable_cb)
-
-        self._at_status_label = QLabel(_("—"))
-        self._at_status_label.setWordWrap(True)
-        at_form.addRow(_("Status:"), self._at_status_label)
-
+        # ── Autotrack indicator (compact) ─────────────────────────────
+        at_group = QGroupBox(_("Autotrack"))
+        at_h = QHBoxLayout(at_group)
+        at_h.setContentsMargins(6, 2, 6, 2)
+        self._at_indicator = QLabel(_("OFF"))
+        self._at_indicator.setStyleSheet("color: gray; font-weight: bold;")
+        at_h.addWidget(self._at_indicator)
+        at_h.addStretch()
         layout.addWidget(at_group)
 
         layout.addStretch()
@@ -450,44 +391,16 @@ class RadioControlWidget(QWidget):
     # ------------------------------------------------------------------ #
 
     def populate_autotrack_lists(self, lists: list[dict[str, int | str]]) -> None:
-        """Populate the Autotrack list combo from DB data.
+        """No-op kept for API compatibility; list management moved to Autotrack/Record dialog."""
 
-        Args:
-            lists: list of dicts with keys 'id' and 'name'.
-        """
-        self._at_list_combo.blockSignals(True)
-        self._at_list_combo.clear()
-        if lists:
-            for lst in lists:
-                self._at_list_combo.addItem(str(lst["name"]), userData=lst["id"])
-            self._at_list_combo.setEnabled(True)
+    def set_autotrack_indicator(self, enabled: bool) -> None:
+        """Update the compact Autotrack ON/OFF indicator in the Radio Control tab."""
+        if enabled:
+            self._at_indicator.setText(_("ON"))
+            self._at_indicator.setStyleSheet("color: #2ecc71; font-weight: bold;")
         else:
-            self._at_list_combo.setEnabled(False)
-            self._at_enable_cb.setEnabled(False)
-        self._at_list_combo.blockSignals(False)
-
-    def set_autotrack_enabled(self, enabled: bool) -> None:
-        """Programmatically set the Autotrack checkbox."""
-        self._at_enable_cb.blockSignals(True)
-        self._at_enable_cb.setChecked(enabled)
-        self._at_enable_cb.blockSignals(False)
-
-    def set_autotrack_status(self, text: str, ok: bool = True) -> None:
-        """Update the Autotrack status label text and colour."""
-        self._at_status_label.setText(text)
-        color = "#2ecc71" if ok else "#e74c3c"
-        self._at_status_label.setStyleSheet(f"color: {color};")
-
-    def _on_at_list_changed(self, _idx: int) -> None:
-        list_id = self._at_list_combo.currentData()
-        has_list = list_id is not None
-        self._at_enable_cb.setEnabled(has_list)
-        if not has_list:
-            self._at_enable_cb.setChecked(False)
-        self.autotrack_list_changed.emit(list_id)
-
-    def _on_at_toggled(self, checked: bool) -> None:
-        self.autotrack_toggled.emit(checked)
+            self._at_indicator.setText(_("OFF"))
+            self._at_indicator.setStyleSheet("color: gray; font-weight: bold;")
 
     def set_south_init(self, checked: bool) -> None:
         """Set the South Init checkbox without emitting south_init_changed."""

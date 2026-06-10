@@ -164,6 +164,26 @@ class SdrControlWidget(QWidget):
             self._tune_offset_label.setText("0.000 kHz")
         self.tune_offset_changed.emit(0.0)
 
+    def start_audio_recording_for_autotrack(self, norad: int, sat_name: str) -> None:
+        """Start MP3 audio recording (called by Autotrack on AOS)."""
+        if self._pipeline is not None and not self._audio_recorder.is_active:
+            self._start_audio_recording(norad_override=norad, name_override=sat_name)
+
+    def stop_audio_recording_for_autotrack(self) -> None:
+        """Stop MP3 audio recording (called by Autotrack on LOS)."""
+        if self._audio_recorder.is_active:
+            self._stop_audio_recording()
+
+    def start_iq_recording_for_autotrack(self) -> None:
+        """Start IQ recording (called by Autotrack on AOS)."""
+        if self._pipeline is not None and not self._recording:
+            self._start_recording()
+
+    def stop_iq_recording_for_autotrack(self) -> None:
+        """Stop IQ recording (called by Autotrack on LOS)."""
+        if self._recording:
+            self._stop_recording()
+
     def set_iq_save_dir(self, path: str) -> None:
         """Update the IQ recording save directory (from SDR settings)."""
         self._iq_save_dir = Path(path) if path else Path.home() / "iq_recordings"
@@ -581,15 +601,19 @@ class SdrControlWidget(QWidget):
         self._iq_save_dir.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._iq_save_dir)))
 
-    def _start_audio_recording(self) -> None:
+    def _start_audio_recording(
+        self,
+        norad_override: int | None = None,
+        name_override: str | None = None,
+    ) -> None:
         """Start MP3 audio recording (requires lameenc and active audio stream)."""
         if not LAMEENC_AVAILABLE or self._pipeline is None:
             return
         if self._audio_recorder.is_active:
             return
         file_path = self._audio_recorder.start(
-            norad=self._sat_norad,
-            sat_name=self._sat_name,
+            norad=norad_override if norad_override is not None else self._sat_norad,
+            sat_name=name_override if name_override is not None else self._sat_name,
         )
         self._pipeline.audio_ready.connect(self._audio_recorder.put_pcm)
         self._audio_rec_btn.setEnabled(False)

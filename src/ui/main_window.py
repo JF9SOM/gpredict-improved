@@ -334,6 +334,9 @@ class MainWindow(QMainWindow):
         # Sequential autotrack engine
         self._autotrack = AutotrackManager(conn)
         self._autotrack_enabled: bool = False
+        self._autotrack_audio_record: bool = False
+        self._autotrack_iq_record: bool = False
+        self._autotrack_tracking_norad: int | None = None  # NORAD of currently auto-tracked sat
 
         from PySide6.QtWidgets import QApplication
 
@@ -346,12 +349,21 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._build_statusbar()
+
+        # Autotrack/Record dialog (non-modal, created once)
+        from ui.autotrack_record_dialog import AutotrackRecordDialog
+
+        self._at_dialog = AutotrackRecordDialog(self._conn, parent=self)
+        self._at_dialog.autotrack_toggled.connect(self._on_autotrack_toggled)
+        self._at_dialog.autotrack_list_changed.connect(self._on_autotrack_list_changed)
+        self._at_dialog.audio_record_changed.connect(self._on_autotrack_audio_record_changed)
+        self._at_dialog.iq_record_changed.connect(self._on_autotrack_iq_record_changed)
+        self._at_dialog.lists_modified.connect(self._on_autotrack_lists_modified)
+
         # Connect PassPanel signals
         self._pass_list.target_search_requested.connect(self._on_target_search_requested)
         self._pass_list.highlight_satellite.connect(self._on_highlight_satellite)
         self._pass_list.group_results_ready.connect(self._on_group_results_ready)
-        self._radio_control.autotrack_toggled.connect(self._on_autotrack_toggled)
-        self._radio_control.autotrack_list_changed.connect(self._on_autotrack_list_changed)
         self._pass_list.set_pass_predictor(self._pass_predictor)
         # Connect signal that receives satellite list refresh requests from background threads
         self._satellite_list_refresh.connect(self._load_satellites)
@@ -534,6 +546,11 @@ class MainWindow(QMainWindow):
         if radio_menu:
             radio_menu.addAction(_("Rig Settings..."), self._on_rig_settings)
             radio_menu.addAction(_("Rotator Settings..."), self._on_rotator_settings)
+
+        # Autotrack / Record
+        at_menu = mb.addMenu(_("Autotrack/Record"))
+        if at_menu:
+            at_menu.addAction(_("Autotrack/Record Settings..."), self._on_open_autotrack_dialog)
 
         # View
         view_menu = mb.addMenu(_("View"))
@@ -1210,7 +1227,14 @@ class MainWindow(QMainWindow):
             cached_elevations=self._last_elevations,
         )
         if result is None:
-            # Update status label with next satellite info
+            # No satellite to switch to — check if currently tracked one is still visible
+            # to manage auto connect/disconnect and recording
+            if self._autotrack_tracking_norad is not None:
+                el = self._last_elevations.get(self._autotrack_tracking_norad, -90.0)
+                if el < 0:
+                    self._autotrack_on_los()
+
+            # Update status with next satellite info
             info = self._autotrack.next_satellite_info(self._engine, self._pass_predictor)
             if info is not None:
                 next_name, next_aos = info
@@ -1219,12 +1243,13 @@ class MainWindow(QMainWindow):
 
                     now = datetime.now(UTC)
                     mins = int((next_aos - now).total_seconds() / 60)
-                    self._radio_control.set_autotrack_status(
+                    self._at_dialog.set_autotrack_status(
                         f"Next: {next_name} in {mins} min", ok=True
                     )
             return
 
         next_norad, xpdr_uuid = result
+        is_new_sat = next_norad != self._autotrack_tracking_norad
 
         # Switch satellite in the UI
         self._select_satellite_by_norad(next_norad)
@@ -1234,7 +1259,6 @@ class MainWindow(QMainWindow):
             "SELECT * FROM transmitters WHERE uuid = ?", (xpdr_uuid,)
         ).fetchone()
         if xpdr_row:
-            # Find the index in the current transmitter list
             transmitters = self._transmitter_manager.get_transmitters(next_norad)
             try:
                 idx = next(i for i, t in enumerate(transmitters) if t["uuid"] == xpdr_uuid)
@@ -1243,7 +1267,15 @@ class MainWindow(QMainWindow):
             self._radio_control.set_transmitters(transmitters, default_index=idx)
 
         sat_name = self._sat_name_cache.get(next_norad, str(next_norad))
-        self._radio_control.set_autotrack_status(f"Tracking: {sat_name}", ok=True)
+        self._at_dialog.set_autotrack_status(f"Tracking: {sat_name}", ok=True)
+
+        if is_new_sat:
+            # Previous satellite's LOS — disconnect if it was being tracked
+            if self._autotrack_tracking_norad is not None:
+                self._autotrack_on_los()
+            # New satellite's AOS — connect rig + rotator, start recording
+            self._autotrack_tracking_norad = next_norad
+            self._autotrack_on_aos(sat_name)
 
     def _select_satellite_by_norad(self, norad: int) -> None:
         """Select a satellite in the list widget by NORAD id (autotrack helper)."""
@@ -1254,27 +1286,48 @@ class MainWindow(QMainWindow):
                 return
 
     def _reload_autotrack_lists(self) -> None:
-        """Reload Autotrack Lists from DB and refresh the Radio Control combo."""
+        """Reload Autotrack Lists from DB and refresh the dialog combo."""
         lists = AutotrackManager.get_all_lists(self._conn)
+        self._at_dialog.populate_list_combo(lists)
         self._radio_control.populate_autotrack_lists(lists)
 
     def _on_autotrack_toggled(self, enabled: bool) -> None:
         """Called when the user toggles the Autotrack checkbox."""
         self._autotrack_enabled = enabled
+        self._radio_control.set_autotrack_indicator(enabled)
         if not enabled:
             self._autotrack.reset()
-            self._radio_control.set_autotrack_status("—")
+            self._at_dialog.set_autotrack_status("—")
+            self._autotrack_tracking_norad = None
         else:
             if not self._autotrack.is_ready:
-                self._radio_control.set_autotrack_status(_("Run a pass search first"), ok=False)
+                self._at_dialog.set_autotrack_status(_("Run a pass search first"), ok=False)
 
     def _on_autotrack_list_changed(self, list_id: object) -> None:
         """Called when the user selects a different Autotrack List."""
         lid = int(list_id) if isinstance(list_id, int) else None
         self._autotrack.set_list(lid)
         self._autotrack_enabled = False
-        self._radio_control.set_autotrack_enabled(False)
-        self._radio_control.set_autotrack_status("—")
+        self._at_dialog.set_autotrack_enabled(False)
+        self._at_dialog.set_autotrack_status("—")
+        self._radio_control.set_autotrack_indicator(False)
+
+    def _on_autotrack_audio_record_changed(self, enabled: bool) -> None:
+        self._autotrack_audio_record = enabled
+
+    def _on_autotrack_iq_record_changed(self, enabled: bool) -> None:
+        self._autotrack_iq_record = enabled
+
+    def _on_autotrack_lists_modified(self) -> None:
+        """Called when lists are added/removed in the dialog — refresh radio control combo."""
+        lists = AutotrackManager.get_all_lists(self._conn)
+        self._radio_control.populate_autotrack_lists(lists)
+
+    def _on_open_autotrack_dialog(self) -> None:
+        """Open the Autotrack/Record settings dialog."""
+        self._at_dialog.show()
+        self._at_dialog.raise_()
+        self._at_dialog.activateWindow()
 
     def _update_world_map(self) -> None:
         """Fetch satellite subpoints for visible satellites and update the world map.
@@ -2975,6 +3028,82 @@ class MainWindow(QMainWindow):
         if getattr(rig, "is_sdr", False):
             self._sdr_control.set_pipeline(None)
         self._update_rig_label()
+
+    def _autotrack_on_aos(self, sat_name: str) -> None:
+        """Called by Autotrack when a new satellite's AOS is detected.
+
+        Connects rig and rotator if not already connected, then starts
+        SDR recordings if the respective checkboxes are enabled.
+        """
+        # Connect Rig 1
+        if self._rig_controller is not None and not self._rig_controller.is_connected:
+            self._rig_controller.connect()
+            if self._rig_controller.is_connected:
+                self._radio_control.refresh_status()
+                self._update_rig_label()
+                from ui.autotrack_record_dialog import AutotrackRecordDialog  # noqa: F401
+
+                self._on_rig_slot_connected(1)
+        # Connect Rig 2
+        if self._rig2_controller is not None and not self._rig2_controller.is_connected:
+            self._rig2_controller.connect()
+            if self._rig2_controller.is_connected:
+                self._radio_control.refresh_status()
+                self._update_rig_label()
+                self._on_rig_slot_connected(2)
+        # Connect rotator
+        if self._rotator_controller is not None and not self._rotator_controller.is_connected:
+            self._rotator_controller.connect()
+            self._radio_control.refresh_status()
+
+        # Start SDR recordings
+        norad = self._autotrack_tracking_norad or 0
+        if self._autotrack_audio_record:
+            try:
+                self._sdr_control.start_audio_recording_for_autotrack(norad, sat_name)
+            except Exception as exc:
+                logger.warning("Autotrack audio record start failed: %s", exc)
+        if self._autotrack_iq_record:
+            try:
+                self._sdr_control.start_iq_recording_for_autotrack()
+            except Exception as exc:
+                logger.warning("Autotrack IQ record start failed: %s", exc)
+
+    def _autotrack_on_los(self) -> None:
+        """Called by Autotrack when the current satellite's LOS is detected.
+
+        Stops SDR recordings, then disconnects rig and rotator.
+        """
+        # Stop recordings
+        if self._autotrack_audio_record:
+            try:
+                self._sdr_control.stop_audio_recording_for_autotrack()
+            except Exception as exc:
+                logger.warning("Autotrack audio record stop failed: %s", exc)
+        if self._autotrack_iq_record:
+            try:
+                self._sdr_control.stop_iq_recording_for_autotrack()
+            except Exception as exc:
+                logger.warning("Autotrack IQ record stop failed: %s", exc)
+
+        # Disconnect rig
+        if self._rig_controller is not None and self._rig_controller.is_connected:
+            is_sdr = getattr(self._rig_controller, "is_sdr", False)
+            self._rig_controller.disconnect()
+            if is_sdr:
+                self._sdr_control.set_pipeline(None)
+        if self._rig2_controller is not None and self._rig2_controller.is_connected:
+            is_sdr2 = getattr(self._rig2_controller, "is_sdr", False)
+            self._rig2_controller.disconnect()
+            if is_sdr2:
+                self._sdr_control.set_pipeline(None)
+        # Disconnect rotator
+        if self._rotator_controller is not None and self._rotator_controller.is_connected:
+            self._rotator_controller.disconnect()
+
+        self._radio_control.refresh_status()
+        self._update_rig_label()
+        self._autotrack_tracking_norad = None
 
     def _on_show_qr(self) -> None:
         if not self._web_server_url:

@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -31,8 +30,6 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QTabWidget,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -185,10 +182,6 @@ class SettingsDialog(QDialog):
         self._selected_map_filename: str = _BUILTIN_SENTINEL
         # Custom Groups tab state
         self._groups_list: QListWidget
-        # Autotrack Lists tab state
-        self._at_list_widget: QListWidget
-        self._at_entry_tree: QTreeWidget
-        self._at_selected_list_id: int | None = None
         # Notifications tab state
         self._notif_enabled_cb: QCheckBox
         self._notif_warn_spin: QSpinBox
@@ -208,7 +201,6 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_tle_tab(), _("TLE Sources"))
         tabs.addTab(self._build_map_tab(), _("World Map"))
         tabs.addTab(self._build_groups_tab(), _("Custom Groups"))
-        tabs.addTab(self._build_autotrack_tab(), _("Autotrack Lists"))
         tabs.addTab(self._build_notifications_tab(), _("Notifications"))
 
         layout.addWidget(tabs)
@@ -514,277 +506,6 @@ class SettingsDialog(QDialog):
         )
         self._conn.commit()
         self._reload_groups_list()
-
-    # ------------------------------------------------------------------ #
-    # Autotrack Lists tab
-    # ------------------------------------------------------------------ #
-
-    def _build_autotrack_tab(self) -> QWidget:
-        """Build the Autotrack Lists settings tab."""
-
-        tab = QWidget()
-        outer = QHBoxLayout(tab)
-
-        # --- Left: list of Autotrack Lists ---
-        left = QVBoxLayout()
-        left.addWidget(QLabel(_("Autotrack Lists:")))
-        self._at_list_widget = QListWidget()
-        self._at_list_widget.setMaximumWidth(180)
-        self._at_list_widget.currentRowChanged.connect(self._on_at_list_selected)
-        left.addWidget(self._at_list_widget)
-
-        list_btn_row = QHBoxLayout()
-        add_list_btn = QPushButton(_("Add"))
-        add_list_btn.clicked.connect(self._on_at_add_list)
-        rename_list_btn = QPushButton(_("Rename"))
-        rename_list_btn.clicked.connect(self._on_at_rename_list)
-        del_list_btn = QPushButton(_("Delete"))
-        del_list_btn.clicked.connect(self._on_at_delete_list)
-        list_btn_row.addWidget(add_list_btn)
-        list_btn_row.addWidget(rename_list_btn)
-        list_btn_row.addWidget(del_list_btn)
-        left.addLayout(list_btn_row)
-        outer.addLayout(left)
-
-        # --- Right: entries for the selected list ---
-        right = QVBoxLayout()
-        right.addWidget(QLabel(_("Entries (satellite + transponder):")))
-        self._at_entry_tree = QTreeWidget()
-        self._at_entry_tree.setHeaderLabels(
-            [_("Satellite"), _("Transponder"), _("DL (MHz)"), _("UL (MHz)"), _("Mode")]
-        )
-        self._at_entry_tree.setColumnWidth(0, 140)
-        self._at_entry_tree.setColumnWidth(1, 180)
-        self._at_entry_tree.setColumnWidth(2, 80)
-        self._at_entry_tree.setColumnWidth(3, 80)
-        right.addWidget(self._at_entry_tree)
-
-        entry_btn_row = QHBoxLayout()
-        add_entry_btn = QPushButton(_("Add Satellite…"))
-        add_entry_btn.clicked.connect(self._on_at_add_entry)
-        remove_entry_btn = QPushButton(_("Remove"))
-        remove_entry_btn.clicked.connect(self._on_at_remove_entry)
-        up_btn = QPushButton(_("▲"))
-        up_btn.setFixedWidth(30)
-        up_btn.clicked.connect(self._on_at_move_up)
-        down_btn = QPushButton(_("▼"))
-        down_btn.setFixedWidth(30)
-        down_btn.clicked.connect(self._on_at_move_down)
-        entry_btn_row.addWidget(add_entry_btn)
-        entry_btn_row.addWidget(remove_entry_btn)
-        entry_btn_row.addStretch()
-        entry_btn_row.addWidget(up_btn)
-        entry_btn_row.addWidget(down_btn)
-        right.addLayout(entry_btn_row)
-
-        note_row = QHBoxLayout()
-        note = QLabel(
-            _(
-                "Each entry specifies a satellite and the transponder to use for\n"
-                "Doppler correction during automatic sequential tracking."
-            )
-        )
-        note.setWordWrap(True)
-        note_row.addWidget(note)
-
-        _RULES_TOOLTIP = (
-            "Satellite switching rules:\n"
-            "\n"
-            "1. Current satellite is above Min El → keep tracking.\n"
-            "\n"
-            "2. Current satellite drops below Min El:\n"
-            "   a. Another satellite is already visible\n"
-            "      → switch immediately (list order as tiebreak).\n"
-            "   b. No satellite is visible yet\n"
-            "      → switch to the one with the earliest AOS\n"
-            "        (list order as tiebreak on equal AOS).\n"
-            "\n"
-            "3. Overlapping passes: never interrupt a pass in\n"
-            "   progress. Wait for the current satellite's LOS\n"
-            "   before switching."
-        )
-        info_btn = QPushButton("?")
-        info_btn.setFixedSize(22, 22)
-        info_btn.setFlat(True)
-        info_btn.setToolTip(_RULES_TOOLTIP)
-        info_btn.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 11px; font-weight: bold; }"
-        )
-        note_row.addWidget(info_btn)
-        note_row.addStretch()
-
-        right.addLayout(note_row)
-        outer.addLayout(right)
-
-        self._reload_at_lists()
-        return tab
-
-    def _reload_at_lists(self) -> None:
-        """Reload the list-of-lists widget from the DB."""
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        self._at_list_widget.clear()
-        for lst in AutotrackManager.get_all_lists(self._conn):
-            item = QListWidgetItem(str(lst["name"]))
-            item.setData(0x0100, int(lst["id"]))  # Qt.ItemDataRole.UserRole
-            self._at_list_widget.addItem(item)
-
-    def _reload_at_entries(self) -> None:
-        """Reload the entry tree for the currently selected list."""
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        self._at_entry_tree.clear()
-        if self._at_selected_list_id is None:
-            return
-
-        def _fmt_mhz(hz: int | str | None) -> str:
-            if not isinstance(hz, int):
-                return "—"
-            return f"{hz / 1_000_000:.3f}"
-
-        for entry in AutotrackManager.get_entries(self._conn, self._at_selected_list_id):
-            item = QTreeWidgetItem(
-                [
-                    str(entry.get("sat_name") or entry["norad_cat_id"]),
-                    str(entry.get("xpdr_desc") or entry["xpdr_uuid"]),
-                    _fmt_mhz(entry.get("downlink_low")),
-                    _fmt_mhz(entry.get("uplink_low")),
-                    str(entry.get("mode") or ""),
-                ]
-            )
-            item.setData(0, 0x0100, entry["id"])  # entry_id in UserRole
-            self._at_entry_tree.addTopLevelItem(item)
-
-    def _on_at_list_selected(self, row: int) -> None:
-        item = self._at_list_widget.item(row)
-        self._at_selected_list_id = int(item.data(0x0100)) if item else None
-        self._reload_at_entries()
-
-    def _on_at_add_list(self) -> None:
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        name, ok = QInputDialog.getText(self, _("New Autotrack List"), _("List name:"))
-        if ok and name.strip():
-            AutotrackManager.create_list(self._conn, name.strip())
-            self._reload_at_lists()
-
-    def _on_at_rename_list(self) -> None:
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        item = self._at_list_widget.currentItem()
-        if item is None:
-            return
-        list_id = int(item.data(0x0100))
-        name, ok = QInputDialog.getText(self, _("Rename List"), _("New name:"), text=item.text())
-        if ok and name.strip():
-            AutotrackManager.rename_list(self._conn, list_id, name.strip())
-            self._reload_at_lists()
-
-    def _on_at_delete_list(self) -> None:
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        item = self._at_list_widget.currentItem()
-        if item is None:
-            return
-        list_id = int(item.data(0x0100))
-        ans = QMessageBox.question(
-            self,
-            _("Delete List"),
-            _("Delete list '{name}' and all its entries?").format(name=item.text()),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if ans == QMessageBox.StandardButton.Yes:
-            AutotrackManager.delete_list(self._conn, list_id)
-            self._at_selected_list_id = None
-            self._reload_at_lists()
-            self._at_entry_tree.clear()
-
-    def _on_at_add_entry(self) -> None:
-        """Open a 2-step dialog: pick satellite → pick transponder."""
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        if self._at_selected_list_id is None:
-            QMessageBox.information(self, _("Autotrack"), _("Please select a list first."))
-            return
-
-        # Step 1: satellite selection
-        rows = self._conn.execute(
-            "SELECT norad_cat_id, name FROM satellites WHERE is_hidden = 0 ORDER BY name"
-        ).fetchall()
-        if not rows:
-            QMessageBox.information(self, _("Autotrack"), _("No satellites available."))
-            return
-        sat_names = [f"{r['name']} ({r['norad_cat_id']})" for r in rows]
-        sat_name, ok = QInputDialog.getItem(
-            self, _("Add Satellite"), _("Select satellite:"), sat_names, 0, False
-        )
-        if not ok:
-            return
-        idx = sat_names.index(sat_name)
-        norad = int(rows[idx]["norad_cat_id"])
-
-        # Step 2: transponder selection
-        xpdr_rows = self._conn.execute(
-            "SELECT uuid, description, downlink_low, uplink_low, mode"
-            " FROM transmitters WHERE norad_cat_id = ? AND alive = 1"
-            " ORDER BY downlink_low",
-            (norad,),
-        ).fetchall()
-        if not xpdr_rows:
-            QMessageBox.information(
-                self, _("Autotrack"), _("No transponders found for this satellite.")
-            )
-            return
-
-        def _xpdr_label(r: object) -> str:
-            dl = f"{int(r['downlink_low']) / 1e6:.3f}" if r["downlink_low"] else "?"  # type: ignore[index]
-            return f"{r['description']}  DL:{dl} MHz  {r['mode'] or ''}"  # type: ignore[index]
-
-        xpdr_labels = [_xpdr_label(r) for r in xpdr_rows]
-        xpdr_label, ok = QInputDialog.getItem(
-            self, _("Select Transponder"), _("Transponder:"), xpdr_labels, 0, False
-        )
-        if not ok:
-            return
-        xpdr_idx = xpdr_labels.index(xpdr_label)
-        xpdr_uuid = str(xpdr_rows[xpdr_idx]["uuid"])
-
-        AutotrackManager.add_entry(self._conn, self._at_selected_list_id, norad, xpdr_uuid)
-        self._reload_at_entries()
-
-    def _on_at_remove_entry(self) -> None:
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        item = self._at_entry_tree.currentItem()
-        if item is None:
-            return
-        raw = item.data(0, 0x0100)
-        if not isinstance(raw, int):
-            return
-        AutotrackManager.remove_entry(self._conn, raw)
-        self._reload_at_entries()
-
-    def _on_at_move_up(self) -> None:
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        item = self._at_entry_tree.currentItem()
-        if item is None:
-            return
-        raw = item.data(0, 0x0100)
-        if isinstance(raw, int):
-            AutotrackManager.move_entry_up(self._conn, raw)
-        self._reload_at_entries()
-
-    def _on_at_move_down(self) -> None:
-        from core.autotrack import AutotrackManager  # noqa: PLC0415
-
-        item = self._at_entry_tree.currentItem()
-        if item is None:
-            return
-        raw = item.data(0, 0x0100)
-        if isinstance(raw, int):
-            AutotrackManager.move_entry_down(self._conn, raw)
-        self._reload_at_entries()
 
     def _save_group_names(self) -> None:
         """Persist edited group names from the list widget back to the DB."""
