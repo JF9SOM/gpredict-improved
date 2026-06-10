@@ -539,7 +539,11 @@ class MainWindow(QMainWindow):
             lang_menu = view_menu.addMenu(_("Language"))
             if lang_menu:
                 lang_menu.addAction("English", lambda: self._on_set_language("en"))
-                lang_menu.addAction("日本語", lambda: self._on_set_language("ja"))
+                ja_action = lang_menu.addAction(
+                    "Japanese",
+                    lambda: QMessageBox.information(self, "Language", "To be prepared later."),
+                )
+                ja_action.setEnabled(True)
 
             tz_menu = view_menu.addMenu(_("Time Zone"))
             if tz_menu:
