@@ -16,16 +16,18 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
+from typing import IO, Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 try:
-    import lameenc
+    import lameenc as _lameenc
 
     LAMEENC_AVAILABLE = True
 except ImportError:
+    _lameenc = None
     LAMEENC_AVAILABLE = False
     logger.warning("lameenc not installed — audio recording unavailable. pip install lameenc")
 
@@ -36,8 +38,8 @@ class AudioRecorder:
     def __init__(self, save_dir: Path, sample_rate: int = 48_000) -> None:
         self._save_dir = save_dir
         self._sample_rate = sample_rate
-        self._encoder: object | None = None
-        self._file: object | None = None  # BinaryIO | None
+        self._encoder: Any = None  # lameenc.Encoder | None
+        self._file: IO[bytes] | None = None
         self._file_path: Path | None = None
         self._start_time: float = 0.0
         self._bytes_written: int = 0
@@ -61,7 +63,7 @@ class AudioRecorder:
 
     def start(self, norad: int, sat_name: str) -> Path:
         """Open a new MP3 file and begin recording. Returns the file path."""
-        if not LAMEENC_AVAILABLE:
+        if not LAMEENC_AVAILABLE or _lameenc is None:
             raise RuntimeError("lameenc is not installed. Run: pip install lameenc")
         if self._active:
             self.stop()
@@ -74,7 +76,7 @@ class AudioRecorder:
         filename = f"{norad}_{safe_name}_{ts}.mp3"
         self._file_path = self._save_dir / filename
 
-        enc = lameenc.Encoder()  # type: ignore[attr-defined]
+        enc: Any = _lameenc.Encoder()
         enc.set_bit_rate(128)
         enc.set_in_sample_rate(self._sample_rate)
         enc.set_channels(1)
@@ -95,9 +97,9 @@ class AudioRecorder:
         # lameenc expects int16; convert from float32 [-1, 1]
         pcm_clipped = np.clip(pcm, -1.0, 1.0)
         pcm_int16 = (pcm_clipped * 32767).astype(np.int16)
-        mp3_data: bytes = self._encoder.encode(pcm_int16.tobytes())  # type: ignore[attr-defined]
+        mp3_data: bytes = self._encoder.encode(pcm_int16.tobytes())
         if mp3_data:
-            self._file.write(mp3_data)  # type: ignore[union-attr]
+            self._file.write(mp3_data)
             self._bytes_written += len(mp3_data)
 
     def stop(self) -> Path | None:
@@ -107,14 +109,14 @@ class AudioRecorder:
         self._active = False
         path = self._file_path
         try:
-            if self._encoder is not None:
-                tail: bytes = self._encoder.flush()  # type: ignore[attr-defined]
-                if tail and self._file is not None:
-                    self._file.write(tail)  # type: ignore[union-attr]
+            if self._encoder is not None and self._file is not None:
+                tail: bytes = self._encoder.flush()
+                if tail:
+                    self._file.write(tail)
                     self._bytes_written += len(tail)
         finally:
             if self._file is not None:
-                self._file.close()  # type: ignore[union-attr]
+                self._file.close()
                 self._file = None
             self._encoder = None
         logger.info("Audio recording stopped: %s (%.1f MB)", path, self._bytes_written / 1e6)
