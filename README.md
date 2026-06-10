@@ -198,6 +198,7 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture reference used during devel
 | Device | Type | Notes |
 |--------|------|-------|
 | Yaesu FTX-1F | Transceiver | Hamlib 4.7.1 model 1051, NET Control, Doppler ✓ |
+| Yaesu FT-991AM | Transceiver | Hamlib 4.7.1 model 1036, NET Control, Doppler ✓ |
 | HackRF One | SDR | SoapyHackRF, NFM/USB/CW, Spectrum, Bias-T ✓ |
 | RTL-SDR | SDR | SoapyRTLSDR, basic operation ✓ |
 | FTX-1F + RTL-SDR | Dual-rig | Passband Tune + Lock ✓ |
