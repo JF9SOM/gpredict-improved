@@ -474,7 +474,6 @@ class MainWindow(QMainWindow):
 
         self._sdr_control = SdrControlWidget()
         self._sdr_control_tab_idx = self._tab_widget.addTab(self._sdr_control, _("SDR Control"))
-        self._tab_widget.setTabEnabled(self._sdr_control_tab_idx, False)
         self._sdr_control.tune_offset_changed.connect(self._on_sdr_tune_offset)
 
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
@@ -1896,7 +1895,6 @@ class MainWindow(QMainWindow):
             self._rig_controller.disconnect()
             if is_sdr:
                 self._sdr_control.set_pipeline(None)
-                self._tab_widget.setTabEnabled(self._sdr_control_tab_idx, False)
         self._radio_control.refresh_status()
 
     def _send_mode_only_to_rig(self) -> None:
@@ -2962,9 +2960,6 @@ class MainWindow(QMainWindow):
         rig.attach_pipeline(pipeline)
         self._sdr_control.set_pipeline(pipeline)
         pipeline.start()
-
-        # Enable the SDR Control tab now that an SDR is connected
-        self._tab_widget.setTabEnabled(self._sdr_control_tab_idx, True)
 
     def _on_show_qr(self) -> None:
         if not self._web_server_url:
