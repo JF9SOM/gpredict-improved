@@ -157,6 +157,9 @@ python -m src.main
 
 > **SoapySDR** はシステムパッケージとして別途インストールが必要です。
 > Linux: `sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf`
+>
+> 全プラットフォームで、アプリの **Help → SDR Device Installation** からガイドに従ってインストールできます
+>（Linux/macOS は全自動、Windows は PothosSDR + Zadig による半自動）。
 
 ---
 

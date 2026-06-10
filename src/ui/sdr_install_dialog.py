@@ -310,11 +310,11 @@ class SdrInstallDialog(QDialog):
 
     def _add_windows_buttons(self, needs_zadig: bool) -> None:
         """Add PothosSDR and (optionally) Zadig download buttons."""
-        pothos_btn = QPushButton(_("Download PothosSDR Installer"))
-        pothos_btn.clicked.connect(lambda: self._download_and_run(_POTHOS_URL))
+        pothos_btn = QPushButton(_("Open PothosSDR Download Page (browser)"))
+        pothos_btn.clicked.connect(lambda: self._open_url(_POTHOS_URL))
         self._status_layout.addWidget(pothos_btn)
         if needs_zadig:
-            zadig_btn = QPushButton(_("Download Zadig (RTL-SDR driver)"))
+            zadig_btn = QPushButton(_("Download & Run Zadig (RTL-SDR driver)"))
             zadig_btn.clicked.connect(lambda: self._download_and_run(_ZADIG_URL))
             self._status_layout.addWidget(zadig_btn)
 
@@ -347,14 +347,22 @@ class SdrInstallDialog(QDialog):
             self._refresh()
             self._log.append(_("\n⚠️  Restart GPredict-Improved to activate the installed drivers."))
 
+    def _open_url(self, url: str) -> None:
+        """Open a URL in the system browser."""
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        QDesktopServices.openUrl(QUrl(url))
+
     def _download_and_run(self, url: str) -> None:
-        """Download a file and run it (Windows helper)."""
+        """Download a direct-link executable and run it (Windows helper)."""
         import tempfile
         import urllib.request
+        from pathlib import Path
 
         try:
             fname = url.split("/")[-1]
-            dest = __import__("pathlib").Path(tempfile.gettempdir()) / fname
+            dest = Path(tempfile.gettempdir()) / fname
             self._log.append(f"Downloading {url}…")
             urllib.request.urlretrieve(url, dest)
             self._log.append(f"Launching {dest}…")
