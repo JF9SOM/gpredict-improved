@@ -106,6 +106,7 @@ class AutotrackRecordDialog(QDialog):
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
         self._conn = conn
         self._at_selected_list_id: int | None = None
+        self._use_utc: bool = True
         self._setup_ui()
         self._reload_at_lists()
 
@@ -143,12 +144,31 @@ class AutotrackRecordDialog(QDialog):
     def is_iq_record_enabled(self) -> bool:
         return bool(self._iq_rec_cb.isChecked())
 
-    def get_timer_start_utc(self) -> datetime:
-        """Return the configured start time as UTC datetime."""
+    def set_use_utc(self, use_utc: bool) -> None:
+        """Switch the timer start input between UTC and local time display."""
         from PySide6.QtCore import QTimeZone  # noqa: PLC0415
 
-        qdt = self._timer_start_dt.dateTime().toTimeZone(QTimeZone.utc())
-        ts = qdt.toSecsSinceEpoch()
+        if use_utc == self._use_utc:
+            return
+        old_ts = int(self.get_timer_start_utc().timestamp())
+        self._use_utc = use_utc
+        tz = QTimeZone.utc() if use_utc else QTimeZone.systemTimeZone()
+        self._timer_start_label.setText(_("Start (UTC):") if use_utc else _("Start (Local):"))
+        self._timer_start_dt.setDateTime(QDateTime.fromSecsSinceEpoch(old_ts, tz))
+
+    def _on_now_clicked(self) -> None:
+        from PySide6.QtCore import QTimeZone  # noqa: PLC0415
+
+        if self._use_utc:
+            self._timer_start_dt.setDateTime(
+                QDateTime.currentDateTimeUtc().toTimeZone(QTimeZone.utc())
+            )
+        else:
+            self._timer_start_dt.setDateTime(QDateTime.currentDateTime())
+
+    def get_timer_start_utc(self) -> datetime:
+        """Return the configured start time as UTC datetime."""
+        ts = self._timer_start_dt.dateTime().toSecsSinceEpoch()
         return datetime.fromtimestamp(ts, tz=UTC)
 
     def get_timer_stop_utc(self) -> datetime:
@@ -273,20 +293,22 @@ class AutotrackRecordDialog(QDialog):
         timer_form.setSpacing(6)
 
         # Start time: QDateTimeEdit with calendar popup + "Now" reset button
+        from PySide6.QtCore import QTimeZone  # noqa: PLC0415
+
         start_row = QHBoxLayout()
         self._timer_start_dt = QDateTimeEdit()
         self._timer_start_dt.setDisplayFormat("yyyy-MM-dd HH:mm")
         self._timer_start_dt.setCalendarPopup(True)
-        self._timer_start_dt.setDateTime(QDateTime.currentDateTime())
+        # Default: UTC mode — show current time in UTC
+        self._timer_start_dt.setDateTime(QDateTime.currentDateTimeUtc().toTimeZone(QTimeZone.utc()))
         start_row.addWidget(self._timer_start_dt)
         now_btn = QPushButton(_("Now"))
         now_btn.setFixedWidth(48)
         now_btn.setToolTip(_("Reset start time to current time"))
-        now_btn.clicked.connect(
-            lambda: self._timer_start_dt.setDateTime(QDateTime.currentDateTime())
-        )
+        now_btn.clicked.connect(self._on_now_clicked)
         start_row.addWidget(now_btn)
-        timer_form.addRow(_("Start:"), start_row)
+        self._timer_start_label = QLabel(_("Start (UTC):"))
+        timer_form.addRow(self._timer_start_label, start_row)
 
         # Stop: duration combo
         self._timer_dur_combo = QComboBox()
