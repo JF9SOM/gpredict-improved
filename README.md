@@ -43,7 +43,7 @@ satellite tracker by Alexandru Csete OZ9AEC — built on a modern Python stack.
 - **Upcoming Passes** — target or group search, calendar picker, CSV export
 - **Radio Control** — Doppler correction, mode/CTCSS auto-set, transponder list
 - **SDR Control** — real-time spectrum analyser, NFM/USB/LSB/CW demodulation, IQ recorder, passband tuning with transponder lock
-- **Autotrack** — automatic sequential satellite tracking (configurable lists)
+- **Autotrack/Record** — automatic sequential satellite tracking with scheduled timer (start/stop time), auto rig+rotator connect at AOS / disconnect at LOS, and automatic SDR audio/IQ recording between AOS and LOS
 - **AOS/LOS desktop notifications** (Linux: notify-send / macOS: osascript / Windows: PowerShell)
 
 ### Mobile Browser UI
