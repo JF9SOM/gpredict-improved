@@ -27,7 +27,7 @@ GPredict-Improved は、長年アマチュア無線家に愛用されてきた
 | 衛星周波数DB | SATNOGSのみ・テキスト編集 | SATNOGS自動同期 + **GUIから手動追加・編集** |
 | TLE更新 | 自動更新あり | **複数ソースから自動更新・品質スコアリング** |
 | パス予測表示 | リスト表示のみ | **グラフィカルパスチャート + スカイレーダー + 世界地図フットプリント** |
-| ローテーター制御 | 別途 rotctld | **内蔵ローテーター制御・キャッチアップ追尾** |
+| ローテーター制御 | 別途 rotctld | **Hamlib内蔵 — GUIでローテーターを選択するだけ。rotctld不要** |
 | 対応OS | Linux・Windows・macOS（GTK+）| **Linux・Windows・macOS・Raspberry Pi** |
 
 ---
