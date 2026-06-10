@@ -85,11 +85,26 @@ class SdrControlWidget(QWidget):
         self._status_timer.setInterval(1_000)
         self._status_timer.timeout.connect(self._update_rec_status)
         self._setup_ui()
-        self.setEnabled(False)  # disabled until SDR connects
+        self._set_sdr_connected(False)  # grey out until SDR connects
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _set_sdr_connected(self, connected: bool) -> None:
+        """Enable/disable all panels except the file-manager buttons."""
+        for panel in (
+            self._spectrum_panel,
+            self._tune_panel,
+            self._demod_panel,
+            self._recorder_panel,
+        ):
+            panel.setEnabled(connected)
+
+        # File-manager buttons remain accessible regardless of SDR connection
+        # so users can browse/delete recordings at any time.
+        self._open_folder_btn.setEnabled(True)
+        self._open_audio_folder_btn.setEnabled(True)
 
     def set_pipeline(self, pipeline: Any) -> None:  # SDRPipeline | None
         """Attach or detach the active SDRPipeline."""
@@ -103,7 +118,7 @@ class SdrControlWidget(QWidget):
                 pass
 
         self._pipeline = pipeline
-        self.setEnabled(pipeline is not None)
+        self._set_sdr_connected(pipeline is not None)
 
         if pipeline is not None:
             pipeline.spectrum_ready.connect(self._on_spectrum)
@@ -181,13 +196,17 @@ class SdrControlWidget(QWidget):
         layout.addWidget(self._status_label)
 
         # Spectrum
-        layout.addWidget(self._build_spectrum_panel())
+        self._spectrum_panel = self._build_spectrum_panel()
+        layout.addWidget(self._spectrum_panel)
         # Passband tuning
-        layout.addWidget(self._build_tune_panel())
+        self._tune_panel = self._build_tune_panel()
+        layout.addWidget(self._tune_panel)
         # Demodulator
-        layout.addWidget(self._build_demod_panel())
+        self._demod_panel = self._build_demod_panel()
+        layout.addWidget(self._demod_panel)
         # IQ recorder
-        layout.addWidget(self._build_recorder_panel())
+        self._recorder_panel = self._build_recorder_panel()
+        layout.addWidget(self._recorder_panel)
         layout.addStretch()
 
         # Private state

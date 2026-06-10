@@ -469,12 +469,12 @@ class MainWindow(QMainWindow):
         self._tab_widget.setTabVisible(self._group_chart_tab_idx, False)
         self._tab_widget.addTab(self._radio_control, _("Radio Control"))
 
-        # SDR Control tab — hidden until an SDR device is connected
+        # SDR Control tab — always visible; content greys out until SDR connects
         from ui.sdr_control_widget import SdrControlWidget
 
         self._sdr_control = SdrControlWidget()
         self._sdr_control_tab_idx = self._tab_widget.addTab(self._sdr_control, _("SDR Control"))
-        self._tab_widget.setTabVisible(self._sdr_control_tab_idx, False)
+        self._tab_widget.setTabEnabled(self._sdr_control_tab_idx, False)
         self._sdr_control.tune_offset_changed.connect(self._on_sdr_tune_offset)
 
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
@@ -1892,7 +1892,11 @@ class MainWindow(QMainWindow):
     def _disconnect_rig(self) -> None:
         """Disconnect the rig and refresh the UI status."""
         if self._rig_controller is not None:
+            is_sdr = getattr(self._rig_controller, "is_sdr", False)
             self._rig_controller.disconnect()
+            if is_sdr:
+                self._sdr_control.set_pipeline(None)
+                self._tab_widget.setTabEnabled(self._sdr_control_tab_idx, False)
         self._radio_control.refresh_status()
 
     def _send_mode_only_to_rig(self) -> None:
@@ -2959,8 +2963,8 @@ class MainWindow(QMainWindow):
         self._sdr_control.set_pipeline(pipeline)
         pipeline.start()
 
-        # Show the SDR Control tab
-        self._tab_widget.setTabVisible(self._sdr_control_tab_idx, True)
+        # Enable the SDR Control tab now that an SDR is connected
+        self._tab_widget.setTabEnabled(self._sdr_control_tab_idx, True)
 
     def _on_show_qr(self) -> None:
         if not self._web_server_url:
