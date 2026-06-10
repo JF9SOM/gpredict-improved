@@ -579,6 +579,7 @@ class MainWindow(QMainWindow):
         help_menu = mb.addMenu(_("Help"))
         if help_menu:
             help_menu.addAction(_("Satellite Color"), self._on_satellite_color)
+            help_menu.addAction(_("Auto Fetch Rules"), self._on_auto_fetch_rules)
             help_menu.addSeparator()
             help_menu.addAction(_("Check for Updates…"), self._on_check_updates)
             help_menu.addAction(_("SDR Device Installation…"), self._on_sdr_install)
@@ -2966,6 +2967,43 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_box)
 
         dialog.exec()
+
+    def _on_auto_fetch_rules(self) -> None:
+        """Show a dialog explaining the automatic TLE and transponder fetch schedule."""
+        msg = (
+            "<h3>Auto Fetch Rules</h3>"
+            "<p>GPredict-Improved automatically fetches and updates TLE orbital data "
+            "and transponder information in the background. Manual updates are normally "
+            "not required. Use manual sync only when you need the very latest data "
+            "immediately (e.g. right before a pass of a newly launched satellite).</p>"
+            "<h4>TLE Auto-Fetch Schedule</h4>"
+            "<table border='0' cellspacing='4'>"
+            "<tr><td><b>Space Stations</b> (ISS, CSS…)</td><td>every <b>1 hour</b></td></tr>"
+            "<tr><td><b>Amateur Satellites</b></td><td>every <b>2 hours</b></td></tr>"
+            "<tr><td><b>CubeSats</b></td><td>every <b>4 hours</b></td></tr>"
+            "<tr><td><b>Weather Satellites</b></td><td>every <b>6 hours</b></td></tr>"
+            "<tr><td><b>Earth Observation / Science</b></td>"
+            "<td>every <b>12 hours</b></td></tr>"
+            "<tr><td><b>Provisional TLEs</b> (NORAD ≥ 90000)</td>"
+            "<td>every <b>12 hours</b></td></tr>"
+            "<tr><td><b>Active TLE fallback</b> (NORAD 10000–89999)</td>"
+            "<td>every <b>24 hours</b></td></tr>"
+            "<tr><td><b>AMSAT operational status</b></td><td>every <b>24 hours</b></td></tr>"
+            "</table>"
+            "<h4>Transponder Database (SATNOGS)</h4>"
+            "<p>Transponder data is fetched from SATNOGS automatically on first launch. "
+            "After that, use <b>Satellite → Sync SATNOGS</b> to refresh transponder "
+            "frequencies and modes manually whenever needed.</p>"
+            "<h4>At Startup</h4>"
+            "<p>On each launch the app syncs satellite names and statuses from SATNOGS, "
+            "and fetches any TLE sources whose cached data has expired.</p>"
+        )
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle(_("Auto Fetch Rules"))
+        dlg.setTextFormat(Qt.TextFormat.RichText)
+        dlg.setText(msg)
+        dlg.setIcon(QMessageBox.Icon.Information)
+        dlg.exec()
 
     def _on_about(self) -> None:
         from PySide6.QtWidgets import QApplication
