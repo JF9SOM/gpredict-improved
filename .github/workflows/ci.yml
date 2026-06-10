@@ -353,7 +353,7 @@ jobs:
             Invoke-WebRequest -Uri $url -OutFile $fname
           }
 
-          python @'
+          @'
 import os, sys, zipfile, tarfile, io, bz2, zstandard, glob
 
 def extract_conda(fname, bin_dir, py_dir, mod_dir):
@@ -390,7 +390,7 @@ def extract_conda(fname, bin_dir, py_dir, mod_dir):
 for fname in glob.glob('*.conda') + glob.glob('*.tar.bz2'):
     print(f'Extracting {fname}')
     extract_conda(fname, 'soapy-win64/bin', 'soapy-win64/python', 'soapy-win64/modules')
-'@
+'@ | python
 
           Write-Host "=== soapy-win64 contents ==="
           Get-ChildItem soapy-win64 -Recurse -File | Select-Object FullName
