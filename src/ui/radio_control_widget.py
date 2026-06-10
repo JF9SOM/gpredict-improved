@@ -103,6 +103,9 @@ class RadioControlWidget(QWidget):
         self._tune_btn = QPushButton(_("T"))
         self._tune_btn.setFixedWidth(56)
         self._tune_btn.setToolTip(_("Tune: reset downlink/uplink to center of transponder band"))
+        self._tune_btn.setStyleSheet(
+            "QPushButton:pressed { background-color: #e67e22; color: #fff; font-weight: bold; }"
+        )
         self._tune_btn.clicked.connect(self.tune_requested.emit)
         self._lock_btn = QPushButton(_("L"))
         self._lock_btn.setFixedWidth(56)
