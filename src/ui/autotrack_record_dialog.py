@@ -111,7 +111,7 @@ class AutotrackRecordDialog(QDialog):
     # Public API
     # ------------------------------------------------------------------
 
-    def populate_list_combo(self, lists: list[dict]) -> None:
+    def populate_list_combo(self, lists: list[dict[str, object]]) -> None:
         """Refresh the list selector combo from external data."""
         self._at_sel_combo.blockSignals(True)
         self._at_sel_combo.clear()
