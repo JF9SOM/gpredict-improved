@@ -373,6 +373,8 @@ class MainWindow(QMainWindow):
         self._radio_control.south_init_changed.connect(self._on_south_init_changed)
         self._radio_control.rig_connected.connect(lambda: self._on_rig_slot_connected(1))
         self._radio_control.rig2_connected.connect(lambda: self._on_rig_slot_connected(2))
+        self._radio_control.rig_disconnected.connect(lambda: self._on_rig_slot_disconnected(1))
+        self._radio_control.rig2_disconnected.connect(lambda: self._on_rig_slot_disconnected(2))
         self._restore_satellite_filter()
         # Load bundled community transmitters immediately (no network required).
         # This runs on the main thread so satellites are visible before any
@@ -2965,6 +2967,13 @@ class MainWindow(QMainWindow):
         rig.attach_pipeline(pipeline)
         self._sdr_control.set_pipeline(pipeline)
         pipeline.start()
+        self._update_rig_label()
+
+    def _on_rig_slot_disconnected(self, slot: int) -> None:
+        """Called when Rig 1 or Rig 2 disconnects via the UI button."""
+        rig = self._rig_controller if slot == 1 else self._rig2_controller
+        if getattr(rig, "is_sdr", False):
+            self._sdr_control.set_pipeline(None)
         self._update_rig_label()
 
     def _on_show_qr(self) -> None:

@@ -44,7 +44,9 @@ class RadioControlWidget(QWidget):
     tune_requested: Signal = Signal()
     lock_changed: Signal = Signal(bool)
     rig_connected: Signal = Signal()
+    rig_disconnected: Signal = Signal()
     rig2_connected: Signal = Signal()
+    rig2_disconnected: Signal = Signal()
     rotator_connected: Signal = Signal()
     south_init_changed: Signal = Signal(bool)
     ctcss_send_requested: Signal = Signal(float)
@@ -631,6 +633,7 @@ class RadioControlWidget(QWidget):
             return
         if self._rig1.is_connected:
             self._rig1.disconnect()
+            self.rig_disconnected.emit()
         else:
             self._rig1.connect()
             if self._rig1.is_connected:
@@ -642,6 +645,7 @@ class RadioControlWidget(QWidget):
             return
         if self._rig2.is_connected:
             self._rig2.disconnect()
+            self.rig2_disconnected.emit()
         else:
             self._rig2.connect()
             if self._rig2.is_connected:
