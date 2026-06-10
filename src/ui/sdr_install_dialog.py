@@ -56,8 +56,9 @@ _BREW_PACKAGES: dict[str, list[str]] = {
     "SoapySDRPlay": ["soapysdr", "soapysdrplay"],
 }
 
-# Windows download URLs (GitHub releases)
-_POTHOS_URL = "https://github.com/pothosware/PothosCore/releases/latest"
+# Windows: PothosSDR is hosted on MyriadRF (last release 2021-07-25).
+# Direct .exe download — includes SoapySDR core + RTL-SDR / HackRF modules.
+_POTHOS_URL = "https://downloads.myriadrf.org/builds/PothosSDR/PothosSDR-2021.07.25-vc16-x64.exe"
 _ZADIG_URL = "https://zadig.akeo.ie/downloads/zadig_2.9.exe"
 
 
@@ -289,10 +290,11 @@ class SdrInstallDialog(QDialog):
             self._action_label.setText(
                 _(
                     "Windows installation steps:\n"
-                    "1. Download and run the PothosSDR installer"
-                    " (installs SoapySDR + all drivers).\n"
-                    "2. For RTL-SDR only: run Zadig and apply the WinUSB driver.\n\n"
-                    "Click the buttons below to download each tool."
+                    "1. Click 'Download & Run PothosSDR Installer' below.\n"
+                    "   (PothosSDR 2021-07-25 from myriadrf.org — installs SoapySDR"
+                    " core + RTL-SDR / HackRF / AirSpy modules)\n"
+                    "2. For RTL-SDR only: also run Zadig and apply the WinUSB driver.\n"
+                    "3. Restart GPredict-Improved after installation."
                 )
             )
             self._install_btn.setVisible(False)
@@ -310,8 +312,8 @@ class SdrInstallDialog(QDialog):
 
     def _add_windows_buttons(self, needs_zadig: bool) -> None:
         """Add PothosSDR and (optionally) Zadig download buttons."""
-        pothos_btn = QPushButton(_("Open PothosSDR Download Page (browser)"))
-        pothos_btn.clicked.connect(lambda: self._open_url(_POTHOS_URL))
+        pothos_btn = QPushButton(_("Download & Run PothosSDR Installer (SoapySDR)"))
+        pothos_btn.clicked.connect(lambda: self._download_and_run(_POTHOS_URL))
         self._status_layout.addWidget(pothos_btn)
         if needs_zadig:
             zadig_btn = QPushButton(_("Download & Run Zadig (RTL-SDR driver)"))
