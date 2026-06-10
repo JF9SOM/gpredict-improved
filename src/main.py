@@ -53,6 +53,13 @@ if _hamlib_user_dir.exists():
     if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
         os.add_dll_directory(_hamlib_user_str)
 
+# Windows frozen bundle: tell SoapySDR where to find device-module DLLs.
+# Must be set before any 'import SoapySDR' occurs.
+if sys.platform == "win32" and getattr(sys, "frozen", False):
+    _soapy_modules = Path(getattr(sys, "_MEIPASS", "")) / "soapy_modules"
+    if _soapy_modules.exists():
+        os.environ.setdefault("SOAPY_SDR_PLUGIN_PATH", str(_soapy_modules))
+
 if sys.platform == "linux":
     _pyver = f"{sys.version_info.major}.{sys.version_info.minor}"
     _HAMLIB_SITE = f"/opt/hamlib/4.7/lib/python{_pyver}/site-packages"

@@ -320,6 +320,95 @@ jobs:
           Compress-Archive -Path "$pkgName\*" -DestinationPath "$pkgName.zip"
           "HAMLIB_PORTABLE_PKG=$pkgName.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
 
+      - name: Bundle SoapySDR for Windows (conda-forge pre-built)
+        shell: pwsh
+        run: |
+          pip install zstandard -q
+
+          # conda-forge package URLs (pinned for reproducibility)
+          $packages = @(
+            # SoapySDR core + Python 3.11 binding
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-0.8.1-py311haef1a59_6.conda",
+            # RTL-SDR
+            "https://conda.anaconda.org/conda-forge/win-64/rtl-sdr-2.0.2-h2466b09_3.conda",
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-rtlsdr-0.3.3-h0644a59_3.conda",
+            # HackRF
+            "https://conda.anaconda.org/conda-forge/win-64/libhackrf0-2026.01.3-hfd05255_0.conda",
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-hackrf-0.3.4-h23704b7_0.tar.bz2",
+            # Airspy
+            "https://conda.anaconda.org/conda-forge/win-64/libairspy-1.0.10-h2466b09_1.conda",
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-airspy-0.2.0-h23704b7_0.tar.bz2",
+            # Airspy HF+
+            "https://conda.anaconda.org/conda-forge/win-64/libairspyhf-1.6.8-h2466b09_1.conda",
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-airspyhf-0.2.0-h23704b7_0.tar.bz2"
+          )
+
+          New-Item -ItemType Directory -Force -Path soapy-win64\bin     | Out-Null
+          New-Item -ItemType Directory -Force -Path soapy-win64\python   | Out-Null
+          New-Item -ItemType Directory -Force -Path soapy-win64\modules  | Out-Null
+
+          foreach ($url in $packages) {
+            $fname = Split-Path $url -Leaf
+            Write-Host "Downloading $fname ..."
+            Invoke-WebRequest -Uri $url -OutFile $fname
+          }
+
+          python - << 'PYEOF'
+          import os, sys, zipfile, tarfile, io, bz2, zstandard, glob
+
+          def extract_conda(fname, bin_dir, py_dir, mod_dir):
+              if fname.endswith('.conda'):
+                  with zipfile.ZipFile(fname) as z:
+                      pkg_name = next(n for n in z.namelist() if n.startswith('pkg-'))
+                      data = z.read(pkg_name)
+                      dctx = zstandard.ZstdDecompressor()
+                      tf = tarfile.open(fileobj=io.BytesIO(dctx.decompress(data)))
+              else:  # .tar.bz2
+                  with open(fname, 'rb') as f:
+                      tf = tarfile.open(fileobj=io.BytesIO(bz2.decompress(f.read())))
+
+              for m in tf.getmembers():
+                  name = m.name
+                  if not (name.endswith('.dll') or name.endswith('.pyd') or name.endswith('.py')):
+                      continue
+                  f = tf.extractfile(m)
+                  if not f:
+                      continue
+                  base = os.path.basename(name)
+                  if 'modules' in name and name.endswith('.dll'):
+                      dest = os.path.join(mod_dir, base)
+                  elif name.endswith('.pyd') or (name.endswith('.py') and 'SoapySDR' in base):
+                      dest = os.path.join(py_dir, base)
+                  elif name.endswith('.dll'):
+                      dest = os.path.join(bin_dir, base)
+                  else:
+                      continue
+                  with open(dest, 'wb') as out:
+                      out.write(f.read())
+                  print(f'  -> {dest}')
+
+          for fname in glob.glob('*.conda') + glob.glob('*.tar.bz2'):
+              print(f'Extracting {fname}')
+              extract_conda(fname, 'soapy-win64/bin', 'soapy-win64/python', 'soapy-win64/modules')
+          PYEOF
+
+          Write-Host "=== soapy-win64 contents ==="
+          Get-ChildItem soapy-win64 -Recurse -File | Select-Object FullName
+
+          # Verify SoapySDR import using the extracted .pyd
+          $PY_SITE = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
+          Copy-Item soapy-win64\python\* "$PY_SITE\" -Force
+          Copy-Item soapy-win64\bin\*.dll "$PY_SITE\" -Force
+          $env:SOAPY_SDR_PLUGIN_PATH = "$PWD\soapy-win64\modules"
+          python -c "
+          import os, sys
+          os.add_dll_directory(r'$PY_SITE')
+          import SoapySDR
+          print('SoapySDR version:', SoapySDR.getAPIVersion())
+          devs = SoapySDR.Device.enumerate()
+          print('Detected devices:', len(devs))
+          "
+
       - name: Disable Windows Defender and install NSIS
         shell: pwsh
         run: |

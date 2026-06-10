@@ -29,6 +29,7 @@ SRC = ROOT / "src"
 # Platform-specific Hamlib binary collection
 # --------------------------------------------------------------------------- #
 hamlib_binaries: list[tuple[str, str]] = []
+soapy_binaries: list[tuple[str, str]] = []
 
 if sys.platform == "win32":
     # CI places hamlib DLLs in hamlib-win64/bin/ relative to repo root
@@ -36,6 +37,18 @@ if sys.platform == "win32":
     if hamlib_bin_dir.exists():
         for dll in hamlib_bin_dir.glob("*.dll"):
             hamlib_binaries.append((str(dll), "."))
+
+    # SoapySDR: core DLLs + Python binding bundled flat in ".";
+    # device-module DLLs in "soapy_modules" (SOAPY_SDR_PLUGIN_PATH target).
+    # Extracted from conda-forge packages by CI before this spec runs.
+    _soapy_dir = ROOT / "soapy-win64"
+    if _soapy_dir.exists():
+        for _dll in (_soapy_dir / "bin").glob("*.dll"):
+            soapy_binaries.append((str(_dll), "."))
+        for _f in (_soapy_dir / "python").iterdir():
+            soapy_binaries.append((str(_f), "."))
+        for _dll in (_soapy_dir / "modules").glob("*.dll"):
+            soapy_binaries.append((str(_dll), "soapy_modules"))
 
 elif sys.platform == "darwin":
     # Homebrew hamlib dylibs
@@ -159,7 +172,7 @@ hidden_imports = [
 a = Analysis(
     [str(SRC / "main.py")],
     pathex=[str(SRC)],
-    binaries=hamlib_binaries,
+    binaries=hamlib_binaries + soapy_binaries,
     datas=datas,
     hiddenimports=hidden_imports,
     hookspath=[],

@@ -56,9 +56,8 @@ _BREW_PACKAGES: dict[str, list[str]] = {
     "SoapySDRPlay": ["soapysdr", "soapysdrplay"],
 }
 
-# Windows: PothosSDR is hosted on MyriadRF (last release 2021-07-25).
-# Direct .exe download — includes SoapySDR core + RTL-SDR / HackRF modules.
-_POTHOS_URL = "https://downloads.myriadrf.org/builds/PothosSDR/PothosSDR-2021.07.25-vc16-x64.exe"
+# Windows: SoapySDR is bundled in the installer (extracted from conda-forge in CI).
+# Zadig is still needed to switch RTL-SDR to the WinUSB driver.
 _ZADIG_URL = "https://zadig.akeo.ie/downloads/zadig_2.9.exe"
 
 
@@ -287,18 +286,26 @@ class SdrInstallDialog(QDialog):
         elif os_name == "Windows":
             self._pending_cmd = []
             needs_rtl = any("RTLSDR" in m for m in needed_modules)
-            self._action_label.setText(
-                _(
-                    "Windows installation steps:\n"
-                    "1. Click 'Download & Run PothosSDR Installer' below.\n"
-                    "   (PothosSDR 2021-07-25 from myriadrf.org — installs SoapySDR"
-                    " core + RTL-SDR / HackRF / AirSpy modules)\n"
-                    "2. For RTL-SDR only: also run Zadig and apply the WinUSB driver.\n"
-                    "3. Restart GPredict-Improved after installation."
+            if needs_rtl:
+                self._action_label.setText(
+                    _(
+                        "SoapySDR is bundled in this installer — no separate install needed.\n\n"
+                        "For RTL-SDR only: the WinUSB driver must be applied once with Zadig.\n"
+                        "1. Plug in your RTL-SDR dongle.\n"
+                        "2. Click 'Download & Run Zadig' below.\n"
+                        "3. In Zadig: select your RTL-SDR device"
+                        " → driver: WinUSB → Install Driver.\n"
+                        "4. Restart GPredict-Improved."
+                    )
                 )
-            )
+            else:
+                self._action_label.setText(
+                    _(
+                        "SoapySDR is bundled in this installer — no separate install needed.\n"
+                        "If your device is not detected, check that its USB driver is installed."
+                    )
+                )
             self._install_btn.setVisible(False)
-            # Add download buttons dynamically
             self._add_windows_buttons(needs_rtl)
         else:
             self._pending_cmd = []
@@ -311,12 +318,9 @@ class SdrInstallDialog(QDialog):
             self._install_btn.setVisible(False)
 
     def _add_windows_buttons(self, needs_zadig: bool) -> None:
-        """Add PothosSDR and (optionally) Zadig download buttons."""
-        pothos_btn = QPushButton(_("Download & Run PothosSDR Installer (SoapySDR)"))
-        pothos_btn.clicked.connect(lambda: self._download_and_run(_POTHOS_URL))
-        self._status_layout.addWidget(pothos_btn)
+        """Add Zadig download button for RTL-SDR WinUSB driver installation."""
         if needs_zadig:
-            zadig_btn = QPushButton(_("Download & Run Zadig (RTL-SDR driver)"))
+            zadig_btn = QPushButton(_("Download & Run Zadig (RTL-SDR WinUSB driver)"))
             zadig_btn.clicked.connect(lambda: self._download_and_run(_ZADIG_URL))
             self._status_layout.addWidget(zadig_btn)
 
