@@ -69,6 +69,8 @@ datas = [
     (str(SRC / "data" / "community_transmitters.json"), "data"),
     # App icon PNGs (used by Qt window icon at runtime on all platforms)
     (str(ROOT / "assets"), "assets"),
+    # Version file written by CI before pyinstaller runs (used by _get_version())
+    (str(SRC / "version.txt"), "."),
 ]
 
 # Collect certifi CA bundle (cacert.pem) so httpx HTTPS works in the bundle.

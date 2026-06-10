@@ -117,12 +117,25 @@ def _get_version() -> str:
     Dev build after tag           → "0.1.0.dev3"  (last tag + commit count)
     Fallback (no metadata/git)    → "0.1.0"
 
-    setuptools-scm default scheme produces ``X.(Y+1).0.devN+gHASH`` for commits
-    after a tag, which is confusing because it implies the *next* version.
-    Instead we reformat it as ``<last-tag>.devN`` using ``git describe``.
+    Priority:
+      1. version.txt bundled by PyInstaller (written by CI before pyinstaller runs)
+      2. git describe (works in dev environment)
+      3. importlib.metadata (works when installed via pip)
+      4. hardcoded fallback
     """
-    # Prefer git describe for accuracy — always reflects the current commit count
-    # without requiring ``pip install -e .`` to be re-run after every commit.
+    # 1. PyInstaller frozen bundle: read version.txt written by CI at build time.
+    # sys._MEIPASS is the temp dir where PyInstaller extracts bundled files.
+    if getattr(sys, "frozen", False):
+        try:
+            version_file = Path(getattr(sys, "_MEIPASS", "")) / "version.txt"
+            if version_file.exists():
+                ver = version_file.read_text(encoding="utf-8").strip()
+                if ver:
+                    return ver
+        except Exception:
+            pass
+
+    # 2. Git describe — accurate in dev environment.
     try:
         import subprocess
 
@@ -135,16 +148,15 @@ def _get_version() -> str:
         if result.returncode == 0:
             # Output format: "v0.1.0-4-gf1dd166"
             parts = result.stdout.strip().split("-")
-            # parts[-1] = hash, parts[-2] = commit count, parts[:-2] = tag
             tag = "-".join(parts[:-2]).lstrip("v")
             count = int(parts[-2])
             if count == 0:
-                return tag  # exactly on a tag → clean release version
+                return tag
             return f"{tag}.dev{count}"
     except Exception:
         pass
 
-    # Fallback: importlib.metadata (may lag by one commit when using -e install)
+    # 3. importlib.metadata (may lag by one commit when using -e install)
     try:
         from importlib.metadata import version as _meta_version
 

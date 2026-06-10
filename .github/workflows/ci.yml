@@ -177,6 +177,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
+          echo "${{ github.ref_name }}" | sed 's/^v//' > src/version.txt
           export LD_LIBRARY_PATH=/opt/hamlib/4.7/lib:${LD_LIBRARY_PATH}
           PYTHONPATH=src pyinstaller scripts/gpredict-improved.spec --noconfirm
 
@@ -328,6 +329,8 @@ jobs:
       - name: Build with PyInstaller
         shell: pwsh
         run: |
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          $ver | Out-File -FilePath src\version.txt -Encoding ASCII -NoNewline
           $env:PYTHONPATH = "src"
           pyinstaller scripts/gpredict-improved.spec --noconfirm --distpath dist
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
@@ -489,6 +492,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
+          echo "${{ github.ref_name }}" | sed 's/^v//' > src/version.txt
           PYTHONPATH=src pyinstaller scripts/gpredict-improved.spec --noconfirm
 
       - name: Create DMG

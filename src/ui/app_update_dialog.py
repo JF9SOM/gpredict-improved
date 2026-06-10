@@ -145,10 +145,13 @@ class _DownloadWorker(QThread):
             self.progress.emit(f"Downloading… {pct}%")
 
     def _install_windows(self, setup_exe: Path) -> None:
-        """Launch the NSIS installer; it handles overwrite and restart."""
-        # /S = silent install (no user interaction); the running app must
-        # quit after this call so NSIS can overwrite the exe.
-        subprocess.Popen([str(setup_exe), "/S"], close_fds=True)
+        """Launch the NSIS installer with UAC elevation via ShellExecute."""
+        # os.startfile uses ShellExecuteW which triggers the UAC prompt
+        # when the installer's manifest requires admin rights.
+        # Do NOT pass /S (silent) — the UAC dialog and NSIS UI must be visible.
+        import os
+
+        os.startfile(str(setup_exe))
         self.finished.emit(
             True,
             _(
