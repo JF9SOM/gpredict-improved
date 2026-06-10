@@ -101,13 +101,16 @@ class RadioControlWidget(QWidget):
         xpdr_tl_row.setSpacing(4)
         xpdr_tl_row.addWidget(self._xpdr_combo, stretch=1)
         self._tune_btn = QPushButton(_("T"))
-        self._tune_btn.setFixedWidth(28)
+        self._tune_btn.setFixedWidth(56)
         self._tune_btn.setToolTip(_("Tune: reset downlink/uplink to center of transponder band"))
         self._tune_btn.clicked.connect(self.tune_requested.emit)
         self._lock_btn = QPushButton(_("L"))
-        self._lock_btn.setFixedWidth(28)
+        self._lock_btn.setFixedWidth(56)
         self._lock_btn.setToolTip(_("Lock: link uplink to downlink (inverting transponder aware)"))
         self._lock_btn.setCheckable(True)
+        self._lock_btn.setStyleSheet(
+            "QPushButton:checked { background-color: #f1c40f; color: #000; font-weight: bold; }"
+        )
         self._lock_btn.toggled.connect(self.lock_changed.emit)
         xpdr_tl_row.addWidget(self._tune_btn)
         xpdr_tl_row.addWidget(self._lock_btn)
