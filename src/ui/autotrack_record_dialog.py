@@ -149,46 +149,7 @@ class AutotrackRecordDialog(QDialog):
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
 
-        # Help text
-        help_label = QLabel(_AUTOTRACK_HELP)
-        help_label.setWordWrap(True)
-        help_label.setStyleSheet("color: gray; font-size: 11px;")
-        outer.addWidget(help_label)
-
-        # ── Autotrack control row ─────────────────────────────────────
-        ctrl_group = QGroupBox(_("Autotrack Control"))
-        ctrl_form = QFormLayout(ctrl_group)
-        ctrl_form.setSpacing(6)
-
-        self._at_sel_combo = QComboBox()
-        self._at_sel_combo.setEnabled(False)
-        self._at_sel_combo.currentIndexChanged.connect(self._on_sel_combo_changed)
-        ctrl_form.addRow(_("List:"), self._at_sel_combo)
-
-        self._at_enable_cb = QCheckBox(_("Enable Autotrack"))
-        self._at_enable_cb.setEnabled(False)
-        self._at_enable_cb.toggled.connect(self._on_enable_toggled)
-        ctrl_form.addRow(self._at_enable_cb)
-
-        self._at_status_label = QLabel("—")
-        self._at_status_label.setWordWrap(True)
-        ctrl_form.addRow(_("Status:"), self._at_status_label)
-
-        outer.addWidget(ctrl_group)
-
-        # ── Record section ────────────────────────────────────────────
-        rec_group = QGroupBox(_("Recording (SDR)  — starts at AOS, stops at LOS"))
-        rec_layout = QHBoxLayout(rec_group)
-        self._audio_rec_cb = QCheckBox(_("Audio Record (MP3)"))
-        self._audio_rec_cb.toggled.connect(self.audio_record_changed.emit)
-        self._iq_rec_cb = QCheckBox(_("IQ Record"))
-        self._iq_rec_cb.toggled.connect(self.iq_record_changed.emit)
-        rec_layout.addWidget(self._audio_rec_cb)
-        rec_layout.addWidget(self._iq_rec_cb)
-        rec_layout.addStretch()
-        outer.addWidget(rec_group)
-
-        # ── List management ───────────────────────────────────────────
+        # ── Autotrack Lists (top) ─────────────────────────────────────
         mgmt_group = QGroupBox(_("Autotrack Lists"))
         mgmt_layout = QHBoxLayout(mgmt_group)
 
@@ -246,6 +207,50 @@ class AutotrackRecordDialog(QDialog):
         mgmt_layout.addLayout(right)
 
         outer.addWidget(mgmt_group)
+
+        # ── Autotrack Control ─────────────────────────────────────────
+        ctrl_group = QGroupBox(_("Autotrack Control"))
+        ctrl_form = QFormLayout(ctrl_group)
+        ctrl_form.setSpacing(6)
+
+        self._at_sel_combo = QComboBox()
+        self._at_sel_combo.setEnabled(False)
+        self._at_sel_combo.currentIndexChanged.connect(self._on_sel_combo_changed)
+        ctrl_form.addRow(_("List:"), self._at_sel_combo)
+
+        enable_row = QHBoxLayout()
+        self._at_enable_cb = QCheckBox(_("Enable Autotrack"))
+        self._at_enable_cb.setEnabled(False)
+        self._at_enable_cb.toggled.connect(self._on_enable_toggled)
+        enable_row.addWidget(self._at_enable_cb)
+        enable_row.addStretch()
+        help_btn = QPushButton("?")
+        help_btn.setFixedSize(22, 22)
+        help_btn.setFlat(True)
+        help_btn.setToolTip(_AUTOTRACK_HELP)
+        help_btn.setStyleSheet(
+            "QPushButton { border: 1px solid gray; border-radius: 11px; font-weight: bold; }"
+        )
+        enable_row.addWidget(help_btn)
+        ctrl_form.addRow(enable_row)
+
+        self._at_status_label = QLabel("—")
+        self._at_status_label.setWordWrap(True)
+        ctrl_form.addRow(_("Status:"), self._at_status_label)
+
+        outer.addWidget(ctrl_group)
+
+        # ── Recording ─────────────────────────────────────────────────
+        rec_group = QGroupBox(_("Recording (SDR)  — starts at AOS, stops at LOS"))
+        rec_layout = QHBoxLayout(rec_group)
+        self._audio_rec_cb = QCheckBox(_("Audio Record (MP3)"))
+        self._audio_rec_cb.toggled.connect(self.audio_record_changed.emit)
+        self._iq_rec_cb = QCheckBox(_("IQ Record"))
+        self._iq_rec_cb.toggled.connect(self.iq_record_changed.emit)
+        rec_layout.addWidget(self._audio_rec_cb)
+        rec_layout.addWidget(self._iq_rec_cb)
+        rec_layout.addStretch()
+        outer.addWidget(rec_group)
 
         # Close button
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
