@@ -71,6 +71,27 @@ Access from any smartphone or tablet on your local network — no app install ne
 - Manual TLE and transponder entries — never overwritten by auto-sync
 - Custom Favourite groups (configurable names, up to N groups)
 
+### Auto Fetch Schedule
+
+GPredict-Improved fetches TLE and transponder data automatically in the background.
+**Manual updates are not normally required.**
+Use manual sync only when you need the very latest data immediately (e.g. right before a pass of a newly launched satellite).
+
+| Data | Interval |
+|---|---|
+| Space Stations (ISS, CSS…) | every **1 hour** |
+| Amateur Satellites | every **2 hours** |
+| CubeSats | every **4 hours** |
+| Weather Satellites | every **6 hours** |
+| Earth Observation / Science | every **12 hours** |
+| Provisional TLEs (NORAD ≥ 90000) | every **12 hours** |
+| Active TLE fallback (NORAD 10000–89999) | every **24 hours** |
+| AMSAT operational status | every **24 hours** |
+
+SATNOGS transponder data is fetched automatically on first launch.
+After that, use **Satellite → Sync SATNOGS** to refresh manually if needed.
+A summary is also available in the app under **Help → Auto Fetch Rules**.
+
 ### In-app Updaters
 - **Help → Check for Updates** — downloads and installs the latest release automatically
 - **Help → Hamlib Update** — upgrades the bundled Hamlib without reinstalling the app

@@ -71,6 +71,27 @@ GPredict-Improved は、長年アマチュア無線家に愛用されてきた
 - 手動入力のTLE・トランスポンダーは自動同期で絶対に上書きされない
 - カスタムFavoriteグループ（グループ名・数を自由に設定）
 
+### 自動フェッチスケジュール
+
+GPredict-ImprovedはTLEおよびトランスポンダーデータをバックグラウンドで自動的に取得・更新します。
+**通常、手動更新は不要です。**
+手動更新は、打ち上げたばかりの衛星のパス直前など、直ちに最新データが必要な場合のみ行ってください。
+
+| データ種別 | 更新間隔 |
+|---|---|
+| Space Stations（ISS・CSS等） | **1時間**ごと |
+| Amateur Satellites（アマチュア衛星） | **2時間**ごと |
+| CubeSats | **4時間**ごと |
+| Weather Satellites（気象衛星） | **6時間**ごと |
+| Earth Observation / Science（地球観測・科学衛星） | **12時間**ごと |
+| Provisional TLEs（NORAD ≥ 90000の仮ID衛星） | **12時間**ごと |
+| Active TLE fallback（NORAD 10000–89999） | **24時間**ごと |
+| AMSAT運用状況 | **24時間**ごと |
+
+SATNOGSトランスポンダーデータは初回起動時に自動取得されます。
+以降は必要に応じて **Satellite → Sync SATNOGS** で手動更新してください。
+アプリ内では **Help → Auto Fetch Rules** でこのスケジュールを確認できます。
+
 ### アプリ内アップデーター
 - **Help → Check for Updates** — 最新リリースを自動ダウンロードしてインストール
 - **Help → Hamlib Update** — アプリを再インストールせずにHamlibのみアップグレード

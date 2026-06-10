@@ -196,6 +196,24 @@ CREATE TABLE tle_history (
 - `manual_override=True` のレコードはSATNOGS上書きから保護
 - オフライン時はキャッシュで継続動作
 
+### 自動フェッチスケジュール（APScheduler）
+
+アプリはバックグラウンドでTLE・トランスポンダーを自動更新する。**手動更新は通常不要。**
+ユーザーは **Help → Auto Fetch Rules** でこのスケジュールを確認できる。
+
+| データ種別 | 更新間隔 | APSchedulerジョブ |
+|---|---|---|
+| Space Stations（ISS・CSS等） | 1時間ごと | `_refresh_tle_sync`（各ソースの`update_interval_hours`を参照） |
+| Amateur Satellites | 2時間ごと | 同上 |
+| CubeSats | 4時間ごと | 同上 |
+| Weather Satellites | 6時間ごと | 同上 |
+| Earth Observation / Science | 12時間ごと | 同上 |
+| Provisional TLEs（NORAD ≥ 90000） | 12時間ごと | `provisional_tle_refresh` |
+| Active TLE fallback（NORAD 10000–89999） | 24時間ごと | `active_tle_refresh` |
+| AMSAT運用状況 | 24時間ごと | `amsat_refresh` |
+
+SATNOGSトランスポンダーは**初回起動時に自動取得**。以降は `Satellite → Sync SATNOGS` で手動更新。
+
 ### TransmitterManager (src/data/)
 - SATNOGS取得データと手動追加データを統合管理
 - 手動追加データはSATNOGSより優先（`manual_override`フラグ）
