@@ -92,19 +92,25 @@ class SdrControlWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _set_sdr_connected(self, connected: bool) -> None:
-        """Enable/disable all panels except the file-manager buttons."""
+        """Enable/disable controls except the file-manager buttons.
+
+        Panels are kept enabled so Qt parent-disables don't block child widgets.
+        Instead, each child widget is enabled/disabled individually, skipping
+        the two file-manager buttons which must remain accessible at all times.
+        """
+        _always_enabled = {self._open_folder_btn, self._open_audio_folder_btn}
         for panel in (
             self._spectrum_panel,
             self._tune_panel,
             self._demod_panel,
             self._recorder_panel,
         ):
-            panel.setEnabled(connected)
-
-        # File-manager buttons remain accessible regardless of SDR connection
-        # so users can browse/delete recordings at any time.
-        self._open_folder_btn.setEnabled(True)
-        self._open_audio_folder_btn.setEnabled(True)
+            for child in panel.findChildren(QWidget):
+                if child not in _always_enabled:
+                    child.setEnabled(connected)
+            # Keep the group-box title/frame itself enabled so it renders normally
+            # (disabling the QGroupBox would grey out the title text too, which is fine,
+            # but more importantly it would re-disable our exempt children above).
 
     def set_pipeline(self, pipeline: Any) -> None:  # SDRPipeline | None
         """Attach or detach the active SDRPipeline."""
