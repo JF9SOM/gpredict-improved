@@ -145,13 +145,11 @@ class AutotrackRecordDialog(QDialog):
 
     def get_timer_start_utc(self) -> datetime:
         """Return the configured start time as UTC datetime."""
-        qdt = self._timer_start_dt.dateTime()
-        local_dt = qdt.toPython()  # type: ignore[attr-defined]
-        # toPython() returns a naive datetime in local time; attach local tz then convert
-        import time as _time  # noqa: PLC0415
+        from PySide6.QtCore import QTimeZone  # noqa: PLC0415
 
-        offset = timedelta(seconds=-_time.timezone if not _time.daylight else -_time.altzone)
-        return (local_dt - offset).replace(tzinfo=UTC)
+        qdt = self._timer_start_dt.dateTime().toTimeZone(QTimeZone.utc())
+        ts = qdt.toSecsSinceEpoch()
+        return datetime.fromtimestamp(ts, tz=UTC)
 
     def get_timer_stop_utc(self) -> datetime:
         """Return the configured stop time (start + duration) as UTC datetime."""
