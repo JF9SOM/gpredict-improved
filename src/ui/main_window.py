@@ -555,10 +555,6 @@ class MainWindow(QMainWindow):
                 self._tz_utc_action.triggered.connect(lambda: self._on_time_zone_changed(True))
                 self._tz_local_action.triggered.connect(lambda: self._on_time_zone_changed(False))
 
-            view_menu.addSeparator()
-            view_menu.addAction(_("Radar"), lambda: self._tab_widget.setCurrentIndex(1))
-            view_menu.addAction(_("Pass Chart"), lambda: self._tab_widget.setCurrentIndex(2))
-
         # Help
         help_menu = mb.addMenu(_("Help"))
         if help_menu:
