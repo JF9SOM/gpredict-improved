@@ -192,13 +192,13 @@ jobs:
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           files: |
             dist/GPredict-Improved-x86_64.AppImage
             ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
+          overwrite_files: true
 
   build-windows:
     name: Build Windows (.zip)
@@ -415,13 +415,13 @@ jobs:
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           files: |
             dist/GPredict-Improved-Setup.exe
             ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
+          overwrite_files: true
 
   build-macos:
     name: Build macOS (.dmg)
@@ -562,10 +562,10 @@ jobs:
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           files: |
             dist/GPredict-Improved.dmg
             ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
+          overwrite_files: true
