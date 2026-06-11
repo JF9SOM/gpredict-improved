@@ -58,7 +58,7 @@ _BREW_PACKAGES: dict[str, list[str]] = {
 
 # Windows: SoapySDR is bundled in the installer (extracted from conda-forge in CI).
 # Zadig is still needed to switch RTL-SDR to the WinUSB driver.
-_ZADIG_URL = "https://zadig.akeo.ie/downloads/zadig_2.9.exe"
+_ZADIG_URL = "https://zadig.akeo.ie/"
 
 
 class _InstallWorker(QThread):
@@ -292,7 +292,7 @@ class SdrInstallDialog(QDialog):
                         "SoapySDR is bundled in this installer — no separate install needed.\n\n"
                         "For RTL-SDR only: the WinUSB driver must be applied once with Zadig.\n"
                         "1. Plug in your RTL-SDR dongle.\n"
-                        "2. Click 'Download & Run Zadig' below.\n"
+                        "2. Click 'Open Zadig Website' below, download and run Zadig.\n"
                         "3. In Zadig: select your RTL-SDR device"
                         " → driver: WinUSB → Install Driver.\n"
                         "4. Restart GPredict-Improved."
@@ -318,10 +318,10 @@ class SdrInstallDialog(QDialog):
             self._install_btn.setVisible(False)
 
     def _add_windows_buttons(self, needs_zadig: bool) -> None:
-        """Add Zadig download button for RTL-SDR WinUSB driver installation."""
+        """Add Zadig website button for RTL-SDR WinUSB driver installation."""
         if needs_zadig:
-            zadig_btn = QPushButton(_("Download & Run Zadig (RTL-SDR WinUSB driver)"))
-            zadig_btn.clicked.connect(lambda: self._download_and_run(_ZADIG_URL))
+            zadig_btn = QPushButton(_("Open Zadig Website (download WinUSB driver for RTL-SDR)"))
+            zadig_btn.clicked.connect(lambda: self._open_url(_ZADIG_URL))
             self._status_layout.addWidget(zadig_btn)
 
     # ------------------------------------------------------------------
