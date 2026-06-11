@@ -434,15 +434,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
 
           # --- Step 4: copy outputs into soapy-win64 bundle directories ---
-          $builtDll = Get-ChildItem "$PWD\SoapyPlutoSDR-build" -Recurse -Filter "SoapyPlutoSDR.dll" |
+          # Note: SoapyPlutoSDR builds as "PlutoSDRSupport.dll" (not "SoapyPlutoSDR.dll").
+          # SoapySDR loads all DLLs from SOAPY_SDR_PLUGIN_PATH regardless of filename.
+          $builtDll = Get-ChildItem "$PWD\SoapyPlutoSDR-build" -Recurse -Filter "PlutoSDRSupport.dll" |
                       Select-Object -First 1
-          if (-not $builtDll) { throw "SoapyPlutoSDR.dll not found after build" }
+          if (-not $builtDll) { throw "PlutoSDRSupport.dll not found after build" }
           Copy-Item $builtDll.FullName "soapy-win64\modules\" -Force
           Copy-Item "$depsLib\bin\libiio.dll" "soapy-win64\bin\" -Force
 
           Write-Host "=== PlutoSDR bundle result ==="
-          Write-Host "SoapyPlutoSDR.dll: $(Test-Path 'soapy-win64\modules\SoapyPlutoSDR.dll')"
-          Write-Host "libiio.dll:        $(Test-Path 'soapy-win64\bin\libiio.dll')"
+          Write-Host "PlutoSDRSupport.dll: $(Test-Path 'soapy-win64\modules\PlutoSDRSupport.dll')"
+          Write-Host "libiio.dll:          $(Test-Path 'soapy-win64\bin\libiio.dll')"
 
       - name: Disable Windows Defender and install NSIS
         shell: pwsh
