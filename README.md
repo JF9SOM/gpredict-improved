@@ -157,11 +157,31 @@ python -m src.main
 5. Click **Connect** — the **SDR Control** tab becomes active
 6. Select a satellite and transponder — mode is set automatically
 
-> **SoapySDR** must be installed separately (system package).
-> On Linux: `sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf`
->
-> On all platforms, use **Help → SDR Device Installation** in the app for guided installation
-> (automatic on Linux/macOS, semi-automatic on Windows via PothosSDR + Zadig).
+### SoapySDR — Platform Notes
+
+| Platform | SoapySDR | Bundled device modules |
+|----------|----------|------------------------|
+| **Windows** | ✅ Bundled in installer | RTL-SDR, HackRF One, Airspy, Airspy HF+ |
+| **Linux** | Requires system package | — |
+| **macOS** | Requires Homebrew | — |
+
+**Windows** — SoapySDR and the device modules listed above are included in the installer.
+For RTL-SDR you still need to apply the WinUSB driver once with **Zadig** (one-time, free).
+Use **Help → SDR Device Installation** for step-by-step instructions.
+
+**Linux** — install via apt:
+```bash
+sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf \
+                 soapysdr-module-airspy
+```
+
+**macOS** — install via Homebrew:
+```bash
+brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy
+```
+
+> Other SoapySDR-compatible devices (SDRplay, LimeSDR, PlutoSDR, etc.) may work on
+> Linux/macOS if the corresponding module is installed, but are not bundled on Windows.
 
 ---
 
@@ -219,13 +239,17 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture reference used during devel
 
 ## Hardware Verified
 
-| Device | Type | Notes |
-|--------|------|-------|
-| Yaesu FTX-1F | Transceiver | Hamlib 4.7.1 model 1051, NET Control, Doppler ✓ |
-| Yaesu FT-991AM | Transceiver | Hamlib 4.7.1 model 1036, NET Control, Doppler ✓ |
-| HackRF One | SDR | SoapyHackRF, NFM/USB/CW, Spectrum, Bias-T ✓ |
-| RTL-SDR | SDR | SoapyRTLSDR, basic operation ✓ |
-| FTX-1F + RTL-SDR | Dual-rig | Passband Tune + Lock ✓ |
+| Device | Type | Windows | Linux/macOS | Notes |
+|--------|------|---------|-------------|-------|
+| Yaesu FTX-1F | Transceiver | ✓ | ✓ | Hamlib 4.7.1 model 1051, NET Control, Doppler |
+| Yaesu FT-991AM | Transceiver | ✓ | ✓ | Hamlib 4.7.1 model 1036, NET Control, Doppler |
+| RTL-SDR | SDR | ✓ bundled* | ✓ | SoapyRTLSDR, spectrum, NFM demod |
+| HackRF One | SDR | ✓ bundled | ✓ | SoapyHackRF, NFM/USB/CW, Spectrum, Bias-T |
+| Airspy R2 / Mini | SDR | ✓ bundled | ✓ | SoapyAirspy, spectrum, demod |
+| Airspy HF+ | SDR | ✓ bundled | ✓ | SoapyAirspyHF, HF/VHF spectrum, demod |
+| FTX-1F + RTL-SDR | Dual-rig | ✓ | ✓ | Passband Tune + Lock verified |
+
+\* RTL-SDR on Windows requires a one-time WinUSB driver install via Zadig (see **Help → SDR Device Installation**).
 
 ---
 

@@ -720,8 +720,10 @@ sudo usermod -aG dialout $USER
 - **実動作確認済みリグ・デバイス**（2026-06-10）
   - FTX-1F（Hamlib 4.7.1 モデル1051、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
   - FT-991AM（Hamlib 4.7.1 モデル1036、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
-  - HackRF One（SoapyHackRF）: NFM/USB/CW 復調・スペクトラム・Bias-T 動作確認済み
-  - RTL-SDR（SoapyRTLSDR）: 基本動作確認済み
+  - HackRF One（SoapyHackRF）: NFM/USB/CW 復調・スペクトラム・Bias-T 動作確認済み（Linux/Windows）
+  - RTL-SDR（SoapyRTLSDR）: 基本動作確認済み（Linux/Windows）
+  - Airspy R2・Mini（SoapyAirspy）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
+  - Airspy HF+（SoapyAirspyHF）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
   - Rig 1（FTX-1F）+ Rig 2（RTL-SDR）デュアル構成: Passband Tune + Lock 連動動作確認済み
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -1332,16 +1334,34 @@ Phase 1 後も TLE なしの `10000-89999` 衛星を個別照会：
 
 ### バックエンド
 
-**SoapySDR** を採用。RTL-SDR・HackRF・AirSpy 等の多機種対応。
-- Python binding は pip 非対応 → システムパッケージ経由でインストール
+**SoapySDR** を採用。RTL-SDR・HackRF・Airspy 等の多機種対応。
+- Python binding は pip 非対応 → システムパッケージ経由またはバンドル版を使用
 - `SoapySDR` が import できない場合は SDR 機能を自動非表示（graceful degradation）
 - デバイス列挙: `SoapySDR.Device.enumerate()` / 未インストール時は `pyusb` で USB VID/PID スキャン
 
-| OS | インストール方法 |
+#### Windows バンドル構成（v0.1.4 以降・CI で conda-forge から自動取得）
+
+Windows インストーラーには SoapySDR 0.8.1 と以下のデバイスモジュールが同梱されている。
+ユーザーは追加インストール不要。RTL-SDR のみ Zadig で WinUSB ドライバを一度当てる必要がある。
+
+| 同梱モジュール | 対応デバイス | Zadig 必要 |
+|---|---|---|
+| SoapyRTLSDR | RTL-SDR（RTL2832U 系全般） | ✓ 一回限り |
+| SoapyHackRF | HackRF One | — |
+| SoapyAirspy | Airspy R2 / Airspy Mini | — |
+| SoapyAirspyHF | Airspy HF+ Discovery | — |
+
+バンドル DLL の配置: core DLL + Python binding は `_MEIPASS/`、モジュール DLL は `_MEIPASS/soapy_modules/`。
+起動時に `SOAPY_SDR_PLUGIN_PATH=soapy_modules/` をセット（`src/main.py` の frozen ブロック）。
+
+conda-forge パッケージ取得スクリプト: `scripts/extract_soapy_conda.py`（CI の Windows ビルドステップで実行）。
+
+#### Linux / macOS インストール方法
+
+| OS | コマンド |
 |---|---|
-| Ubuntu | `sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf` |
-| Windows | PothosSDR インストーラー（公式）+ RTL-SDR は Zadig で WinUSB ドライバ適用 |
-| macOS | `brew install soapysdr soapyrtlsdr soapyhackrf` |
+| Ubuntu | `sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf soapysdr-module-airspy` |
+| macOS | `brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy` |
 
 **既存環境への対応**: `SoapySDR.Device.enumerate()` が成功すれば即 Ready。追加作業なし。
 **排他制御**: SoapySDR デバイスは 1 プロセス占有。Ground-Station 等と同時使用不可。
