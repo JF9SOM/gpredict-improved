@@ -1363,6 +1363,78 @@ conda-forge パッケージ取得スクリプト: `scripts/extract_soapy_conda.p
 | Ubuntu | `sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf soapysdr-module-airspy` |
 | macOS | `brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy` |
 
+---
+
+#### PlutoSDR（ADALM-Pluto）Windows バンドル追加方針（未実装・実装予定）
+
+**背景**: SoapyPlutoSDR は conda-forge に存在しないためソースビルドが必要。
+
+##### 依存チェーンと入手方法
+
+```
+conda-forge libiio (DLL + headers) ─┐
+                                     ├→ libad9361（CMake ソースビルド・オプション）─┐
+conda-forge SoapySDR (headers) ──────┤                                               ├→ SoapyPlutoSDR.dll
+                                     └───────────────────────────────────────────────┘
+```
+
+| ライブラリ | 入手方法 | 備考 |
+|---|---|---|
+| libiio | conda-forge win-64 に v0.26 あり | DLL + ヘッダーをそのまま流用 |
+| libad9361 | `analogdevicesinc/libad9361-iio` ソースビルド | SoapyPlutoSDR では **オプション** |
+| SoapyPlutoSDR | `pothosware/SoapyPlutoSDR` ソースビルド | CMake、MSVC でビルド |
+
+##### libad9361 の役割（オプションである理由）
+
+`libad9361` は低サンプルレート時に AD9361 チップへ FIR フィルターを自動ロードするライブラリ。
+
+| 状態 | 最低サンプルレート | 影響 |
+|---|---|---|
+| libad9361 **あり** | 約 65 kHz（25 MHz ÷ 384） | 低レートでも FIR で品質維持 |
+| libad9361 **なし** | 約 260 kHz（25 MHz ÷ 96） | 260 kHz 以上なら通常動作 |
+
+**アマチュア衛星用途（FM/SSB/CW・IQ録音）は 260 kHz 以上で十分なため、なしでも実用上問題なし。**
+まず libad9361 なしでビルドして動作確認し、必要なら後で追加する。
+
+##### CI.yml への追加方針
+
+既存の「Bundle SoapySDR for Windows」ステップの後に以下を追加：
+
+**Step A: libiio を conda-forge から取得**
+- `scripts/extract_soapy_conda.py` のパッケージリストに libiio を追加
+- DLL → `soapy-win64/bin/`、ヘッダー → `libiio-dev/include/` に展開
+
+**Step B: SoapyPlutoSDR を MSVC でビルド**
+```powershell
+git clone https://github.com/pothosware/SoapyPlutoSDR
+cmake -G "Visual Studio 17 2022" -A x64 `
+      -DSoapySDR_DIR=<soapysdr cmake dir> `
+      -DLibIIO_INCLUDE_DIRS=libiio-dev/include `
+      -DLibIIO_LIBRARIES=soapy-win64/bin/libiio.dll
+cmake --build . --config Release
+# 出力: SoapyPlutoSDR.dll → soapy-win64/modules/
+```
+
+**Step C: PyInstaller spec に追加**
+- `libiio.dll` → `soapy-win64/bin/`（既存の bin 収集で自動取得）
+- `SoapyPlutoSDR.dll` → `soapy-win64/modules/`（既存の modules 収集で自動取得）
+
+##### コンパイラ選定理由（MSVC）
+
+conda-forge の libiio が MSVC ビルド。SoapySDR プラグインは `extern "C"` C ABI のため
+MSVC/MinGW 混在は問題ないが、libiio との ABI 一致を優先して MSVC を選択。
+（Hamlib で SWIG + MinGW が必要だったような複雑さはない）
+
+##### ユーザー側の追加作業
+
+- USB 接続時: WinUSB ドライバーを Zadig で適用（RTL-SDR と同様・一回限り）
+- ネットワーク接続時（192.168.2.1）: 追加ドライバー不要
+
+##### BladeRF について
+
+libbladerf は conda-forge win-64 に存在するが SoapyBladeRF はなし。
+PlutoSDR 対応完了後に同様のアプローチで追加を検討する。
+
 **既存環境への対応**: `SoapySDR.Device.enumerate()` が成功すれば即 Ready。追加作業なし。
 **排他制御**: SoapySDR デバイスは 1 プロセス占有。Ground-Station 等と同時使用不可。
 
