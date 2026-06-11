@@ -724,6 +724,7 @@ sudo usermod -aG dialout $USER
   - RTL-SDR（SoapyRTLSDR）: 基本動作確認済み（Linux/Windows）
   - Airspy R2・Mini（SoapyAirspy）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
   - Airspy HF+（SoapyAirspyHF）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
+  - ADALM-Pluto（SoapyPlutoSDR + libiio）: Windows バンドル同梱（CI にて MSVC ソースビルド）・実機未確認
   - Rig 1（FTX-1F）+ Rig 2（RTL-SDR）デュアル構成: Passband Tune + Lock 連動動作確認済み
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -1342,19 +1343,23 @@ Phase 1 後も TLE なしの `10000-89999` 衛星を個別照会：
 #### Windows バンドル構成（v0.1.4 以降・CI で conda-forge から自動取得）
 
 Windows インストーラーには SoapySDR 0.8.1 と以下のデバイスモジュールが同梱されている。
-ユーザーは追加インストール不要。RTL-SDR のみ Zadig で WinUSB ドライバを一度当てる必要がある。
+ユーザーは追加インストール不要。RTL-SDR と ADALM-Pluto（USB接続時のみ）は Zadig で WinUSB ドライバを一度当てる必要がある。
 
-| 同梱モジュール | 対応デバイス | Zadig 必要 |
-|---|---|---|
-| SoapyRTLSDR | RTL-SDR（RTL2832U 系全般） | ✓ 一回限り |
-| SoapyHackRF | HackRF One | — |
-| SoapyAirspy | Airspy R2 / Airspy Mini | — |
-| SoapyAirspyHF | Airspy HF+ Discovery | — |
+| 同梱モジュール | 対応デバイス | Zadig 必要 | 入手方法 |
+|---|---|---|---|
+| SoapyRTLSDR | RTL-SDR（RTL2832U 系全般） | ✓ 一回限り | conda-forge |
+| SoapyHackRF | HackRF One | — | conda-forge |
+| SoapyAirspy | Airspy R2 / Airspy Mini | — | conda-forge |
+| SoapyAirspyHF | Airspy HF+ Discovery | — | conda-forge |
+| SoapyPlutoSDR | ADALM-Pluto | USB時のみ | MSVC ソースビルド（CI） |
+
+ADALM-Pluto はネットワーク接続（IP: 192.168.2.1）でも動作し、その場合 Zadig 不要。
 
 バンドル DLL の配置: core DLL + Python binding は `_MEIPASS/`、モジュール DLL は `_MEIPASS/soapy_modules/`。
 起動時に `SOAPY_SDR_PLUGIN_PATH=soapy_modules/` をセット（`src/main.py` の frozen ブロック）。
 
 conda-forge パッケージ取得スクリプト: `scripts/extract_soapy_conda.py`（CI の Windows ビルドステップで実行）。
+SoapyPlutoSDR は conda-forge に存在しないため CI で MSVC ソースビルドし `soapy-win64/modules/` に配置する。
 
 #### Linux / macOS インストール方法
 
@@ -1365,9 +1370,9 @@ conda-forge パッケージ取得スクリプト: `scripts/extract_soapy_conda.p
 
 ---
 
-#### PlutoSDR（ADALM-Pluto）Windows バンドル追加方針（未実装・実装予定）
+#### PlutoSDR（ADALM-Pluto）Windows バンドル実装メモ（v0.1.5 で実装済み）
 
-**背景**: SoapyPlutoSDR は conda-forge に存在しないためソースビルドが必要。
+**背景**: SoapyPlutoSDR は conda-forge に存在しないためソースビルドが必要。CI の "Build SoapyPlutoSDR for Windows" ステップで実装済み。
 
 ##### 依存チェーンと入手方法
 

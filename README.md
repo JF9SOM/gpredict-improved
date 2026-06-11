@@ -161,12 +161,13 @@ python -m src.main
 
 | Platform | SoapySDR | Bundled device modules |
 |----------|----------|------------------------|
-| **Windows** | ✅ Bundled in installer | RTL-SDR, HackRF One, Airspy, Airspy HF+ |
+| **Windows** | ✅ Bundled in installer | RTL-SDR, HackRF One, Airspy, Airspy HF+, ADALM-Pluto |
 | **Linux** | Requires system package | — |
 | **macOS** | Requires Homebrew | — |
 
 **Windows** — SoapySDR and the device modules listed above are included in the installer.
 For RTL-SDR you still need to apply the WinUSB driver once with **Zadig** (one-time, free).
+ADALM-Pluto can be used over USB (requires WinUSB driver via Zadig) or network (192.168.2.1, no driver needed).
 Use **Help → SDR Device Installation** for step-by-step instructions.
 
 **Linux** — install via apt:
@@ -180,8 +181,8 @@ sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf 
 brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy
 ```
 
-> Other SoapySDR-compatible devices (SDRplay, LimeSDR, PlutoSDR, etc.) may work on
-> Linux/macOS if the corresponding module is installed, but are not bundled on Windows.
+> Other SoapySDR-compatible devices (SDRplay, LimeSDR, etc.) may work on Linux/macOS
+> if the corresponding module is installed, but are not bundled on Windows.
 
 ---
 
@@ -247,9 +248,11 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture reference used during devel
 | HackRF One | SDR | ✓ bundled | ✓ | SoapyHackRF, NFM/USB/CW, Spectrum, Bias-T |
 | Airspy R2 / Mini | SDR | ✓ bundled | ✓ | SoapyAirspy, spectrum, demod |
 | Airspy HF+ | SDR | ✓ bundled | ✓ | SoapyAirspyHF, HF/VHF spectrum, demod |
+| ADALM-Pluto | SDR | ✓ bundled† | — | SoapyPlutoSDR, spectrum, demod |
 | FTX-1F + RTL-SDR | Dual-rig | ✓ | ✓ | Passband Tune + Lock verified |
 
 \* RTL-SDR on Windows requires a one-time WinUSB driver install via Zadig (see **Help → SDR Device Installation**).
+† ADALM-Pluto: Windows bundled (SoapyPlutoSDR + libiio). USB connection needs WinUSB via Zadig; network (192.168.2.1) needs no driver. Unverified on hardware.
 
 ---
 

@@ -374,6 +374,54 @@ jobs:
           print('Detected devices:', len(devs))
           "
 
+      - name: Build SoapyPlutoSDR for Windows (ADALM-Pluto support)
+        shell: pwsh
+        run: |
+          # Locate conda (Miniconda is pre-installed on GitHub Actions Windows runners)
+          $condaExe = $null
+          foreach ($p in @(
+            "$env:CONDA\Scripts\conda.exe",
+            "C:\Miniconda3\Scripts\conda.exe",
+            "C:\Miniconda\Scripts\conda.exe"
+          )) {
+            if (Test-Path $p) { $condaExe = $p; break }
+          }
+          if (-not $condaExe) { throw "conda not found on runner" }
+          Write-Host "Using conda: $condaExe"
+
+          # Create an isolated prefix with libiio + SoapySDR headers + cmake for building
+          $depsPrefix = "$PWD\pluto-deps"
+          & $condaExe create -y -q --prefix $depsPrefix -c conda-forge --override-channels `
+              "soapysdr=0.8.1" "libiio>=0.26" "cmake>=3.24"
+          if ($LASTEXITCODE -ne 0) { throw "conda create failed" }
+
+          $depsLib = "$depsPrefix\Library"
+
+          # Clone SoapyPlutoSDR source
+          git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git "$PWD\SoapyPlutoSDR-src"
+          if ($LASTEXITCODE -ne 0) { throw "git clone SoapyPlutoSDR failed" }
+
+          # Configure with MSVC (no libad9361 -- not needed for amateur satellite sample rates)
+          cmake -S "$PWD\SoapyPlutoSDR-src" -B "$PWD\SoapyPlutoSDR-build" `
+              -G "Visual Studio 17 2022" -A x64 `
+              "-DCMAKE_PREFIX_PATH=$depsLib" `
+              "-DCMAKE_BUILD_TYPE=Release"
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+
+          cmake --build "$PWD\SoapyPlutoSDR-build" --config Release
+          if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+
+          # Copy plugin DLL and libiio runtime into the soapy-win64 bundle directories
+          $builtDll = Get-ChildItem "$PWD\SoapyPlutoSDR-build" -Recurse -Filter "SoapyPlutoSDR.dll" |
+                      Select-Object -First 1
+          if (-not $builtDll) { throw "SoapyPlutoSDR.dll not found after build" }
+          Copy-Item $builtDll.FullName "soapy-win64\modules\" -Force
+          Copy-Item "$depsLib\bin\libiio.dll" "soapy-win64\bin\" -Force
+
+          Write-Host "=== PlutoSDR bundle result ==="
+          Write-Host "SoapyPlutoSDR.dll: $(Test-Path 'soapy-win64\modules\SoapyPlutoSDR.dll')"
+          Write-Host "libiio.dll:        $(Test-Path 'soapy-win64\bin\libiio.dll')"
+
       - name: Disable Windows Defender and install NSIS
         shell: pwsh
         run: |
