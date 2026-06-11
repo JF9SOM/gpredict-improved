@@ -71,6 +71,24 @@ elif sys.platform == "linux":
             hamlib_binaries.append((str(_so), "."))
 
 # --------------------------------------------------------------------------- #
+# Collect binary-heavy packages that PyInstaller cannot auto-detect fully
+# --------------------------------------------------------------------------- #
+from PyInstaller.utils.hooks import collect_all  # noqa: E402
+
+extra_datas: list[tuple[str, str]] = []
+extra_binaries: list[tuple[str, str]] = []
+extra_hidden: list[str] = []
+
+for _pkg in ("scipy", "sounddevice", "lameenc"):
+    try:
+        _d, _b, _h = collect_all(_pkg)
+        extra_datas += _d
+        extra_binaries += _b
+        extra_hidden += _h
+    except Exception:
+        pass
+
+# --------------------------------------------------------------------------- #
 # Data files
 # --------------------------------------------------------------------------- #
 datas = [
@@ -172,16 +190,15 @@ hidden_imports = [
 a = Analysis(
     [str(SRC / "main.py")],
     pathex=[str(SRC)],
-    binaries=hamlib_binaries + soapy_binaries,
-    datas=datas,
-    hiddenimports=hidden_imports,
+    binaries=hamlib_binaries + soapy_binaries + extra_binaries,
+    datas=datas + extra_datas,
+    hiddenimports=hidden_imports + extra_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
         "tkinter",
         "matplotlib",
-        "scipy",
         "IPython",
         "jupyter",
         "notebook",
