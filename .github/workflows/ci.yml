@@ -377,7 +377,9 @@ jobs:
       - name: Build SoapyPlutoSDR for Windows (ADALM-Pluto support)
         shell: pwsh
         run: |
-          # Locate conda (Miniconda is pre-installed on GitHub Actions Windows runners)
+          # --- Step 1: get libiio DLL + headers via conda ---
+          # We only install libiio + soapysdr here; cmake is NOT installed via conda
+          # so the system cmake (which knows VS) is used later.
           $condaExe = $null
           foreach ($p in @(
             "$env:CONDA\Scripts\conda.exe",
@@ -389,29 +391,49 @@ jobs:
           if (-not $condaExe) { throw "conda not found on runner" }
           Write-Host "Using conda: $condaExe"
 
-          # Create an isolated prefix with libiio + SoapySDR headers + cmake for building
           $depsPrefix = "$PWD\pluto-deps"
           & $condaExe create -y -q --prefix $depsPrefix -c conda-forge --override-channels `
-              "soapysdr=0.8.1" "libiio>=0.26" "cmake>=3.24"
+              "soapysdr=0.8.1" "libiio>=0.26"
           if ($LASTEXITCODE -ne 0) { throw "conda create failed" }
 
           $depsLib = "$depsPrefix\Library"
 
-          # Clone SoapyPlutoSDR source
+          # --- Step 2: set up MSVC compiler environment via vcvarsall ---
+          # Use vswhere to locate VS, then run vcvarsall x64 and capture the env vars.
+          # This makes cl.exe and link.exe available to cmake's Ninja generator.
+          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vsWhere -latest -products * `
+              -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+              -property installationPath 2>$null
+          if (-not $vsInstall) { throw "Visual Studio with C++ tools not found via vswhere" }
+          $vcvarsall = Join-Path $vsInstall "VC\Auxiliary\Build\vcvarsall.bat"
+          Write-Host "vcvarsall: $vcvarsall"
+          $envLines = & cmd /c "`"$vcvarsall`" x64 && set" 2>&1
+          foreach ($line in $envLines) {
+            if ($line -match '^([^=]+)=(.*)$') {
+              [System.Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
+            }
+          }
+          Write-Host "MSVC environment ready. cl.exe: $((Get-Command cl.exe -ErrorAction SilentlyContinue)?.Source)"
+
+          # --- Step 3: clone + build SoapyPlutoSDR with Ninja (MSVC toolchain) ---
           git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git "$PWD\SoapyPlutoSDR-src"
           if ($LASTEXITCODE -ne 0) { throw "git clone SoapyPlutoSDR failed" }
 
-          # Configure with MSVC (no libad9361 -- not needed for amateur satellite sample rates)
-          cmake -S "$PWD\SoapyPlutoSDR-src" -B "$PWD\SoapyPlutoSDR-build" `
-              -G "Visual Studio 17 2022" -A x64 `
-              "-DCMAKE_PREFIX_PATH=$depsLib" `
-              "-DCMAKE_BUILD_TYPE=Release"
+          # Use system cmake (full path, avoids any conda cmake in PATH).
+          # Ninja generator: works without VS IDE; only needs cl.exe in PATH (set above).
+          # No libad9361 -- not needed for amateur satellite sample rates (>260 kHz).
+          $cmakeExe = "C:\Program Files\CMake\bin\cmake.exe"
+          & $cmakeExe -S "$PWD\SoapyPlutoSDR-src" -B "$PWD\SoapyPlutoSDR-build" `
+              -G Ninja `
+              "-DCMAKE_BUILD_TYPE=Release" `
+              "-DCMAKE_PREFIX_PATH=$depsLib"
           if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 
-          cmake --build "$PWD\SoapyPlutoSDR-build" --config Release
+          & $cmakeExe --build "$PWD\SoapyPlutoSDR-build"
           if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
 
-          # Copy plugin DLL and libiio runtime into the soapy-win64 bundle directories
+          # --- Step 4: copy outputs into soapy-win64 bundle directories ---
           $builtDll = Get-ChildItem "$PWD\SoapyPlutoSDR-build" -Recurse -Filter "SoapyPlutoSDR.dll" |
                       Select-Object -First 1
           if (-not $builtDll) { throw "SoapyPlutoSDR.dll not found after build" }
