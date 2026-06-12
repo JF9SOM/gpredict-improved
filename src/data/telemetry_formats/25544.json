@@ -1,0 +1,9 @@
+{
+  "norad": 25544,
+  "name": "ISS (ARISS)",
+  "callsign": "RS0ISS",
+  "modulation": "AFSK1200",
+  "ax25_pid": "0xF0",
+  "reference": "https://www.ariss.org/",
+  "fields": []
+}
