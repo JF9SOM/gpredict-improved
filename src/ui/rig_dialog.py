@@ -1107,16 +1107,212 @@ class _SdrSettingsPanel(QWidget):
             self._iq_dir_edit.setText(iq_dir)
 
 
+class _SoundCardPanel(QWidget):
+    """Sound Card tab panel (4th tab in Rig Settings).
+
+    Configures audio input/output devices for Communications features
+    (APRS, Telemetry, future FT4/SSTV).  Uses :mod:`sounddevice` to
+    enumerate host audio devices; falls back gracefully when the library
+    is not installed.
+
+    DB key written on OK: ``soundcard_settings`` — JSON dict.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._setup_ui()
+
+    # ------------------------------------------------------------------ #
+    # UI construction
+    # ------------------------------------------------------------------ #
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        try:
+            import sounddevice as sd
+
+            self._sd = sd
+            self._sd_available = True
+        except ImportError:
+            self._sd_available = False
+
+        if not self._sd_available:
+            msg = QLabel(
+                _("sounddevice is not installed.\nInstall it with:  pip install sounddevice")
+            )
+            msg.setWordWrap(True)
+            msg.setStyleSheet("color: orange; font-weight: bold;")
+            layout.addWidget(msg)
+            layout.addStretch()
+            return
+
+        # -- Device selection group --
+        dev_group = QGroupBox(_("Audio Devices"))
+        dev_form = QFormLayout(dev_group)
+
+        # Input device row
+        in_row = QHBoxLayout()
+        self._in_combo = QComboBox()
+        self._in_combo.setMinimumWidth(280)
+        in_row.addWidget(self._in_combo)
+        dev_form.addRow(_("Input device:"), in_row)
+
+        # Output device row
+        out_row = QHBoxLayout()
+        self._out_combo = QComboBox()
+        self._out_combo.setMinimumWidth(280)
+        out_row.addWidget(self._out_combo)
+        dev_form.addRow(_("Output device:"), out_row)
+
+        # Enumerate / Test row
+        btn_row = QHBoxLayout()
+        self._enum_btn = QPushButton(_("Refresh Devices"))
+        self._enum_btn.clicked.connect(self._on_enumerate)
+        btn_row.addWidget(self._enum_btn)
+        self._test_btn = QPushButton(_("Test (loopback)"))
+        self._test_btn.clicked.connect(self._on_test)
+        btn_row.addWidget(self._test_btn)
+        btn_row.addStretch()
+        dev_form.addRow("", btn_row)
+
+        layout.addWidget(dev_group)
+
+        # -- Sample rate (fixed at 48000 for Direwolf compatibility) --
+        rate_group = QGroupBox(_("Sample Rate"))
+        rate_form = QFormLayout(rate_group)
+        rate_label = QLabel("48000 Hz  " + _("(fixed — required by Direwolf)"))
+        rate_label.setStyleSheet("color: #aaa;")
+        rate_form.addRow(_("Rate:"), rate_label)
+        layout.addWidget(rate_group)
+
+        # -- Status row --
+        self._status_label = QLabel("")
+        self._status_label.setWordWrap(True)
+        layout.addWidget(self._status_label)
+
+        layout.addStretch()
+
+        # Populate on first open
+        self._on_enumerate()
+
+    # ------------------------------------------------------------------ #
+    # Slots
+    # ------------------------------------------------------------------ #
+
+    def _on_enumerate(self) -> None:
+        """Refresh input/output device lists from sounddevice."""
+        if not self._sd_available:
+            return
+
+        try:
+            devices = self._sd.query_devices()
+        except Exception as exc:  # noqa: BLE001
+            self._status_label.setText(_("Failed to query devices: {e}").format(e=exc))
+            self._status_label.setStyleSheet("color: orange;")
+            return
+
+        default_in = self._sd.default.device[0]
+        default_out = self._sd.default.device[1]
+
+        self._in_combo.clear()
+        self._out_combo.clear()
+
+        in_default_idx = 0
+        out_default_idx = 0
+
+        for idx, dev in enumerate(devices):
+            name = f"{idx}: {dev['name']}"
+            if dev["max_input_channels"] > 0:
+                self._in_combo.addItem(name, idx)
+                if idx == default_in:
+                    in_default_idx = self._in_combo.count() - 1
+            if dev["max_output_channels"] > 0:
+                self._out_combo.addItem(name, idx)
+                if idx == default_out:
+                    out_default_idx = self._out_combo.count() - 1
+
+        self._in_combo.setCurrentIndex(in_default_idx)
+        self._out_combo.setCurrentIndex(out_default_idx)
+        self._status_label.setText(_("{n} devices found.").format(n=len(devices)))
+        self._status_label.setStyleSheet("color: #7bed9f;")
+
+    def _on_test(self) -> None:
+        """Play a short 1 kHz tone through the selected output device."""
+        if not self._sd_available:
+            return
+
+        import math
+
+        out_idx = self._out_combo.currentData()
+        if out_idx is None:
+            return
+
+        try:
+            import numpy as np
+
+            sr = 48000
+            t = np.linspace(0, 0.5, int(sr * 0.5), endpoint=False)
+            tone = (0.3 * np.sin(2 * math.pi * 1000 * t)).astype(np.float32)
+            self._sd.play(tone, samplerate=sr, device=out_idx, blocking=False)
+            self._status_label.setText(_("Playing 1 kHz test tone…"))
+            self._status_label.setStyleSheet("color: #4a9eff;")
+        except Exception as exc:  # noqa: BLE001
+            self._status_label.setText(_("Test failed: {e}").format(e=exc))
+            self._status_label.setStyleSheet("color: orange;")
+
+    # ------------------------------------------------------------------ #
+    # Persistence
+    # ------------------------------------------------------------------ #
+
+    def save(self) -> dict[str, object]:
+        """Return a JSON-serialisable dict of current settings."""
+        if not self._sd_available or not hasattr(self, "_in_combo"):
+            return {"configured": False}
+
+        return {
+            "configured": True,
+            "input_device_index": self._in_combo.currentData(),
+            "input_device_label": self._in_combo.currentText(),
+            "output_device_index": self._out_combo.currentData(),
+            "output_device_label": self._out_combo.currentText(),
+            "sample_rate_hz": 48000,
+        }
+
+    def load(self, data: dict[str, object]) -> None:
+        """Restore settings from a previously saved dict."""
+        if not self._sd_available or not hasattr(self, "_in_combo"):
+            return
+
+        in_idx = data.get("input_device_index")
+        out_idx = data.get("output_device_index")
+
+        if in_idx is not None:
+            for i in range(self._in_combo.count()):
+                if self._in_combo.itemData(i) == in_idx:
+                    self._in_combo.setCurrentIndex(i)
+                    break
+
+        if out_idx is not None:
+            for i in range(self._out_combo.count()):
+                if self._out_combo.itemData(i) == out_idx:
+                    self._out_combo.setCurrentIndex(i)
+                    break
+
+
 class RigSettingsDialog(QDialog):
     """Radio > Rig Settings dialog.
 
-    Three tabs — Rig 1, Rig 2, and SDR Settings — each backed by its panel.
-    Hamlib models are loaded once and shared between both rig panels.
+    Four tabs — Rig 1, Rig 2, SDR Settings, and Sound Card — each backed
+    by its panel.  Hamlib models are loaded once and shared between both
+    rig panels.
 
     DB keys written on OK:
-        ``rig1_settings`` — Rig 1 JSON dict
-        ``rig2_settings`` — Rig 2 JSON dict (includes ``"enabled": bool``)
-        ``sdr_settings``  — SDR JSON dict
+        ``rig1_settings``      — Rig 1 JSON dict
+        ``rig2_settings``      — Rig 2 JSON dict (includes ``"enabled": bool``)
+        ``sdr_settings``       — SDR JSON dict
+        ``soundcard_settings`` — Sound Card JSON dict
     """
 
     def __init__(self, conn: Any, parent: QWidget | None = None) -> None:
@@ -1130,6 +1326,7 @@ class RigSettingsDialog(QDialog):
         self._panel1 = _RigPanel(1, self._all_models)
         self._panel2 = _RigPanel(2, self._all_models)
         self._sdr_panel = _SdrSettingsPanel()
+        self._soundcard_panel = _SoundCardPanel()
 
         self._setup_ui()
         self._load_settings()
@@ -1145,6 +1342,7 @@ class RigSettingsDialog(QDialog):
         self._tabs.addTab(self._panel1, _("Rig 1"))
         self._tabs.addTab(self._panel2, _("Rig 2"))
         self._tabs.addTab(self._sdr_panel, _("SDR Settings"))
+        self._tabs.addTab(self._soundcard_panel, _("Sound Card"))
         layout.addWidget(self._tabs)
 
         # Gray out Rig 1 / Rig 2 tab when SDR is assigned to that slot
@@ -1195,9 +1393,9 @@ class RigSettingsDialog(QDialog):
         HamlibUpdateDialog(self).exec()
 
     def _on_tab_changed(self, index: int) -> None:
-        """Show Hamlib info row only on Rig 1 / Rig 2 tabs (not SDR tab)."""
-        # Tab 2 is SDR Settings
-        self._hamlib_info_widget.setVisible(index != 2)
+        """Show Hamlib info row only on Rig 1 / Rig 2 tabs (not SDR or Sound Card tab)."""
+        # Tab 0=Rig1, 1=Rig2, 2=SDR Settings, 3=Sound Card
+        self._hamlib_info_widget.setVisible(index < 2)
 
     def _on_sdr_assignment_changed(self, assigned_rig: object) -> None:
         """Enable/disable Rig 1 / Rig 2 tabs based on SDR assignment.
@@ -1260,6 +1458,14 @@ class RigSettingsDialog(QDialog):
         # Apply initial tab enable/disable state based on loaded SDR assignment
         self._sdr_panel._on_assignment_changed()
 
+        # --- Sound Card ---
+        row_sc = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'soundcard_settings'"
+        ).fetchone()
+        if row_sc and row_sc["value"]:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                self._soundcard_panel.load(json.loads(row_sc["value"]))
+
     def _save_settings(self) -> None:
         """Save Rig 1 and Rig 2 settings to the DB.
 
@@ -1302,5 +1508,11 @@ class RigSettingsDialog(QDialog):
             "INSERT OR REPLACE INTO app_settings (key, value, updated_at) "
             "VALUES ('sdr_settings', ?, CURRENT_TIMESTAMP)",
             (json.dumps(s_sdr),),
+        )
+        s_sc = self._soundcard_panel.save()
+        self._conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) "
+            "VALUES ('soundcard_settings', ?, CURRENT_TIMESTAMP)",
+            (json.dumps(s_sc),),
         )
         self._conn.commit()
