@@ -512,6 +512,39 @@ ruff check src/ tests/
 python -m pytest tests/test_rig.py -q 2>&1 | tail -5
 ```
 
+### mypy とオプショナルインポートの注意点（2026-06-12 確定）
+
+CI は `pip install -e ".[dev]"` のみ実行するため、`scipy` などのオプショナル依存は**インストールされない**。
+`pyproject.toml` の `ignore_missing_imports = true` により、mypy はインストールされていないモジュールのインポートを `Any` として扱い、エラーを出さない。
+
+**オプショナルインポートの正しいパターン（`type: ignore` コメント不要）:**
+
+```python
+try:
+    from scipy import signal as sp_signal
+    _SCIPY_AVAILABLE: bool = True
+except ImportError:
+    sp_signal = None   # type: ignore コメント不要
+    _SCIPY_AVAILABLE = False
+```
+
+**やってはいけないパターン:**
+
+```python
+# NG1: 前方宣言すると import 自体が no-redef エラーになる
+sp_signal: Any
+try:
+    from scipy import signal as sp_signal  # error: no-redef
+    ...
+
+# NG2: type: ignore[assignment] / [no-redef] / [unused-ignore] を付けると
+#      CIでは「Unused type: ignore comment」として弾かれる
+except ImportError:
+    sp_signal = None  # type: ignore[no-redef]  ← CI で unused-ignore エラー
+```
+
+**理由:** mypy は `try/except ImportError` の except ブランチを「import が失敗した場合の新規定義」と解釈するため、`no-redef` も `assignment` もエラーにならない。`ignore_missing_imports = true` 環境ではさらにすべてが `Any` 扱いとなり、あらゆる `type: ignore` コメントが「未使用」として弾かれる。
+
 ---
 
 ## ビルド・配布
