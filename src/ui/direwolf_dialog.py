@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTextBrowser,
     QVBoxLayout,
+    QWidget,
 )
 
 from comms.aprs.direwolf import _user_direwolf_dir, find_direwolf
@@ -184,7 +185,7 @@ class _InstallWorker(QThread):
 class DirewolfDialog(QDialog):
     """Help > Direwolf… dialog."""
 
-    def __init__(self, parent: QDialog | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("Direwolf"))
         self.setMinimumWidth(520)

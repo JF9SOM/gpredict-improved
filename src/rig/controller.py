@@ -283,6 +283,7 @@ class RigController(ABC):
         self._lock = threading.Lock()
         self._state = RigState.DISCONNECTED
         self._freq_state = FrequencyState()
+        self._ptt_active: bool = False  # set by set_ptt(); freezes Doppler updates
 
     # -- Connection management --
 
@@ -410,6 +411,22 @@ class RigController(ABC):
         """
         self.send_mode_only(dl_mode, ul_mode)
         self.set_ctcss_tone(ctcss_hz)
+
+    # -- PTT --
+
+    def set_ptt(self, enabled: bool) -> bool:
+        """Key or un-key the transmitter via CAT.
+
+        Returns True on success, False when not connected or not supported.
+        Default implementation is a no-op that returns False.
+        Subclasses that support CAT PTT must override this method.
+
+        The base class manages ``_ptt_active`` so that ``set_vfo_frequencies``
+        can skip Doppler updates during the TX window without each subclass
+        needing to handle it separately.
+        """
+        self._ptt_active = enabled
+        return False
 
     # -- Utilities --
 
@@ -841,6 +858,19 @@ class HamlibDirectController(RigController):
             return True
         except Exception as exc:
             logger.error("RigDirect.set_vfo: %s", exc)
+            return False
+
+    def set_ptt(self, enabled: bool) -> bool:
+        """Key or un-key the transmitter via Hamlib direct binding."""
+        super().set_ptt(enabled)  # updates _ptt_active
+        if not self.is_connected or self._rig is None:
+            return False
+        try:
+            ptt_val = self._hamlib.RIG_PTT_ON if enabled else self._hamlib.RIG_PTT_OFF
+            self._rig.set_ptt(self._hamlib.RIG_VFO_CURR, ptt_val)
+            return True
+        except Exception as exc:
+            logger.error("RigDirect.set_ptt(%s): %s", enabled, exc)
             return False
 
     def set_vfo_frequencies(
@@ -1881,6 +1911,11 @@ class HamlibNetController(RigController):
         if not self.is_connected:
             return False
 
+        # Skip Doppler updates during CAT PTT TX window (~0.8 s) to avoid
+        # changing frequency while the rig is transmitting.
+        if self._ptt_active:
+            return True
+
         send_rx = self._radio_type != "tx_only"
         send_tx = self._radio_type != "rx_only"
 
@@ -1970,6 +2005,14 @@ class HamlibNetController(RigController):
 
     def set_vfo(self, vfo: str) -> bool:
         resp = self._cmd(f"V {vfo}")
+        return "RPRT 0" in resp
+
+    def set_ptt(self, enabled: bool) -> bool:
+        """Key (T 1) or un-key (T 0) via rigctld CAT PTT command."""
+        super().set_ptt(enabled)  # updates _ptt_active
+        if not self.is_connected:
+            return False
+        resp = self._cmd(f"T {'1' if enabled else '0'}")
         return "RPRT 0" in resp
 
     def _apply_ctcss_civ_direct(self, tone_hz: float) -> None:

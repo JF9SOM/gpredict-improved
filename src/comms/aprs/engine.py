@@ -9,6 +9,8 @@ backend.
 from __future__ import annotations
 
 import json
+import threading
+import time
 from typing import Any
 
 from PySide6.QtCore import QObject, Signal
@@ -35,12 +37,21 @@ class AprsEngine(QObject):
     status_changed: Signal = Signal(str)
     error_occurred: Signal = Signal(str)
 
+    # How long to wait after PTT ON before sending audio (rig key-up time)
+    _PTT_LEAD_S: float = 0.15
+    # Approximate duration of a typical APRS message packet audio at 1200 baud
+    _TX_AUDIO_S: float = 0.55
+    # How long to wait after audio ends before releasing PTT
+    _PTT_TAIL_S: float = 0.10
+
     def __init__(self, conn: Any, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._conn = conn
         self._mgr = DirewolfManager()
         self._demod: AfskDemodulator | None = None
         self._sdr_pipeline: Any | None = None  # SDRPipeline reference
+        self._rig: Any | None = None  # RigController for PTT
+        self._ptt_active: bool = False
         self._running = False
 
     # ------------------------------------------------------------------ #
@@ -55,6 +66,14 @@ class AprsEngine(QObject):
     def direwolf_available() -> bool:
         """Return True when a direwolf binary can be located."""
         return find_direwolf() is not None
+
+    def set_rig(self, rig: Any | None) -> None:
+        """Set the RigController used for CAT PTT during transmission.
+
+        Pass None when the rig disconnects.  The engine does not own the rig;
+        it holds only a weak reference via this attribute.
+        """
+        self._rig = rig
 
     def start_rig(
         self,
@@ -129,12 +148,49 @@ class AprsEngine(QObject):
         dest: str,
         message: str,
     ) -> None:
-        """Build an APRS message packet and transmit it via KISS."""
+        """Build an APRS message packet and transmit it.
+
+        If a RigController is registered via set_rig(), the full PTT sequence
+        runs in a background thread so the Qt main thread is never blocked:
+            1. PTT ON  (CAT T 1)
+            2. Wait _PTT_LEAD_S  (rig key-up time)
+            3. Send KISS frame → Direwolf encodes and plays audio
+            4. Wait _TX_AUDIO_S  (audio duration estimate)
+            5. Wait _PTT_TAIL_S  (brief tail)
+            6. PTT OFF (CAT T 0)
+
+        Without a rig controller the frame is sent immediately (no PTT).
+        """
         kiss = self._mgr.kiss_client
         if kiss is None:
             return
         frame = _build_aprs_message(src_callsign, src_ssid, via, dest, message)
-        kiss.send_frame(frame)
+
+        if self._rig is not None:
+            threading.Thread(
+                target=self._ptt_send,
+                args=(frame,),
+                daemon=True,
+            ).start()
+        else:
+            kiss.send_frame(frame)
+
+    def _ptt_send(self, frame: bytes) -> None:
+        """PTT sequence executed in a daemon thread."""
+        rig = self._rig
+        kiss = self._mgr.kiss_client
+        if rig is None or kiss is None:
+            return
+        try:
+            self._ptt_active = True
+            rig.set_ptt(True)
+            time.sleep(self._PTT_LEAD_S)
+            kiss.send_frame(frame)
+            time.sleep(self._TX_AUDIO_S)
+            time.sleep(self._PTT_TAIL_S)
+        finally:
+            rig.set_ptt(False)
+            self._ptt_active = False
 
     # ------------------------------------------------------------------ #
     # Private helpers
