@@ -492,6 +492,14 @@ class MainWindow(QMainWindow):
         self._sdr_control.tune_offset_changed.connect(self._on_sdr_tune_offset)
 
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
+
+        # Allow tabs to be closed (for non-resident Communications tabs).
+        # Hide the close button on all resident tabs so only Communications
+        # tabs (APRS, Telemetry) show the × button.
+        self._tab_widget.setTabsClosable(True)
+        self._tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
+        self._hide_close_buttons_on_resident_tabs()
+
         h_splitter.addWidget(self._tab_widget)
 
         # Right: satellite detail panel (hidden when Dashboard tab is active)
@@ -547,6 +555,12 @@ class MainWindow(QMainWindow):
         if radio_menu:
             radio_menu.addAction(_("Rig Settings..."), self._on_rig_settings)
             radio_menu.addAction(_("Rotator Settings..."), self._on_rotator_settings)
+
+        # Communications
+        comm_menu = mb.addMenu(_("Communications"))
+        if comm_menu:
+            comm_menu.addAction(_("APRS"), self._on_open_aprs)
+            comm_menu.addAction(_("Telemetry"), self._on_open_telemetry)
 
         # Autotrack / Record
         # macOS Cocoa ignores QMenuBar.addAction() — wrap in a single-item menu.
@@ -1357,6 +1371,63 @@ class MainWindow(QMainWindow):
         self._at_dialog.show()
         self._at_dialog.raise_()
         self._at_dialog.activateWindow()
+
+    # ------------------------------------------------------------------ #
+    # Communications menu slots
+    # ------------------------------------------------------------------ #
+
+    def _hide_close_buttons_on_resident_tabs(self) -> None:
+        """Remove the × button from all currently registered resident tabs.
+
+        Called once after the tab widget is fully populated.  Any tab added
+        later by Communications menu items is a non-resident tab and will
+        keep its close button.
+        """
+        from PySide6.QtWidgets import QTabBar
+
+        bar = self._tab_widget.tabBar()
+        for i in range(self._tab_widget.count()):
+            bar.setTabButton(i, QTabBar.ButtonPosition.RightSide, None)
+
+    def _on_tab_close_requested(self, index: int) -> None:
+        """Close a Communications tab and clean up its resources."""
+        widget = self._tab_widget.widget(index)
+        self._tab_widget.removeTab(index)
+        if widget is not None:
+            widget.deleteLater()
+
+    def _on_open_aprs(self) -> None:
+        """Open the APRS tab (Communications > APRS).
+
+        Does nothing when neither a rig nor an SDR is connected — the tab
+        requires an audio source to be useful.  A placeholder tab with an
+        explanatory message is shown instead so the user is not left without
+        feedback.
+        """
+        # Check if APRS tab is already open
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == _("APRS"):
+                self._tab_widget.setCurrentIndex(i)
+                return
+
+        from ui.aprs_tab import AprsTab
+
+        tab = AprsTab(self._conn, self._radio_control, parent=self)
+        idx = self._tab_widget.addTab(tab, _("APRS"))
+        self._tab_widget.setCurrentIndex(idx)
+
+    def _on_open_telemetry(self) -> None:
+        """Open the Telemetry tab (Communications > Telemetry)."""
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == _("Telemetry"):
+                self._tab_widget.setCurrentIndex(i)
+                return
+
+        from ui.telemetry_tab import TelemetryTab
+
+        tab = TelemetryTab(self._conn, self._radio_control, parent=self)
+        idx = self._tab_widget.addTab(tab, _("Telemetry"))
+        self._tab_widget.setCurrentIndex(idx)
 
     def _update_world_map(self) -> None:
         """Fetch satellite subpoints for visible satellites and update the world map.
