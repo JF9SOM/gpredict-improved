@@ -605,6 +605,7 @@ class MainWindow(QMainWindow):
             help_menu.addAction(_("Check for Updates…"), self._on_check_updates)
             help_menu.addAction(_("SDR Device Installation…"), self._on_sdr_install)
             help_menu.addAction(_("Hamlib Update…"), self._on_hamlib_update)
+            help_menu.addAction(_("Direwolf Installation…"), self._on_direwolf_help)
             help_menu.addSeparator()
             help_menu.addAction(_("About"), self._on_about)
             help_menu.addAction(_("GitHub"), self._on_github)
@@ -3120,6 +3121,12 @@ class MainWindow(QMainWindow):
         from ui.hamlib_update_dialog import HamlibUpdateDialog
 
         dlg = HamlibUpdateDialog(self)
+        dlg.exec()
+
+    def _on_direwolf_help(self) -> None:
+        from ui.direwolf_dialog import DirewolfDialog
+
+        dlg = DirewolfDialog(self)
         dlg.exec()
 
     def _on_rig_slot_connected(self, slot: int) -> None:
