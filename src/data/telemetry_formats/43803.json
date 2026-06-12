@@ -1,0 +1,15 @@
+{
+  "norad": 43803,
+  "name": "JO-97 (Fox-1E)",
+  "callsign": "KD9FTX",
+  "modulation": "AFSK1200",
+  "ax25_pid": "0xF0",
+  "reference": "https://www.amsat.org/fox-telemetry/",
+  "fields": [
+    {"name": "battery_v",   "offset": 0, "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Battery Voltage"},
+    {"name": "temp_c",      "offset": 2, "length": 2, "type": "int16_be",  "scale": 0.1,   "unit": "°C", "label": "Temperature"},
+    {"name": "tx_power_mw", "offset": 4, "length": 2, "type": "uint16_be", "scale": 1.0,   "unit": "mW", "label": "TX Power"},
+    {"name": "solar_v",     "offset": 6, "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Solar Voltage"},
+    {"name": "uptime_s",    "offset": 8, "length": 4, "type": "uint32_be", "scale": 1.0,   "unit": "s",  "label": "Uptime"}
+  ]
+}
