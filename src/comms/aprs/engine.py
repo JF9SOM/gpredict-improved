@@ -175,6 +175,44 @@ class AprsEngine(QObject):
         else:
             kiss.send_frame(frame)
 
+    def send_position(
+        self,
+        src_callsign: str,
+        src_ssid: int,
+        via: str,
+        lat_deg: float,
+        lon_deg: float,
+        symbol: str = "/-",
+        comment: str = "",
+    ) -> None:
+        """Build an APRS position packet and transmit it.
+
+        Uses the uncompressed position format (no timestamp, no messaging):
+            !DDMM.hhN/DDDMM.hhES<comment>
+
+        Args:
+            src_callsign: Operator callsign (e.g. "JF9SOM")
+            src_ssid:     SSID (0–15)
+            via:          Digipeater path (e.g. "ARISS")
+            lat_deg:      Latitude in decimal degrees (positive = north)
+            lon_deg:      Longitude in decimal degrees (positive = east)
+            symbol:       Two-character APRS symbol (table + code). Default
+                          ``/-`` = house / fixed station.
+            comment:      Free-text comment appended after the symbol.
+        """
+        kiss = self._mgr.kiss_client
+        if kiss is None:
+            return
+        frame = _build_aprs_position(src_callsign, src_ssid, via, lat_deg, lon_deg, symbol, comment)
+        if self._rig is not None:
+            threading.Thread(
+                target=self._ptt_send,
+                args=(frame,),
+                daemon=True,
+            ).start()
+        else:
+            kiss.send_frame(frame)
+
     def _ptt_send(self, frame: bytes) -> None:
         """PTT sequence executed in a daemon thread."""
         rig = self._rig
@@ -286,3 +324,57 @@ def _build_aprs_message(
         + info.encode("ascii", errors="replace")
     )
     return frame
+
+
+def _latlon_to_aprs(lat_deg: float, lon_deg: float) -> tuple[str, str]:
+    """Convert decimal-degree lat/lon to APRS uncompressed position strings.
+
+    Returns (lat_str, lon_str) in DDmm.hhN / DDDmm.hhE format.
+    """
+    lat_abs = abs(lat_deg)
+    lat_d = int(lat_abs)
+    lat_m = (lat_abs - lat_d) * 60.0
+    lat_hemi = "N" if lat_deg >= 0 else "S"
+    lat_str = f"{lat_d:02d}{lat_m:05.2f}{lat_hemi}"
+
+    lon_abs = abs(lon_deg)
+    lon_d = int(lon_abs)
+    lon_m = (lon_abs - lon_d) * 60.0
+    lon_hemi = "E" if lon_deg >= 0 else "W"
+    lon_str = f"{lon_d:03d}{lon_m:05.2f}{lon_hemi}"
+
+    return lat_str, lon_str
+
+
+def _build_aprs_position(
+    src_call: str,
+    src_ssid: int,
+    via: str,
+    lat_deg: float,
+    lon_deg: float,
+    symbol: str = "/-",
+    comment: str = "",
+) -> bytes:
+    """Build a raw AX.25 UI frame containing an APRS position packet.
+
+    Format: !DDmm.hhN/DDDmm.hhES<comment>
+    where S is the two-character APRS symbol (table + code, default ``/-``).
+    """
+    via_call = via.strip().upper() or "ARISS"
+    sym_table = symbol[0] if len(symbol) >= 1 else "/"
+    sym_code = symbol[1] if len(symbol) >= 2 else "-"
+
+    dest_field = _encode_addr("APRS", 0)
+    src_field = _encode_addr(src_call, src_ssid)
+    via_field = _encode_addr(via_call, 0, last=True)
+
+    lat_str, lon_str = _latlon_to_aprs(lat_deg, lon_deg)
+    info = f"!{lat_str}{sym_table}{lon_str}{sym_code}{comment}"
+
+    return (
+        dest_field
+        + src_field
+        + via_field
+        + bytes([0x03, 0xF0])
+        + info.encode("ascii", errors="replace")
+    )

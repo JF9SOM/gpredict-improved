@@ -21,6 +21,8 @@ from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -83,6 +85,10 @@ class AprsTab(QWidget):
 
         # Positioned APRS stations received this session: {callsign: (lat, lon)}
         self._aprs_stations: dict[str, tuple[float, float]] = {}
+
+        # Auto-beacon timer for position transmission
+        self._pos_timer = QTimer(self)
+        self._pos_timer.timeout.connect(self._on_send_position)
 
         # APRS engine (Direwolf backend)
         from comms.aprs.engine import AprsEngine
@@ -216,6 +222,49 @@ class AprsTab(QWidget):
         send_layout.addWidget(self._send_btn)
         root.addWidget(send_group)
 
+        # -- Send Position --
+        pos_group = QGroupBox(_("Send My Position"))
+        pos_layout = QHBoxLayout(pos_group)
+        self._pos_enable_chk = QCheckBox(_("Auto-beacon every"))
+        self._pos_enable_chk.setChecked(False)
+        self._pos_enable_chk.toggled.connect(self._on_pos_beacon_toggled)
+        pos_layout.addWidget(self._pos_enable_chk)
+        self._pos_interval_spin = QSpinBox()
+        self._pos_interval_spin.setRange(1, 60)
+        self._pos_interval_spin.setValue(5)
+        self._pos_interval_spin.setSuffix(_(" min"))
+        self._pos_interval_spin.setFixedWidth(80)
+        pos_layout.addWidget(self._pos_interval_spin)
+        pos_layout.addSpacing(12)
+        pos_layout.addWidget(QLabel(_("Symbol:")))
+        self._pos_symbol_combo = QComboBox()
+        # (display label, APRS symbol code)
+        self._pos_symbols = [
+            (_("Fixed Station  /-"), "/-"),
+            (_("Mobile  />"), "/>"),
+            (_("Balloon  /O"), "/O"),
+            (_("Antenna  /Y"), "/Y"),
+            (_("Satellite  /S"), "/S"),
+        ]
+        for label, _code in self._pos_symbols:
+            self._pos_symbol_combo.addItem(label)
+        self._pos_symbol_combo.setFixedWidth(160)
+        pos_layout.addWidget(self._pos_symbol_combo)
+        pos_layout.addSpacing(12)
+        pos_layout.addWidget(QLabel(_("Comment:")))
+        self._pos_comment_edit = QLineEdit()
+        self._pos_comment_edit.setPlaceholderText(_("Optional free text"))
+        self._pos_comment_edit.setMaxLength(43)
+        pos_layout.addWidget(self._pos_comment_edit, stretch=1)
+        self._pos_send_btn = QPushButton(_("Send Now"))
+        self._pos_send_btn.setEnabled(False)
+        self._pos_send_btn.clicked.connect(self._on_send_position)
+        pos_layout.addWidget(self._pos_send_btn)
+        self._pos_loc_label = QLabel(_("QTH: —"))
+        self._pos_loc_label.setStyleSheet("color: #aaa; font-size: 10px;")
+        pos_layout.addWidget(self._pos_loc_label)
+        root.addWidget(pos_group)
+
         # -- Footer: export + QSO count --
         footer = QHBoxLayout()
         self._export_btn = QPushButton(_("Export ADIF…"))
@@ -314,7 +363,8 @@ class AprsTab(QWidget):
         """Update the input-source label and send-button state."""
         sc_ok = self._is_soundcard_configured()
 
-        if self._rig_connected and sc_ok:
+        can_tx = self._rig_connected and sc_ok
+        if can_tx:
             self._input_label.setText(_("Sound Card + Direwolf  (send + receive)"))
             self._input_label.setStyleSheet("color: #7bed9f;")
             self._send_btn.setEnabled(True)
@@ -333,6 +383,10 @@ class AprsTab(QWidget):
             self._input_label.setText(_("No audio source — connect a Rig or SDR in Radio Control"))
             self._input_label.setStyleSheet("color: #666;")
             self._send_btn.setEnabled(False)
+
+        # Position send requires TX capability; update button and QTH label
+        self._pos_send_btn.setEnabled(can_tx)
+        self._refresh_pos_label()
 
     def _try_start_engine(self) -> None:
         """Start Direwolf engine when rig is connected and Sound Card is configured."""
@@ -441,7 +495,8 @@ class AprsTab(QWidget):
         self._conn.commit()
 
     def closeEvent(self, event: Any) -> None:
-        """Stop engine, clear map pins, and save settings when the tab is closed."""
+        """Stop engine, clear map pins, stop beacon timer, and save settings."""
+        self._pos_timer.stop()
         self._engine.stop()
         self._aprs_stations.clear()
         self.aprs_stations_cleared.emit()
@@ -493,7 +548,7 @@ class AprsTab(QWidget):
         self._qso_count_label.setText(_("QSOs logged: {n}").format(n=n))
 
     # ------------------------------------------------------------------ #
-    # Send slot (backend wired in future commit)
+    # Send slots
     # ------------------------------------------------------------------ #
 
     def _on_send(self) -> None:
@@ -519,6 +574,73 @@ class AprsTab(QWidget):
             raw_frame="",
         )
         self._msg_edit.clear()
+
+    def _get_my_location(self) -> tuple[float, float] | None:
+        """Return (lat_deg, lon_deg) from saved QTH, or None if not set."""
+        try:
+            from core.location import LocationManager
+
+            mgr = LocationManager(self._conn)
+            loc = mgr.load_saved()
+            if loc is not None:
+                return (loc.latitude_deg, loc.longitude_deg)
+        except Exception:
+            pass
+        return None
+
+    def _refresh_pos_label(self) -> None:
+        """Update the QTH coordinates label in the Send Position group."""
+        pos = self._get_my_location()
+        if pos is not None:
+            lat, lon = pos
+            ns = "N" if lat >= 0 else "S"
+            ew = "E" if lon >= 0 else "W"
+            self._pos_loc_label.setText(f"QTH: {abs(lat):.4f}°{ns} {abs(lon):.4f}°{ew}")
+            self._pos_loc_label.setStyleSheet("color: #aaa; font-size: 10px;")
+        else:
+            self._pos_loc_label.setText(_("QTH: not set — configure in Settings"))
+            self._pos_loc_label.setStyleSheet("color: orange; font-size: 10px;")
+
+    def _on_pos_beacon_toggled(self, checked: bool) -> None:
+        """Start or stop the auto-beacon timer."""
+        if checked:
+            interval_ms = self._pos_interval_spin.value() * 60 * 1000
+            self._pos_timer.start(interval_ms)
+            # Send immediately on enable
+            self._on_send_position()
+        else:
+            self._pos_timer.stop()
+
+    def _on_send_position(self) -> None:
+        """Transmit one APRS position packet with the saved QTH coordinates."""
+        pos = self._get_my_location()
+        if pos is None:
+            self._pos_loc_label.setText(_("QTH: not set — configure in Settings"))
+            self._pos_loc_label.setStyleSheet("color: orange; font-size: 10px;")
+            return
+
+        if not self._engine.is_running:
+            return
+
+        my_call = self._callsign_edit.text().strip().upper()
+        ssid = self._ssid_spin.value()
+        via = self._via_edit.text().strip()
+        symbol = self._pos_symbols[self._pos_symbol_combo.currentIndex()][1]
+        comment = self._pos_comment_edit.text().strip()
+
+        lat, lon = pos
+        self._engine.send_position(my_call, ssid, via, lat, lon, symbol, comment)
+
+        # Echo to receive log as sent marker
+        src = f"{my_call}-{ssid}" if ssid else my_call
+        ns = "N" if lat >= 0 else "S"
+        ew = "E" if lon >= 0 else "W"
+        self.append_packet(
+            callsign=f"{src}>APRS",
+            via=via,
+            comment=f"[TX POS] {abs(lat):.4f}°{ns} {abs(lon):.4f}°{ew} {comment}".strip(),
+            raw_frame="",
+        )
 
     # ------------------------------------------------------------------ #
     # ADIF export
