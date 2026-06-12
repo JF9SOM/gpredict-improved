@@ -1,15 +1,10 @@
 {
   "norad": 43803,
-  "name": "JO-97 (Fox-1E)",
-  "callsign": "KD9FTX",
+  "name": "JY1Sat (JO-97)",
+  "callsign": "JY1SAT",
   "modulation": "AFSK1200",
   "ax25_pid": "0xF0",
-  "reference": "https://www.amsat.org/fox-telemetry/",
-  "fields": [
-    {"name": "battery_v",   "offset": 0, "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Battery Voltage"},
-    {"name": "temp_c",      "offset": 2, "length": 2, "type": "int16_be",  "scale": 0.1,   "unit": "°C", "label": "Temperature"},
-    {"name": "tx_power_mw", "offset": 4, "length": 2, "type": "uint16_be", "scale": 1.0,   "unit": "mW", "label": "TX Power"},
-    {"name": "solar_v",     "offset": 6, "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Solar Voltage"},
-    {"name": "uptime_s",    "offset": 8, "length": 4, "type": "uint32_be", "scale": 1.0,   "unit": "s",  "label": "Uptime"}
-  ]
+  "reference": "https://www.amsat.org/jy1sat/",
+  "note": "Transmits 1200 baud AFSK AX.25. Primary payload is Codec2 digital voice and SSDV. Binary telemetry frame layout is not publicly documented; fields are unverified.",
+  "fields": []
 }
