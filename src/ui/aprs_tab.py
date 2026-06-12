@@ -254,6 +254,7 @@ class AprsTab(QWidget):
             self._sdr_connected = True
             dev = getattr(rig2, "device_label", "SDR")
             self._sdr_label = str(dev)
+            self._try_start_sdr(rig2)
         else:
             self._rig_connected = True
         self._refresh_input_source()
@@ -264,6 +265,7 @@ class AprsTab(QWidget):
         if rig2 is not None and getattr(rig2, "is_sdr", False):
             self._sdr_connected = False
             self._sdr_label = ""
+            self._engine.stop()
         else:
             self._rig_connected = False
         self._refresh_input_source()
@@ -307,6 +309,15 @@ class AprsTab(QWidget):
         via = self._via_edit.text().strip()
         if cs:
             self._engine.start_rig(cs, ssid, via)
+
+    def _try_start_sdr(self, rig2: object) -> None:
+        """Start Bell 202 AFSK demodulator on the SDR pipeline (receive only)."""
+        if self._engine.is_running:
+            return
+        pipeline = getattr(rig2, "_pipeline", None)
+        if pipeline is None:
+            return
+        self._engine.start_sdr(pipeline)
 
     # ------------------------------------------------------------------ #
     # Engine signal slots

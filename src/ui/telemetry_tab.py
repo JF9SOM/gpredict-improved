@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from comms.aprs.afsk_demod import AfskDemodulator
 from comms.aprs.direwolf import DirewolfManager, find_direwolf
 from comms.aprs.parser import decode_ax25
 from comms.telemetry.decoder import TelemetryFrame, decode_telemetry, list_formats
@@ -53,7 +54,10 @@ class TelemetryTab(QWidget):
         self._conn = conn
         self._radio_control = radio_control
         self._mgr: DirewolfManager | None = None
+        self._demod: AfskDemodulator | None = None
+        self._sdr_pipeline: object | None = None
         self._rig_connected = False
+        self._sdr_connected = False
         self._frame_count = 0
 
         self._ensure_db_table()
@@ -153,6 +157,12 @@ class TelemetryTab(QWidget):
             self._radio_control.rig_disconnected.connect(  # type: ignore[attr-defined]
                 self._on_rig_disconnected
             )
+            self._radio_control.rig2_connected.connect(  # type: ignore[attr-defined]
+                self._on_rig2_connected
+            )
+            self._radio_control.rig2_disconnected.connect(  # type: ignore[attr-defined]
+                self._on_rig2_disconnected
+            )
         except AttributeError:
             pass
 
@@ -164,6 +174,19 @@ class TelemetryTab(QWidget):
         self._rig_connected = False
         self._stop_direwolf()
         self._refresh_status()
+
+    def _on_rig2_connected(self) -> None:
+        rc = self._radio_control
+        rig2 = getattr(rc, "_rig2", None)
+        if rig2 is not None and getattr(rig2, "is_sdr", False):
+            self._sdr_connected = True
+            self._try_start_sdr(rig2)
+
+    def _on_rig2_disconnected(self) -> None:
+        if self._sdr_connected:
+            self._sdr_connected = False
+            self._stop_sdr()
+            self._refresh_status()
 
     # ------------------------------------------------------------------ #
     # Direwolf lifecycle
@@ -207,6 +230,33 @@ class TelemetryTab(QWidget):
         if self._mgr:
             self._mgr.stop()
             self._mgr = None
+
+    def _try_start_sdr(self, rig2: object) -> None:
+        """Start Bell 202 AFSK demodulator on the SDR pipeline (receive only)."""
+        pipeline = getattr(rig2, "_pipeline", None)
+        if pipeline is None:
+            self._lbl_status.setText(_("Input: ⚠ SDR pipeline not ready"))
+            return
+        try:
+            sr = int(pipeline._device.sample_rate)
+        except AttributeError:
+            self._lbl_status.setText(_("Input: ⚠ Cannot determine SDR sample rate"))
+            return
+        self._sdr_pipeline = pipeline
+        self._demod = AfskDemodulator(sample_rate=sr, parent=self)
+        self._demod.frame_received.connect(self._on_ax25_frame)
+        self._demod.start()
+        pipeline.subscribe(self._demod.push_samples)
+        self._refresh_status()
+
+    def _stop_sdr(self) -> None:
+        if self._demod is not None and self._sdr_pipeline is not None:
+            self._sdr_pipeline.unsubscribe(  # type: ignore[attr-defined]
+                self._demod.push_samples
+            )
+            self._demod.stop()
+            self._demod = None
+        self._sdr_pipeline = None
 
     def _on_kiss_lost(self) -> None:
         self._lbl_status.setText(_("Input: ⚠ Direwolf connection lost"))
@@ -283,10 +333,13 @@ class TelemetryTab(QWidget):
         if self._mgr and self._mgr.is_running:
             self._lbl_status.setText(_("Input: Rig + Direwolf (receiving)"))
             self._lbl_status.setStyleSheet("color: #27ae60;")
+        elif self._demod is not None and self._sdr_connected:
+            self._lbl_status.setText(_("Input: SDR (receive only — Bell 202 AFSK)"))
+            self._lbl_status.setStyleSheet("color: #4a9eff;")
         elif self._rig_connected:
             pass  # message already set in _try_start
         else:
-            self._lbl_status.setText(_("Input: — (connect Rig to start)"))
+            self._lbl_status.setText(_("Input: — (connect Rig or SDR to start)"))
             self._lbl_status.setStyleSheet("color: #aaa;")
 
     # ------------------------------------------------------------------ #
@@ -340,10 +393,7 @@ class TelemetryTab(QWidget):
             writer.writerow(["Time (UTC)", "Callsign", "Satellite", "Data"])
             for r in range(rows_count):
                 writer.writerow(
-                    [
-                        (item.text() if (item := self._table.item(r, c)) else "")
-                        for c in range(4)
-                    ]
+                    [(item.text() if (item := self._table.item(r, c)) else "") for c in range(4)]
                 )
 
     # ------------------------------------------------------------------ #
@@ -352,4 +402,5 @@ class TelemetryTab(QWidget):
 
     def closeEvent(self, event: Any) -> None:
         self._stop_direwolf()
+        self._stop_sdr()
         super().closeEvent(event)
