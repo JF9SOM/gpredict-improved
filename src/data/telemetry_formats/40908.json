@@ -1,0 +1,17 @@
+{
+  "norad": 40908,
+  "name": "LilacSat-2",
+  "callsign": "BJ1SK",
+  "modulation": "AFSK1200",
+  "ax25_pid": "0xF0",
+  "reference": "http://lilacsat.hit.edu.cn/",
+  "fields": [
+    {"name": "battery_v",   "offset": 0,  "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Battery Voltage"},
+    {"name": "batt_temp_c", "offset": 2,  "length": 2, "type": "int16_be",  "scale": 0.1,   "unit": "°C", "label": "Battery Temperature"},
+    {"name": "solar_a_v",   "offset": 4,  "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Solar Panel A Voltage"},
+    {"name": "solar_b_v",   "offset": 6,  "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Solar Panel B Voltage"},
+    {"name": "eps_temp_c",  "offset": 8,  "length": 2, "type": "int16_be",  "scale": 0.1,   "unit": "°C", "label": "EPS Temperature"},
+    {"name": "current_ma",  "offset": 10, "length": 2, "type": "uint16_be", "scale": 0.1,   "unit": "mA", "label": "Battery Discharge Current"},
+    {"name": "uptime_s",    "offset": 12, "length": 4, "type": "uint32_be", "scale": 1.0,   "unit": "s",  "label": "Uptime"}
+  ]
+}
