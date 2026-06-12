@@ -23,7 +23,7 @@ try:
 
     _SCIPY_AVAILABLE: bool = True
 except ImportError:
-    sp_signal = None  # type: ignore[no-redef]
+    sp_signal = None
     _SCIPY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
