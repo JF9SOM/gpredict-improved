@@ -1,0 +1,9 @@
+{
+  "norad": 42830,
+  "name": "GhanaSat-1 (BIRDS-1)",
+  "callsign": "GSAT-1",
+  "modulation": "AFSK1200",
+  "ax25_pid": "0xF0",
+  "reference": "https://birds1.birds-project.com/",
+  "fields": []
+}
