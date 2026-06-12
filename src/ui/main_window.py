@@ -1414,6 +1414,8 @@ class MainWindow(QMainWindow):
         from ui.aprs_tab import AprsTab
 
         tab = AprsTab(self._conn, self._radio_control, parent=self)
+        tab.aprs_stations_updated.connect(self._world_map.set_aprs_stations)
+        tab.aprs_stations_cleared.connect(self._world_map.clear_aprs_stations)
         idx = self._tab_widget.addTab(tab, _("APRS"))
         self._tab_widget.setCurrentIndex(idx)
 

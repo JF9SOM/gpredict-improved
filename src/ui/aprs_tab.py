@@ -19,7 +19,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -52,7 +52,18 @@ class AprsTab(QWidget):
     Persists callsign / SSID / via settings in ``app_settings`` under the
     key ``aprs_settings``.  Received packets are stored in ``aprs_log`` (DB
     table created on first open if absent).
+
+    Signals
+    -------
+    aprs_stations_updated(dict)
+        Emitted whenever the set of positioned APRS stations changes.
+        Payload: {callsign: (lat_deg, lon_deg)}.
+    aprs_stations_cleared()
+        Emitted when the tab closes so callers can clear map pins.
     """
+
+    aprs_stations_updated: Signal = Signal(dict)
+    aprs_stations_cleared: Signal = Signal()
 
     def __init__(
         self,
@@ -69,6 +80,9 @@ class AprsTab(QWidget):
         self._sdr_connected = False
         self._rig_label = ""
         self._sdr_label = ""
+
+        # Positioned APRS stations received this session: {callsign: (lat, lon)}
+        self._aprs_stations: dict[str, tuple[float, float]] = {}
 
         # APRS engine (Direwolf backend)
         from comms.aprs.engine import AprsEngine
@@ -359,6 +373,10 @@ class AprsTab(QWidget):
             lat=packet.latitude,
             lon=packet.longitude,
         )
+        # Update map pin when the packet carries a position
+        if packet.latitude is not None and packet.longitude is not None:
+            self._aprs_stations[packet.callsign] = (packet.latitude, packet.longitude)
+            self.aprs_stations_updated.emit(dict(self._aprs_stations))
 
     def _on_engine_status(self, status: str) -> None:
         self._input_label.setText(status)
@@ -423,8 +441,10 @@ class AprsTab(QWidget):
         self._conn.commit()
 
     def closeEvent(self, event: Any) -> None:
-        """Stop engine and save settings when the tab is closed."""
+        """Stop engine, clear map pins, and save settings when the tab is closed."""
         self._engine.stop()
+        self._aprs_stations.clear()
+        self.aprs_stations_cleared.emit()
         self._save_settings()
         super().closeEvent(event)
 
