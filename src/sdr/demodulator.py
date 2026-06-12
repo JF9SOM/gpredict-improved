@@ -15,19 +15,15 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Any
 
 import numpy as np
-
-sp_signal: Any
-_SCIPY_AVAILABLE: bool
 
 try:
     from scipy import signal as sp_signal
 
-    _SCIPY_AVAILABLE = True
+    _SCIPY_AVAILABLE: bool = True
 except ImportError:
-    sp_signal = None
+    sp_signal = None  # type: ignore[no-redef]
     _SCIPY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
