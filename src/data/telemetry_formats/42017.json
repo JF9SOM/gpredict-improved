@@ -6,10 +6,51 @@
   "ax25_pid": "0xF0",
   "reference": "https://www.amsat.org/two-new-satellites-now-oscar-designated/",
   "fields": [
-    {"name": "battery_v",   "offset": 0, "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Battery Voltage"},
-    {"name": "temp_c",      "offset": 2, "length": 2, "type": "int16_be",  "scale": 0.1,   "unit": "°C", "label": "OBC Temperature"},
-    {"name": "solar_v",     "offset": 4, "length": 2, "type": "uint16_be", "scale": 0.001, "unit": "V",  "label": "Solar Voltage"},
-    {"name": "current_ma",  "offset": 6, "length": 2, "type": "uint16_be", "scale": 0.1,   "unit": "mA", "label": "Battery Current"},
-    {"name": "uptime_s",    "offset": 8, "length": 4, "type": "uint32_be", "scale": 1.0,   "unit": "s",  "label": "Uptime"}
-  ]
+    {
+      "name": "battery_v",
+      "offset": 0,
+      "length": 2,
+      "type": "uint16_be",
+      "scale": 0.001,
+      "unit": "V",
+      "label": "Battery Voltage"
+    },
+    {
+      "name": "temp_c",
+      "offset": 2,
+      "length": 2,
+      "type": "int16_be",
+      "scale": 0.1,
+      "unit": "°C",
+      "label": "OBC Temperature"
+    },
+    {
+      "name": "solar_v",
+      "offset": 4,
+      "length": 2,
+      "type": "uint16_be",
+      "scale": 0.001,
+      "unit": "V",
+      "label": "Solar Voltage"
+    },
+    {
+      "name": "current_ma",
+      "offset": 6,
+      "length": 2,
+      "type": "uint16_be",
+      "scale": 0.1,
+      "unit": "mA",
+      "label": "Battery Current"
+    },
+    {
+      "name": "uptime_s",
+      "offset": 8,
+      "length": 4,
+      "type": "uint32_be",
+      "scale": 1.0,
+      "unit": "s",
+      "label": "Uptime"
+    }
+  ],
+  "note": "Field definitions are based on community documentation and have not been verified against actual received packets. Offsets and scales may require adjustment."
 }
