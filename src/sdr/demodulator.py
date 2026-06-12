@@ -17,7 +17,14 @@ import logging
 from enum import Enum
 
 import numpy as np
-from scipy import signal as sp_signal
+
+try:
+    from scipy import signal as sp_signal
+
+    _SCIPY_AVAILABLE: bool = True
+except ImportError:
+    sp_signal = None  # type: ignore[assignment]
+    _SCIPY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +69,11 @@ class Demodulator:
     """
 
     def __init__(self, input_rate: float = 2.4e6) -> None:
+        if not _SCIPY_AVAILABLE:
+            raise ImportError(
+                "scipy is required for SDR demodulation. "
+                "Install it with: pip install 'gpredict-improved[sdr]'"
+            )
         self._input_rate = input_rate
         self._mode = DemodMode.USB
         self._audio_gain: float = 1.0

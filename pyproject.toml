@@ -123,6 +123,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ANN"]  # テストファイルは型注釈任意
 "src/main.py" = ["E402"]  # sys.path/LD_LIBRARY_PATH setup must precede project imports
+"src/gpredict_improved/main.py" = ["E402"]  # entry-point shim may manipulate sys.path before imports
 
 # --- mypy ---
 [tool.mypy]
