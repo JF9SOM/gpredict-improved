@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
+from typing import Any
 
 import numpy as np
 
@@ -23,7 +24,7 @@ try:
 
     _SCIPY_AVAILABLE: bool = True
 except ImportError:
-    sp_signal = None  # type: ignore[assignment]
+    sp_signal: Any = None
     _SCIPY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)

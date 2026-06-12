@@ -24,4 +24,4 @@ def main() -> int:
     if src_dir not in sys.path:
         sys.path.insert(0, src_dir)
     _main_mod = importlib.import_module("main")
-    return int(_main_mod.main())  # type: ignore[attr-defined]
+    return int(_main_mod.main())
