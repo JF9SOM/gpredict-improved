@@ -1721,3 +1721,189 @@ sdr = [
 ]
 # SoapySDR はシステムパッケージ経由のため pip dependencies に含めない
 ```
+
+---
+
+## Communications 機能設計方針（2026-06-12 確定）
+
+### 概要
+
+メニューバーに **Communications** メニューを新設し（Radio と Autotrack/Record の間）、
+APRS・FT4・SSTV 等のデジタル通信機能をサブメニューとして追加していく。
+各機能は専用タブとして開き、× ボタンで個別にクローズできる非常駐タブとして実装する。
+
+**メニュー構成:**
+```
+File / Satellite / Radio / Communications / Autotrack/Record / View / Help
+                              └── APRS
+                              └── FT4（将来）
+                              └── SSTV（将来）
+```
+
+---
+
+### APRS 機能設計（v0.2.0 目標）
+
+#### ディレクトリ構成
+
+```
+src/
+├── comms/
+│   ├── __init__.py
+│   ├── aprs/
+│   │   ├── __init__.py
+│   │   ├── engine.py          # APRSEngine — KISS TCP 接続・フレーム送受信
+│   │   ├── parser.py          # AX.25 / APRS フレームパーサー（位置・メッセージ）
+│   │   ├── afsk_demod.py      # Bell 202 AFSK 復調器（SDR 用純 Python 実装）
+│   │   └── direwolf.py        # Direwolf サブプロセス管理
+│   └── ft4/                   # 将来
+```
+
+#### 全体アーキテクチャ
+
+```
+[SDR Connect 時]
+SDRPipeline の I/Q → afsk_demod.py（numpy/scipy）→ AX.25 パーサー → APRSEngine
+
+[Rig Connect 時（サウンドカード設定済み）]
+sounddevice IN → Direwolf stdin（ADEVICE stdin stdout）
+Direwolf stdout → sounddevice OUT（TX 音声）
+Direwolf KISS TCP :8001 → APRSEngine
+```
+
+#### 入力ソース自動切替ルール
+
+| Rig Control の状態 | APRS 入力ソース | 送信可否 |
+|---|---|---|
+| SDR Connect のみ | SDR（Python 復調） | 不可（受信専用） |
+| Rig Connect のみ（Sound Card 設定済み） | サウンドカード + Direwolf | 可（PTT あり） |
+| 両方 Connect | Rig 優先（送信できる方） | 可 |
+| どちらも未接続 | — | APRS タブを開かない |
+
+入力ソースは APRS タブ内に「表示のみ」で示す（ユーザーが選択するものではない）。
+
+#### Direwolf 検出・バンドル方針
+
+検出の優先順位:
+1. ユーザーインストール版（`Help > Direwolf...` でインストールしたもの）
+2. システムインストール版（`which direwolf` / PATH）
+3. バンドル版（アプリに同梱）
+
+インストール先（ユーザーインストール版）:
+```
+Linux:   ~/.local/share/gpredict-improved/direwolf/
+macOS:   ~/Library/Application Support/gpredict-improved/direwolf/
+Windows: %APPDATA%/gpredict-improved/direwolf/
+```
+
+Direwolf は `ADEVICE stdin stdout` モードで起動するため、ALSA / PortAudio への依存なし。
+バンドルビルドは CI で各プラットフォーム向けにソースビルドし GitHub Releases にアップロード。
+
+`Help > Direwolf...` ダイアログ:
+- 現在使用中の Direwolf パス・バージョンを表示
+- 未インストール時はプラットフォーム別インストール支援
+  - Linux: `apt install direwolf` コマンドをクリップボードにコピー or `pkexec` 自動実行
+  - Windows: GitHub Releases から `.zip` をダウンロード
+  - macOS: `brew install direwolf` をターミナルで実行
+- 常時: バンドル版を最新版に更新するボタン
+
+#### PTT 制御（Direwolf 使用時）
+
+Direwolf の PTT は `NONE` に設定し、アプリ側が Hamlib CAT 経由で制御する。
+
+```
+送信直前: Doppler 補正済み UL 周波数を確定・CAT でリグにセット
+PTT ON:  RigController.set_ptt(True)（CAT コマンド）
+         Direwolf が音声送出（約 0.3〜0.5 秒）
+PTT OFF: RigController.set_ptt(False)
+         Doppler 補正ループを再開
+```
+
+送信中（約 0.5 秒）のドップラー変化は 5〜10 Hz 程度で無視できるため、
+送信中は Doppler 補正ループを停止し、周波数変更を禁止する。
+
+シリアル RTS/DTR による PTT は将来の後付けオプションとして保留。
+
+#### SDR 純 Python 復調パイプライン（受信専用）
+
+Bell 202 AFSK（1200 baud、マーク 1200 Hz / スペース 2200 Hz）を numpy + scipy で復調する。
+CW 復調の既存パイプラインを流用できる。
+
+```
+SDRPipeline の I/Q（~48kHz にデシメーション）
+    → バンドパスフィルタ（900〜2500 Hz、SOS 形式）
+    → mark/space 電力比較（ゴートツェルフィルタ or Hilbert 変換）
+    → ビットスライサー（1200 baud クロック同期）
+    → HDLC フレーム同期・フラグ検出
+    → AX.25 フレームデコード
+    → APRS パーサー（位置・メッセージ・テレメトリー）
+```
+
+AX.25 テレメトリーを送る衛星（FUNcube 等）も同じパイプラインで受信可能。
+
+#### APRS タブ UI 設計
+
+**タブの開閉:**
+- `Communications > APRS` クリックで開く（非常駐）
+- タブ右上の × ボタンでクローズ
+- クローズ時: Direwolf 停止・KISS TCP 切断・SDR 復調停止（Rig/SDR 接続は維持）
+- Rig/SDR どちらも未接続の場合はクローズ状態を維持（タブを開かない）
+- 常駐タブ（Dashboard 等）は × を非表示にする（`tabBar().setTabButton(index, position, None)`）
+
+**レイアウト:**
+```
+┌─ APRS ──────────────────────────────────────────────────── × ┐
+│ Callsign: [JF9SOM  ] SSID: [-9▼] Via: [ARISS          ]      │
+│ Input: SDR (HackRF One)  ← 自動検出・表示のみ                  │
+├──────────────────────────────────────────────────────────────┤
+│ 受信ログ（タイムスタンプ / コールサイン / 内容）                  │
+│  14:23:01  JA1XYZ > APRS,ARISS*: Hello from Tokyo            │
+│  14:22:45  W1ABC  > APRS,ARISS*: [位置情報あり → 地図ピン]     │
+├──────────────────────────────────────────────────────────────┤
+│ To: [JA1XYZ      ]  Message: [                    ]  [Send]  │
+│ （Send は Rig Connect 時のみ有効・SDR 受信専用時はグレーアウト） │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**設定の保存:** コールサイン・SSID・Via パスは `app_settings` に保存（再起動後も維持）。
+
+#### Dashboard 地図への位置表示
+
+位置情報を含む APRS パケットを受信した場合、Dashboard のズームマップに局ピンを表示する。
+
+- ピンにコールサイン ラベルを付ける
+- 衛星ドットとは異なる色・形状（例: ▲マーカー）で区別する
+- タブクローズ時にピンをクリア
+
+#### データ永続化
+
+既存の SQLite DB に `aprs_log` テーブルを追加:
+
+```sql
+CREATE TABLE aprs_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    received_at  DATETIME NOT NULL,
+    callsign     TEXT NOT NULL,
+    via          TEXT,
+    latitude_deg REAL,
+    longitude_deg REAL,
+    comment      TEXT,
+    raw_frame    TEXT,
+    norad_sat    INTEGER   -- パス中に受信した衛星の NORAD ID（任意）
+);
+```
+
+#### Rig Settings — Sound Card タブ（第4タブ）
+
+既存の Rig Settings ダイアログに Sound Card タブを追加する。
+APRS だけでなく将来の FT4・SSTV 等でも共用する音声 I/O 設定。
+
+| 設定項目 | 内容 |
+|---|---|
+| 入力デバイス | sounddevice で列挙したデバイス一覧から選択 |
+| 出力デバイス | 同上 |
+| サンプルレート | 48000 Hz 固定（Direwolf デフォルト） |
+| テストボタン | ループバックテストで設定確認 |
+
+Sound Card タブが未設定の場合、Rig Connect 時も Direwolf を起動しない。
+（APRS タブの Input 欄に「Sound Card not configured」と表示）
