@@ -13,6 +13,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, Signal
 
+from comms.aprs.afsk_demod import AfskDemodulator
 from comms.aprs.direwolf import DirewolfManager, find_direwolf
 from comms.aprs.parser import AprsPacket, Ax25Frame, decode_ax25, parse_aprs
 
@@ -38,6 +39,8 @@ class AprsEngine(QObject):
         super().__init__(parent)
         self._conn = conn
         self._mgr = DirewolfManager()
+        self._demod: AfskDemodulator | None = None
+        self._sdr_pipeline: Any | None = None  # SDRPipeline reference
         self._running = False
 
     # ------------------------------------------------------------------ #
@@ -84,8 +87,36 @@ class AprsEngine(QObject):
         self.status_changed.emit("Connected (Rig + Direwolf)")
         return True, ""
 
+    def start_sdr(self, pipeline: Any) -> tuple[bool, str]:
+        """Start Bell 202 AFSK demodulation on an SDR pipeline (receive only).
+
+        *pipeline* must be an SDRPipeline instance with ``subscribe()`` and
+        a ``_device.sample_rate`` attribute.
+        """
+        if self._running:
+            return True, ""
+        try:
+            sr = int(pipeline._device.sample_rate)
+        except AttributeError:
+            return False, "Cannot determine SDR sample rate."
+
+        self._sdr_pipeline = pipeline
+        self._demod = AfskDemodulator(sample_rate=sr, parent=self)
+        self._demod.frame_received.connect(self._on_kiss_frame)
+        self._demod.start()
+        pipeline.subscribe(self._demod.push_samples)
+
+        self._running = True
+        self.status_changed.emit("Connected (SDR — receive only)")
+        return True, ""
+
     def stop(self) -> None:
-        """Stop Direwolf and all associated threads."""
+        """Stop Direwolf / AFSK demodulator and all associated threads."""
+        if self._sdr_pipeline is not None and self._demod is not None:
+            self._sdr_pipeline.unsubscribe(self._demod.push_samples)
+            self._demod.stop()
+            self._demod = None
+            self._sdr_pipeline = None
         self._mgr.stop()
         self._running = False
         self.status_changed.emit("Stopped")
