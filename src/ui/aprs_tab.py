@@ -70,6 +70,14 @@ class AprsTab(QWidget):
         self._rig_label = ""
         self._sdr_label = ""
 
+        # APRS engine (Direwolf backend)
+        from comms.aprs.engine import AprsEngine
+
+        self._engine = AprsEngine(conn, parent=self)
+        self._engine.packet_received.connect(self._on_packet_received)
+        self._engine.status_changed.connect(self._on_engine_status)
+        self._engine.error_occurred.connect(self._on_engine_error)
+
         self._ensure_db_table()
         self._setup_ui()
         self._load_settings()
@@ -231,9 +239,11 @@ class AprsTab(QWidget):
     def _on_rig_connected(self) -> None:
         self._rig_connected = True
         self._refresh_input_source()
+        self._try_start_engine()
 
     def _on_rig_disconnected(self) -> None:
         self._rig_connected = False
+        self._engine.stop()
         self._refresh_input_source()
 
     def _on_rig2_connected(self) -> None:
@@ -285,6 +295,44 @@ class AprsTab(QWidget):
             self._input_label.setText(_("No audio source — connect a Rig or SDR in Radio Control"))
             self._input_label.setStyleSheet("color: #666;")
             self._send_btn.setEnabled(False)
+
+    def _try_start_engine(self) -> None:
+        """Start Direwolf engine when rig is connected and Sound Card is configured."""
+        if not self._rig_connected or not self._is_soundcard_configured():
+            return
+        if self._engine.is_running:
+            return
+        cs = self._callsign_edit.text().strip().upper()
+        ssid = self._ssid_spin.value()
+        via = self._via_edit.text().strip()
+        if cs:
+            self._engine.start_rig(cs, ssid, via)
+
+    # ------------------------------------------------------------------ #
+    # Engine signal slots
+    # ------------------------------------------------------------------ #
+
+    def _on_packet_received(self, packet: object) -> None:
+        """Handle a decoded APRS packet from the engine."""
+        from comms.aprs.parser import AprsPacket
+
+        if not isinstance(packet, AprsPacket):
+            return
+        self.append_packet(
+            callsign=packet.callsign,
+            via=packet.via,
+            comment=packet.comment,
+            raw_frame=packet.raw_info,
+            lat=packet.latitude,
+            lon=packet.longitude,
+        )
+
+    def _on_engine_status(self, status: str) -> None:
+        self._input_label.setText(status)
+
+    def _on_engine_error(self, msg: str) -> None:
+        self._input_label.setText(f"⚠ {msg}")
+        self._input_label.setStyleSheet("color: orange;")
 
     def _is_soundcard_configured(self) -> bool:
         """Return True when Sound Card settings have been saved."""
@@ -342,7 +390,8 @@ class AprsTab(QWidget):
         self._conn.commit()
 
     def closeEvent(self, event: Any) -> None:
-        """Save settings when the tab widget removes this widget."""
+        """Stop engine and save settings when the tab is closed."""
+        self._engine.stop()
         self._save_settings()
         super().closeEvent(event)
 
@@ -395,20 +444,24 @@ class AprsTab(QWidget):
     # ------------------------------------------------------------------ #
 
     def _on_send(self) -> None:
-        """Transmit an APRS message via Direwolf (backend TODO)."""
+        """Transmit an APRS message via Direwolf KISS TX."""
         to_call = self._to_edit.text().strip().upper()
         msg = self._msg_edit.text().strip()
         if not to_call or not msg:
             return
-        # TODO: pass to Direwolf KISS TX pipeline
-        # For now, echo to the receive log as a sent marker
         self._save_settings()
         my_call = self._callsign_edit.text().strip().upper()
         ssid = self._ssid_spin.value()
+        via = self._via_edit.text().strip()
+
+        if self._engine.is_running:
+            self._engine.send_message(my_call, ssid, via, to_call, msg)
+
+        # Echo to receive log as sent marker
         src = f"{my_call}-{ssid}" if ssid else my_call
         self.append_packet(
             callsign=f"{src}>APRS",
-            via=self._via_edit.text().strip(),
+            via=via,
             comment=f"[TX→{to_call}] {msg}",
             raw_frame="",
         )
