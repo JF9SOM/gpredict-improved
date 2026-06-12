@@ -247,6 +247,7 @@ class AprsTab(QWidget):
             self._try_start_sdr(rig1)
         else:
             self._rig_connected = True
+            self._engine.set_rig(rig1)
             self._try_start_engine()
         self._refresh_input_source()
 
@@ -259,6 +260,7 @@ class AprsTab(QWidget):
             self._engine.stop()
         else:
             self._rig_connected = False
+            self._engine.set_rig(None)
             self._engine.stop()
         self._refresh_input_source()
 
@@ -273,6 +275,7 @@ class AprsTab(QWidget):
             self._try_start_sdr(rig2)
         else:
             self._rig_connected = True
+            self._engine.set_rig(rig2)
             self._try_start_engine()
         self._refresh_input_source()
 
@@ -285,6 +288,7 @@ class AprsTab(QWidget):
             self._engine.stop()
         else:
             self._rig_connected = False
+            self._engine.set_rig(None)
             self._engine.stop()
         self._refresh_input_source()
 
