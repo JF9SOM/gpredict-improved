@@ -167,26 +167,50 @@ class TelemetryTab(QWidget):
             pass
 
     def _on_rig_connected(self) -> None:
-        self._rig_connected = True
-        self._try_start()
+        """Rig 1 connected — may be a Hamlib rig or an SDR adapter."""
+        rc = self._radio_control
+        rig1 = getattr(rc, "_rig1", None)
+        if rig1 is not None and getattr(rig1, "is_sdr", False):
+            self._sdr_connected = True
+            self._try_start_sdr(rig1)
+        else:
+            self._rig_connected = True
+            self._try_start()
+        self._refresh_status()
 
     def _on_rig_disconnected(self) -> None:
-        self._rig_connected = False
-        self._stop_direwolf()
+        rc = self._radio_control
+        rig1 = getattr(rc, "_rig1", None)
+        if rig1 is not None and getattr(rig1, "is_sdr", False):
+            self._sdr_connected = False
+            self._stop_sdr()
+        else:
+            self._rig_connected = False
+            self._stop_direwolf()
         self._refresh_status()
 
     def _on_rig2_connected(self) -> None:
+        """Rig 2 connected — may be a Hamlib rig or an SDR adapter."""
         rc = self._radio_control
         rig2 = getattr(rc, "_rig2", None)
         if rig2 is not None and getattr(rig2, "is_sdr", False):
             self._sdr_connected = True
             self._try_start_sdr(rig2)
+        else:
+            self._rig_connected = True
+            self._try_start()
+        self._refresh_status()
 
     def _on_rig2_disconnected(self) -> None:
-        if self._sdr_connected:
+        rc = self._radio_control
+        rig2 = getattr(rc, "_rig2", None)
+        if rig2 is not None and getattr(rig2, "is_sdr", False):
             self._sdr_connected = False
             self._stop_sdr()
-            self._refresh_status()
+        else:
+            self._rig_connected = False
+            self._stop_direwolf()
+        self._refresh_status()
 
     # ------------------------------------------------------------------ #
     # Direwolf lifecycle

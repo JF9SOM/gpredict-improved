@@ -237,17 +237,33 @@ class AprsTab(QWidget):
     # ------------------------------------------------------------------ #
 
     def _on_rig_connected(self) -> None:
-        self._rig_connected = True
+        """Rig 1 connected — may be a Hamlib rig or an SDR adapter."""
+        rc = self._radio_control
+        rig1 = getattr(rc, "_rig1", None)
+        if rig1 is not None and getattr(rig1, "is_sdr", False):
+            self._sdr_connected = True
+            dev = getattr(rig1, "device_label", "SDR")
+            self._sdr_label = str(dev)
+            self._try_start_sdr(rig1)
+        else:
+            self._rig_connected = True
+            self._try_start_engine()
         self._refresh_input_source()
-        self._try_start_engine()
 
     def _on_rig_disconnected(self) -> None:
-        self._rig_connected = False
-        self._engine.stop()
+        rc = self._radio_control
+        rig1 = getattr(rc, "_rig1", None)
+        if rig1 is not None and getattr(rig1, "is_sdr", False):
+            self._sdr_connected = False
+            self._sdr_label = ""
+            self._engine.stop()
+        else:
+            self._rig_connected = False
+            self._engine.stop()
         self._refresh_input_source()
 
     def _on_rig2_connected(self) -> None:
-        """Rig 2 connected — may be an SDR adapter."""
+        """Rig 2 connected — may be a Hamlib rig or an SDR adapter."""
         rc = self._radio_control
         rig2 = getattr(rc, "_rig2", None)
         if rig2 is not None and getattr(rig2, "is_sdr", False):
@@ -257,6 +273,7 @@ class AprsTab(QWidget):
             self._try_start_sdr(rig2)
         else:
             self._rig_connected = True
+            self._try_start_engine()
         self._refresh_input_source()
 
     def _on_rig2_disconnected(self) -> None:
@@ -268,6 +285,7 @@ class AprsTab(QWidget):
             self._engine.stop()
         else:
             self._rig_connected = False
+            self._engine.stop()
         self._refresh_input_source()
 
     # ------------------------------------------------------------------ #
