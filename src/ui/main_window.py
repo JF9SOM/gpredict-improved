@@ -387,6 +387,8 @@ class MainWindow(QMainWindow):
         self._radio_control.rig2_connected.connect(lambda: self._on_rig_slot_connected(2))
         self._radio_control.rig_disconnected.connect(lambda: self._on_rig_slot_disconnected(1))
         self._radio_control.rig2_disconnected.connect(lambda: self._on_rig_slot_disconnected(2))
+        self._radio_control.sstv_transponder_selected.connect(self._on_open_sstv)
+        self._radio_control.aprs_transponder_selected.connect(self._on_open_aprs)
         self._restore_satellite_filter()
         # Load bundled community transmitters immediately (no network required).
         # This runs on the main thread so satellites are visible before any
@@ -561,6 +563,7 @@ class MainWindow(QMainWindow):
         if comm_menu:
             comm_menu.addAction(_("APRS"), self._on_open_aprs)
             comm_menu.addAction(_("Telemetry"), self._on_open_telemetry)
+            comm_menu.addAction(_("SSTV / SSDV"), self._on_open_sstv)
 
         # Autotrack / Record
         # macOS Cocoa ignores QMenuBar.addAction() — wrap in a single-item menu.
@@ -1430,6 +1433,20 @@ class MainWindow(QMainWindow):
 
         tab = TelemetryTab(self._conn, self._radio_control, parent=self)
         idx = self._tab_widget.addTab(tab, _("Telemetry"))
+        self._tab_widget.setCurrentIndex(idx)
+
+    def _on_open_sstv(self) -> None:
+        """Open the SSTV / SSDV tab (Communications > SSTV / SSDV)."""
+        tab_label = _("SSTV / SSDV")
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == tab_label:
+                self._tab_widget.setCurrentIndex(i)
+                return
+
+        from ui.sstv_tab import SstvTab
+
+        tab = SstvTab(self._conn, self._radio_control, parent=self)
+        idx = self._tab_widget.addTab(tab, tab_label)
         self._tab_widget.setCurrentIndex(idx)
 
     def _update_world_map(self) -> None:

@@ -53,6 +53,10 @@ class RadioControlWidget(QWidget):
     ctcss_send_requested: Signal = Signal(float)
     ctcss_activate_requested: Signal = Signal()  # activation-tone button pressed
     _rig1_connect_done: Signal = Signal(bool)  # internal: True = connected successfully
+    # Emitted when a transponder whose description implies SSTV/SSDV or APRS
+    # is selected — MainWindow uses these to auto-open the matching tab.
+    sstv_transponder_selected: Signal = Signal()
+    aprs_transponder_selected: Signal = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -468,7 +472,18 @@ class RadioControlWidget(QWidget):
 
     def _on_xpdr_changed(self, index: int) -> None:
         if 0 <= index < len(self._transmitters):
-            self.transmitter_changed.emit(self._transmitters[index])
+            xpdr = self._transmitters[index]
+            self.transmitter_changed.emit(xpdr)
+            self._check_comms_auto_open(xpdr)
+
+    def _check_comms_auto_open(self, xpdr: Any) -> None:
+        """Emit auto-open signals based on transponder description / mode."""
+        desc = (xpdr.get("description") or "").upper()
+        mode = (xpdr.get("mode") or "").upper()
+        if "SSTV" in desc or "SSDV" in desc:
+            self.sstv_transponder_selected.emit()
+        elif "APRS" in desc or mode == "AFSK":
+            self.aprs_transponder_selected.emit()
 
     def _update_rig1_status(self) -> None:
         """Refresh the Rig 1 status row and button label."""
