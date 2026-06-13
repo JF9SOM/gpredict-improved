@@ -57,6 +57,7 @@ class RadioControlWidget(QWidget):
     # is selected — MainWindow uses these to auto-open the matching tab.
     sstv_transponder_selected: Signal = Signal()
     aprs_transponder_selected: Signal = Signal()
+    ft4_transponder_selected: Signal = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -487,6 +488,8 @@ class RadioControlWidget(QWidget):
             self.sstv_transponder_selected.emit()
         elif "APRS" in desc or mode == "AFSK":
             self.aprs_transponder_selected.emit()
+        elif "FT4" in desc or "FT8" in desc:
+            self.ft4_transponder_selected.emit()
 
     def _update_rig1_status(self) -> None:
         """Refresh the Rig 1 status row and button label."""
