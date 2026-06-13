@@ -813,7 +813,6 @@ src/
 | 42830 | GhanaSat-1 (BIRDS-1) | GSAT-1 | なし（名前識別用） |
 | 43786 | ITASAT-1 | PY2ITA | EPS 4項目 ※未検証 |
 | 43803 | JY1Sat (JO-97) | JY1SAT | なし（フォーマット非公開） |
-| 43931 | Nexus (FO-99) | JG6YIG | EPS 6項目 ※未検証 |
 | 44829 | DHABISAT (MYSat-2) | A6-DBSAT | なし（名前識別用） |
 | 47311 | Maya-2 (BIRDS-2) | DU3ABE | EPS 4項目 ※未検証 |
 | 47783 | GOLF-TEE (AO-109) | WJ9H | EPS 5項目 ※未検証 |
