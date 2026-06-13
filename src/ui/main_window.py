@@ -1444,7 +1444,15 @@ class MainWindow(QMainWindow):
 
         from ui.sstv_tab import SstvTab
 
-        tab = SstvTab(self._conn, self._radio_control, parent=self)
+        # Pass the APRS engine so SSDV can tap the AX.25 pipeline
+        aprs_engine = None
+        for i in range(self._tab_widget.count()):
+            w = self._tab_widget.widget(i)
+            if hasattr(w, "engine"):
+                aprs_engine = w.engine
+                break
+
+        tab = SstvTab(self._conn, self._radio_control, aprs_engine=aprs_engine, parent=self)
         idx = self._tab_widget.addTab(tab, tab_label)
         self._tab_widget.setCurrentIndex(idx)
 

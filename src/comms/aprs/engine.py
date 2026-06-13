@@ -34,6 +34,7 @@ class AprsEngine(QObject):
     """
 
     packet_received: Signal = Signal(object)
+    raw_frame_received: Signal = Signal(bytes)
     status_changed: Signal = Signal(str)
     error_occurred: Signal = Signal(str)
 
@@ -244,6 +245,7 @@ class AprsEngine(QObject):
 
     def _on_kiss_frame(self, raw: bytes) -> None:
         """Decode an AX.25 frame and emit packet_received."""
+        self.raw_frame_received.emit(raw)
         frame: Ax25Frame | None = decode_ax25(raw)
         if frame is None:
             return
