@@ -169,12 +169,9 @@ class Ft4Tab(QWidget):
         root = QVBoxLayout(self)
         root.setSpacing(6)
 
-        # -- Input source banner (shown when no rig is connected) --
-        self._input_banner = QLabel(
-            _("Input: No audio source — connect Rig or Rig/SDR in Radio Control")
-        )
-        self._input_banner.setWordWrap(True)
-        self._input_banner.setStyleSheet("background:#c0392b;color:white;padding:4px;")
+        # -- Input source indicator (inline label, same style as APRS/SSTV tabs) --
+        self._input_banner = QLabel()
+        self._input_banner.setStyleSheet("color: #f44336;")
         _ft4_help = QLabel(" ? ")
         _ft4_help.setStyleSheet(
             "color:white;background:#2980b9;border-radius:8px;font-weight:bold;padding:2px 6px;"
@@ -188,8 +185,9 @@ class Ft4Tab(QWidget):
         )
         _banner_row = QHBoxLayout()
         _banner_row.setSpacing(6)
-        _banner_row.addWidget(self._input_banner, stretch=1)
+        _banner_row.addWidget(self._input_banner)
         _banner_row.addWidget(_ft4_help)
+        _banner_row.addStretch()
         root.addLayout(_banner_row)
 
         # -- Codec status banner (shown when ft8lib not installed) --
@@ -340,7 +338,7 @@ class Ft4Tab(QWidget):
         # Reflect current connection state at tab-open time
         rig = getattr(rc, "_rig1", None)
         already_connected = rig is not None and getattr(rig, "_connected", False)
-        self._input_banner.setVisible(not already_connected)
+        self._refresh_input_source(already_connected)
 
     # ------------------------------------------------------------------ #
     # Settings persistence                                                 #
@@ -770,7 +768,7 @@ class Ft4Tab(QWidget):
 
     @Slot()
     def _on_rig_connected(self) -> None:
-        self._input_banner.setVisible(False)
+        self._refresh_input_source(connected=True)
         self._status_label.setText(_("Rig connected — ready"))
         # Re-read soundcard settings in case they were updated
         self._load_settings()
@@ -780,8 +778,17 @@ class Ft4Tab(QWidget):
         self._on_halt()
         self._stop_audio_capture()
         self._scheduler.stop()
-        self._input_banner.setVisible(True)
+        self._refresh_input_source(connected=False)
         self._status_label.setText(_("Rig disconnected"))
+
+    def _refresh_input_source(self, connected: bool) -> None:
+        """Update the input-source label text and colour (matches APRS/SSTV style)."""
+        if connected:
+            self._input_banner.setText(_("Input: Rig connected"))
+            self._input_banner.setStyleSheet("color: #4caf50;")
+        else:
+            self._input_banner.setText(_("Input: No audio source — connect Rig in Radio Control"))
+            self._input_banner.setStyleSheet("color: #f44336;")
 
     # ------------------------------------------------------------------ #
     # Scheduler start helper                                               #
