@@ -140,7 +140,7 @@ class GrSatellitesDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(_("gr-satellites"))
+        self.setWindowTitle(_("gr-satellites Installation"))
         self.resize(580, 520)
         self._setup_ui()
 

@@ -609,7 +609,7 @@ class MainWindow(QMainWindow):
             help_menu.addAction(_("SDR Device Installation…"), self._on_sdr_install)
             help_menu.addAction(_("Hamlib Update…"), self._on_hamlib_update)
             help_menu.addAction(_("Direwolf Installation…"), self._on_direwolf_help)
-            help_menu.addAction(_("gr-satellites…"), self._on_gr_satellites_help)
+            help_menu.addAction(_("gr-satellites Installation…"), self._on_gr_satellites_help)
             help_menu.addSeparator()
             help_menu.addAction(_("About"), self._on_about)
             help_menu.addAction(_("GitHub"), self._on_github)
