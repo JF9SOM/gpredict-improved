@@ -790,6 +790,12 @@ class TLEManager:
                     )
                     r.raise_for_status()
                     data = r.json()
+                except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+                    # Silently skip on timeout/connection errors — these are
+                    # expected when the app is shutting down or the network
+                    # is momentarily unavailable.
+                    stats["errors"] += 1
+                    continue
                 except httpx.HTTPError as exc:
                     ename = type(exc).__name__
                     print(f"[TLEManager] provisional TLE fetch error for {fake_id}: {ename}: {exc}")
