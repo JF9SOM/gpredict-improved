@@ -186,10 +186,28 @@ class AprsTab(QWidget):
         row1.addStretch()
         settings_form.addRow(row1)
 
-        # Row 2: input source (read-only display)
+        # Row 2: input source (read-only display) + satellite guide
         self._input_label = QLabel(_("—"))
         self._input_label.setStyleSheet("color: #aaa;")
-        settings_form.addRow(_("Input:"), self._input_label)
+        _aprs_help = QLabel(" ? ")
+        _aprs_help.setStyleSheet(
+            "color:white;background:#2980b9;border-radius:8px;font-weight:bold;padding:2px 6px;"
+        )
+        _aprs_help.setToolTip(
+            "APRS is available via these satellites:\n"
+            "  • ISS (NORAD 25544)  145.825 MHz FM  via ARISS\n"
+            "  • (Other amateur satellites with APRS digipeaters may also be active)\n\n"
+            "Use callsign path ARISS or RS0ISS.\n"
+            "Select ISS in Radio Control to get started."
+        )
+        _input_row_w = QWidget()
+        _input_row_l = QHBoxLayout(_input_row_w)
+        _input_row_l.setContentsMargins(0, 0, 0, 0)
+        _input_row_l.setSpacing(6)
+        _input_row_l.addWidget(self._input_label)
+        _input_row_l.addWidget(_aprs_help)
+        _input_row_l.addStretch()
+        settings_form.addRow(_("Input:"), _input_row_w)
 
         root.addWidget(settings_group)
 

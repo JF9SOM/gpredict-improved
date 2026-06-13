@@ -175,7 +175,22 @@ class Ft4Tab(QWidget):
         )
         self._input_banner.setWordWrap(True)
         self._input_banner.setStyleSheet("background:#c0392b;color:white;padding:4px;")
-        root.addWidget(self._input_banner)
+        _ft4_help = QLabel(" ? ")
+        _ft4_help.setStyleSheet(
+            "color:white;background:#2980b9;border-radius:8px;font-weight:bold;padding:2px 6px;"
+        )
+        _ft4_help.setToolTip(
+            "FT4 is available on:\n"
+            "  • RS-44   (NORAD 44909)  DL 435.612 MHz / UL 145.993 MHz\n"
+            "  • JO-97   (NORAD 43803)  DL 145.857 MHz / UL 435.118 MHz\n"
+            "  • MO-122  (NORAD 60209)  DL 435.812 MHz / UL 145.938 MHz\n\n"
+            "Select one of these satellites in Radio Control to get started."
+        )
+        _banner_row = QHBoxLayout()
+        _banner_row.setSpacing(6)
+        _banner_row.addWidget(self._input_banner, stretch=1)
+        _banner_row.addWidget(_ft4_help)
+        root.addLayout(_banner_row)
 
         # -- Codec status banner (shown when ft8lib not installed) --
         self._codec_banner = QLabel()
