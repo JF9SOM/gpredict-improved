@@ -358,7 +358,8 @@ class SstvTab(QWidget):
             ).fetchone()
             if row:
                 data = json.loads(row[0])
-                return data.get("input_device_index")
+                val = data.get("input_device_index")
+                return int(val) if val is not None else None
         except Exception:
             pass
         return None
