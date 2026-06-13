@@ -1152,11 +1152,21 @@ S 1 Mainはrigctld標準プロトコル。全機種共通。
 - `SV`/`MD` commands via rigctld `w` each take ~2 s (wait for RPRT with 2 s timeout)
 - `send_mode_only()` runs in a background thread to prevent UI freeze
 
+### IC-9700 / IC-9100 / IC-910H / IC-821H (Icom satmode rigs — `_SATMODE_RIG_IDS`)
+- These rigs implement Hamlib **satmode**: firmware always routes Main=RX(DL) and Sub=TX(UL)
+- Direct mode split init: `set_split_vfo(RIG_VFO_MAIN, 1, RIG_VFO_MAIN)` — NOT VFOA/VFOB
+  (The Hamlib icom backend triggers satmode only when `tx_vfo == RIG_VFO_MAIN`)
+- Direct mode freq: `set_freq(RIG_VFO_MAIN, dl_hz)` + `set_split_freq(RIG_VFO_MAIN, ul_hz)`
+- Direct mode mode: `set_mode(dl, 0, RIG_VFO_MAIN)` + `set_mode(ul, 0, RIG_VFO_SUB)`
+- NET mode: `S 1 Main` (same as all rigs) — rigctld backend handles satmode internally; no special handling needed
+- `HamlibDirectController._satmode` flag is set automatically when model_id ∈ `_SATMODE_RIG_IDS`
+
 ### NET mode (rigctld) vs Direct mode (Hamlib built-in)
 - FTX-1F: both NET and Direct work; NET preferred (more stable)
 - FT-991A: both NET and Direct work
   - Direct: `set_mode(RIG_VFO_B)` fails → uses `os.open()` raw serial writes for SV swap
   - NET: uses independent socket for mode/CTCSS commands to avoid Doppler cycle conflict
+- IC-9700 (and other satmode rigs): both NET and Direct work after v0.1.6 satmode fix
 - Detection: use `ctcss_method` setting value (`"ft991"`) — never use `w ID;` (causes 10 s timeout)
 
 ---

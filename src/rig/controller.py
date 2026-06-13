@@ -162,6 +162,24 @@ CTCSS_TABLE: dict[float, int] = {
 
 
 # ---------------------------------------------------------------------------
+# Icom satmode rig model IDs
+# ---------------------------------------------------------------------------
+# These Icom dual-band rigs implement satellite mode (satmode) in their Hamlib
+# backend.  Enabling satmode requires set_split_vfo(RIG_VFO_MAIN, 1,
+# RIG_VFO_MAIN) rather than the generic set_split_vfo(RIG_VFO_A, 1, RIG_VFO_B).
+# Once in satmode the firmware always routes Main=RX(DL) and Sub=TX(UL),
+# so set_freq/set_split_freq must also use RIG_VFO_MAIN.
+_SATMODE_RIG_IDS: frozenset[int] = frozenset(
+    [
+        3081,  # IC-9700
+        3074,  # IC-9100
+        3068,  # IC-910H
+        3062,  # IC-821H
+    ]
+)
+
+
+# ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
 
@@ -401,6 +419,7 @@ class HamlibDirectController(RigController):
         self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._last_dl_hz: float | None = None
         self._last_ul_hz: float | None = None
+        self._satmode: bool = model_id in _SATMODE_RIG_IDS
 
     # -- Connection management --
 
@@ -601,16 +620,20 @@ class HamlibDirectController(RigController):
         vfoa_hz: float | None,
         vfob_hz: float | None,
     ) -> bool:
-        """Set DL (VFOA) and UL (VFOB/split) frequencies with 1 Hz delta suppression.
+        """Set DL and UL frequencies with 1 Hz delta suppression.
 
-        Uses set_freq for the RX VFO and set_split_freq for the TX VFO.
+        Icom satmode rigs (IC-9700 etc.) use RIG_VFO_MAIN for both set_freq
+        and set_split_freq; the firmware routes DL→Main and UL→Sub internally.
+        Generic rigs use VFOA for DL and set_split_freq for UL (VFOB/split TX).
         Skips the command when the frequency has not changed by 1 Hz or more,
         or when the argument is None.
         """
         if not self.is_connected or self._rig is None:
             return False
+        if self._ptt_active:
+            return True
         try:
-            rx_vfo = self._vfo_str_to_const("VFOA")
+            rx_vfo = self._vfo_str_to_const("Main" if self._satmode else "VFOA")
             if vfoa_hz is not None:
                 last_dl = self._last_dl_hz
                 if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
@@ -627,12 +650,15 @@ class HamlibDirectController(RigController):
             return False
 
     def send_mode_only(self, dl_mode: str, ul_mode: str) -> None:
-        """Set mode on VFOA (downlink/RX) and VFOB (uplink/TX).
+        """Set mode on the DL (RX) and UL (TX) VFOs.
 
         Opens a dedicated short-lived serial connection so that the mode can be
         set even when the main tracking connection has already been disconnected
         — mirroring HamlibNetController which opens a fresh TCP socket per call.
         Silently ignores all errors (best-effort).
+
+        Icom satmode rigs use RIG_VFO_MAIN for DL and RIG_VFO_SUB for UL;
+        generic rigs use RIG_VFO_A and RIG_VFO_B respectively.
         """
         logger.info("RigDirect: send_mode_only dl=%s ul=%s", dl_mode, ul_mode)
         if not HAMLIB_AVAILABLE:
@@ -657,12 +683,14 @@ class HamlibDirectController(RigController):
             }
             dl_hamlib = hamlib_mode.get(dl_mode, _H.RIG_MODE_FM)
             ul_hamlib = hamlib_mode.get(ul_mode, _H.RIG_MODE_FM)
+            dl_vfo = _H.RIG_VFO_MAIN if self._satmode else _H.RIG_VFO_A
+            ul_vfo = _H.RIG_VFO_SUB if self._satmode else _H.RIG_VFO_B
             rig = _H.Rig(self._model_id)
             rig.set_conf("rig_pathname", self._port)
             rig.set_conf("serial_speed", str(self._baud_rate))
             rig.open()
-            rig.set_mode(dl_hamlib, 0, _H.RIG_VFO_A)
-            rig.set_mode(ul_hamlib, 0, _H.RIG_VFO_B)
+            rig.set_mode(dl_hamlib, 0, dl_vfo)
+            rig.set_mode(ul_hamlib, 0, ul_vfo)
             logger.info("RigDirect: send_mode_only done")
         except Exception as exc:
             logger.error("RigDirect.send_mode_only: %s", exc)
@@ -727,14 +755,24 @@ class HamlibDirectController(RigController):
     # -- Internal utilities --
 
     def _init_split(self) -> None:
-        """Enable split mode: RX=VFOA (downlink), TX=VFOB (uplink). Called once at connect."""
+        """Enable split mode: RX=DL, TX=UL. Called once at connect.
+
+        Icom satmode rigs (IC-9700 etc.) require set_split_vfo(MAIN, 1, MAIN)
+        to trigger the firmware's satellite mode, where Main=RX and Sub=TX.
+        Generic rigs use the conventional VFOA/VFOB split.
+        """
         if self._rig is None:
             return
         try:
-            rx_vfo = self._vfo_str_to_const("VFOA")
-            tx_vfo = self._vfo_str_to_const("VFOB")
-            self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
-            logger.info("RigDirect: split enabled (RX=VFOA, TX=VFOB)")
+            if self._satmode:
+                vfo_main = self._vfo_str_to_const("Main")
+                self._rig.set_split_vfo(vfo_main, 1, vfo_main)
+                logger.info("RigDirect: satmode split enabled (Main=RX, Sub=TX)")
+            else:
+                rx_vfo = self._vfo_str_to_const("VFOA")
+                tx_vfo = self._vfo_str_to_const("VFOB")
+                self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
+                logger.info("RigDirect: split enabled (RX=VFOA, TX=VFOB)")
         except Exception as exc:
             logger.warning("RigDirect: set_split_vfo failed — %s", exc)
 
