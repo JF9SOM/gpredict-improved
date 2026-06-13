@@ -169,6 +169,14 @@ class Ft4Tab(QWidget):
         root = QVBoxLayout(self)
         root.setSpacing(6)
 
+        # -- Input source banner (shown when no rig is connected) --
+        self._input_banner = QLabel(
+            _("Input: No audio source — connect Rig or Rig/SDR in Radio Control")
+        )
+        self._input_banner.setWordWrap(True)
+        self._input_banner.setStyleSheet("background:#c0392b;color:white;padding:4px;")
+        root.addWidget(self._input_banner)
+
         # -- Codec status banner (shown when ft8lib not installed) --
         self._codec_banner = QLabel()
         self._codec_banner.setWordWrap(True)
@@ -314,6 +322,10 @@ class Ft4Tab(QWidget):
             sig = getattr(rc, sig_name, None)
             if sig is not None:
                 sig.connect(self._on_rig_disconnected)
+        # Reflect current connection state at tab-open time
+        rig = getattr(rc, "_rig1", None)
+        already_connected = rig is not None and getattr(rig, "_connected", False)
+        self._input_banner.setVisible(not already_connected)
 
     # ------------------------------------------------------------------ #
     # Settings persistence                                                 #
@@ -743,6 +755,7 @@ class Ft4Tab(QWidget):
 
     @Slot()
     def _on_rig_connected(self) -> None:
+        self._input_banner.setVisible(False)
         self._status_label.setText(_("Rig connected — ready"))
         # Re-read soundcard settings in case they were updated
         self._load_settings()
@@ -752,6 +765,7 @@ class Ft4Tab(QWidget):
         self._on_halt()
         self._stop_audio_capture()
         self._scheduler.stop()
+        self._input_banner.setVisible(True)
         self._status_label.setText(_("Rig disconnected"))
 
     # ------------------------------------------------------------------ #
