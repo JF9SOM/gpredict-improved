@@ -1449,7 +1449,7 @@ class MainWindow(QMainWindow):
         aprs_engine = None
         for i in range(self._tab_widget.count()):
             w = self._tab_widget.widget(i)
-            if hasattr(w, "engine"):
+            if w is not None and hasattr(w, "engine"):
                 aprs_engine = w.engine
                 break
 
