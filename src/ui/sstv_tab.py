@@ -13,6 +13,7 @@ saved as PNG files either manually or automatically.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -74,15 +75,18 @@ class SstvTab(QWidget):
         self,
         conn: Any,
         radio_control: QWidget,
+        aprs_engine: Any | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._conn = conn
         self._radio_control = radio_control
+        self._aprs_engine: Any | None = aprs_engine
 
         self._rig_connected: bool = False
         self._sdr_connected: bool = False
-        self._decoder: Any | None = None  # SstvDecoder instance
+        self._decoder: Any | None = None  # SstvDecoder or SsdvDecoder instance
+        self._ssdv_decoder: Any | None = None  # SsdvDecoder (persistent across reconnects)
         self._current_image: QImage | None = None
         self._current_mode: str = "Robot36"
         self._sat_name: str = ""
@@ -261,6 +265,40 @@ class SstvTab(QWidget):
             self._decoder.stop()
             self._decoder = None
 
+    def _start_ssdv(self) -> None:
+        """Create SsdvDecoder and subscribe to the APRS engine's raw AX.25 frames."""
+        from comms.sstv.ssdv import SsdvDecoder
+
+        if self._ssdv_decoder is None:
+            self._ssdv_decoder = SsdvDecoder(parent=self)
+            self._ssdv_decoder.image_updated.connect(self._on_ssdv_image)
+            self._ssdv_decoder.status_changed.connect(self._status_label.setText)
+            self._ssdv_decoder.error_occurred.connect(self._status_label.setText)
+
+        if self._aprs_engine is not None:
+            self._aprs_engine.raw_frame_received.connect(self._on_ax25_frame)
+            self._status_label.setText(_("SSDV: waiting for AX.25 frames…"))
+        else:
+            self._status_label.setText(_("SSDV: open APRS tab first to enable AX.25 reception"))
+
+    def _stop_ssdv(self) -> None:
+        """Disconnect from the AX.25 pipeline and flush any buffered packets."""
+        if self._aprs_engine is not None:
+            with contextlib.suppress(RuntimeError):
+                self._aprs_engine.raw_frame_received.disconnect(self._on_ax25_frame)
+        if self._ssdv_decoder is not None:
+            self._ssdv_decoder.flush()
+
+    def _on_ax25_frame(self, raw: bytes) -> None:
+        """Filter raw AX.25 frames for SSDV packets and feed the decoder."""
+        # SSDV packets start with sync byte 0x55 followed by type 0x66
+        if len(raw) >= 2 and raw[0] == 0x55 and raw[1] == 0x66 and self._ssdv_decoder is not None:
+            self._ssdv_decoder.push_packet(raw)
+
+    def _on_ssdv_image(self, qimg: QImage) -> None:
+        """Handle a completed SSDV image (same flow as SSTV image_complete)."""
+        self._on_image_complete(qimg, "SSDV")
+
     # ------------------------------------------------------------------ #
     # Decoder signal handlers
     # ------------------------------------------------------------------ #
@@ -309,9 +347,11 @@ class SstvTab(QWidget):
     def _on_mode_changed(self, mode_text: str) -> None:
         """Switch between SSTV and SSDV decoder."""
         self._stop_decoder()
+        self._stop_ssdv()
         if mode_text == "SSTV":
             self._start_decoder()
-        # SSDV: decoder started on demand via push_packet()
+        else:
+            self._start_ssdv()
 
     def _on_history_clicked(self, item: QListWidgetItem) -> None:
         """Show clicked thumbnail at full size in the main view."""
@@ -401,4 +441,5 @@ class SstvTab(QWidget):
 
     def closeEvent(self, event: Any) -> None:
         self._stop_decoder()
+        self._stop_ssdv()
         super().closeEvent(event)

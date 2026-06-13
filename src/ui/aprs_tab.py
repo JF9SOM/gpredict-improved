@@ -388,6 +388,11 @@ class AprsTab(QWidget):
         self._pos_send_btn.setEnabled(can_tx)
         self._refresh_pos_label()
 
+    @property
+    def engine(self) -> Any:
+        """Return the APRSEngine instance (for SSDV cross-tab wiring)."""
+        return self._engine
+
     def _try_start_engine(self) -> None:
         """Start Direwolf engine when rig is connected and Sound Card is configured."""
         if not self._rig_connected or not self._is_soundcard_configured():
