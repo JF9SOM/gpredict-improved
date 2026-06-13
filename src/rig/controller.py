@@ -766,9 +766,12 @@ class HamlibDirectController(RigController):
             return
         try:
             if self._satmode:
-                vfo_main = self._vfo_str_to_const("Main")
-                self._rig.set_split_vfo(vfo_main, 1, vfo_main)
-                logger.info("RigDirect: satmode split enabled (Main=RX, Sub=TX)")
+                # set_split_vfo(MAIN, 1, MAIN) only sends a CI-V read query on
+                # Icom rigs rather than a SET command.  Use set_conf("satmode", "1")
+                # which maps directly to the icom backend's satmode flag and sends
+                # the correct CI-V write frame (16 59 01 fd).
+                self._rig.set_conf("satmode", "1")
+                logger.info("RigDirect: satmode enabled via set_conf (Main=RX, Sub=TX)")
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 tx_vfo = self._vfo_str_to_const("VFOB")
@@ -1306,19 +1309,42 @@ class HamlibNetController(RigController):
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
             sock.connect((self._host, self._port))
-            if rigctld_ul:
-                sock.sendall(b"V Sub\n")
-                sock.recv(64)
-                sock.sendall(f"M {rigctld_ul} 0\n".encode())
-                sock.recv(64)
-            if rigctld_dl:
-                sock.sendall(b"V Main\n")
-                sock.recv(64)
-                sock.sendall(f"M {rigctld_dl} 0\n".encode())
-                sock.recv(64)
+
+            def _send_recv(cmd: str) -> str:
+                sock.sendall((cmd + "\n").encode())
+                buf = b""
+                with contextlib.suppress(OSError):
+                    while b"RPRT" not in buf:
+                        chunk = sock.recv(256)
+                        if not chunk:
+                            break
+                        buf += chunk
+                resp = buf.decode(errors="replace").strip()
+                if resp and "RPRT 0" not in resp:
+                    logger.warning("RigNet.send_mode_only: %r -> %r", cmd, resp)
+                return resp
+
+            if self._vfo_mode:
+                # Extended rigctld protocol: VFO is specified inline — no active-VFO
+                # switch needed.  This works correctly for IC-9700 satmode where the
+                # V command may be rejected while satmode is active.
+                if rigctld_ul:
+                    _send_recv(f"\\set_mode Sub {rigctld_ul} 0")
+                if rigctld_dl:
+                    _send_recv(f"\\set_mode Main {rigctld_dl} 0")
+            else:
+                # Legacy rigctld protocol: switch active VFO then set mode.
+                if rigctld_ul:
+                    _send_recv("V Sub")
+                    _send_recv(f"M {rigctld_ul} 0")
+                if rigctld_dl:
+                    _send_recv("V Main")
+                    _send_recv(f"M {rigctld_dl} 0")
+
             sock.close()
-        except Exception:
-            pass
+            logger.info("RigNet: send_mode_only dl=%s ul=%s done", dl_mode, ul_mode)
+        except Exception as exc:
+            logger.warning("RigNet: send_mode_only failed: %s", exc)
 
     def get_rig_info(self) -> RigInfo | None:
         if not self.is_connected:
