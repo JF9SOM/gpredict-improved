@@ -735,6 +735,18 @@ class TLEManager:
 
                 except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
                     stats["errors"] += 1
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 404:
+                        # 404 = CelesTrak no longer tracks this satellite → hide it
+                        self._conn.execute(
+                            "UPDATE satellites SET is_hidden = 2, updated_at = ?"
+                            " WHERE norad_cat_id = ?",
+                            (now, norad),
+                        )
+                        stats["hidden"] += 1
+                    else:
+                        logger.warning(f"legacy TLE fetch error for {norad}: {exc}")
+                        stats["errors"] += 1
                 except httpx.HTTPError as exc:
                     logger.warning(f"legacy TLE fetch error for {norad}: {exc}")
                     stats["errors"] += 1
