@@ -480,7 +480,9 @@ class RadioControlWidget(QWidget):
         """Emit auto-open signals based on transponder description / mode."""
         desc = (xpdr.get("description") or "").upper()
         mode = (xpdr.get("mode") or "").upper()
-        if "SSTV" in desc or "SSDV" in desc:
+        # "SSTV" / "SSDV" explicit, plus "IMAGING" and "MODE V" for ISS
+        # (SATNOGS labels ISS 145.800 MHz SSTV as "Mode V imaging")
+        if "SSTV" in desc or "SSDV" in desc or "IMAGING" in desc or "MODE V" in desc:
             self.sstv_transponder_selected.emit()
         elif "APRS" in desc or mode == "AFSK":
             self.aprs_transponder_selected.emit()
