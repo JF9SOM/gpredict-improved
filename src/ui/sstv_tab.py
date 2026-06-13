@@ -85,8 +85,9 @@ class SstvTab(QWidget):
 
         self._rig_connected: bool = False
         self._sdr_connected: bool = False
-        self._decoder: Any | None = None  # SstvDecoder or SsdvDecoder instance
+        self._decoder: Any | None = None  # SstvDecoder instance
         self._ssdv_decoder: Any | None = None  # SsdvDecoder (persistent across reconnects)
+        self._audio_stream: Any | None = None  # sounddevice InputStream (soundcard path)
         self._current_image: QImage | None = None
         self._current_mode: str = "Robot36"
         self._sat_name: str = ""
@@ -210,18 +211,32 @@ class SstvTab(QWidget):
             rc.transmitter_changed.connect(self._on_transmitter_changed)
 
     def _on_rig_connected(self) -> None:
-        self._rig_connected = True
+        rc = self._radio_control
+        for attr in ("_rig1", "_rig2"):
+            rig = getattr(rc, attr, None)
+            if rig is not None and getattr(rig, "is_sdr", False):
+                self._sdr_connected = True
+                break
+        else:
+            self._rig_connected = True
         self._refresh_input_source()
+        if self._decoder is not None and self._mode_combo.currentText() == "SSTV":
+            self._connect_audio_source()
 
     def _on_rig_disconnected(self) -> None:
+        self._disconnect_audio_source()
         self._rig_connected = False
+        self._sdr_connected = False
         self._refresh_input_source()
 
     def _on_sdr_connected(self) -> None:
         self._sdr_connected = True
         self._refresh_input_source()
+        if self._decoder is not None and self._mode_combo.currentText() == "SSTV":
+            self._connect_audio_source()
 
     def _on_sdr_disconnected(self) -> None:
+        self._disconnect_audio_source()
         self._sdr_connected = False
         self._refresh_input_source()
 
@@ -258,12 +273,95 @@ class SstvTab(QWidget):
         self._decoder.mode_detected.connect(self._on_mode_detected)
         self._decoder.status_changed.connect(self._status_label.setText)
         self._decoder.start()
+        self._connect_audio_source()
         self._status_label.setText(_("Decoder started — listening for sync…"))
 
     def _stop_decoder(self) -> None:
+        self._disconnect_audio_source()
         if self._decoder is not None:
             self._decoder.stop()
             self._decoder = None
+
+    def _connect_audio_source(self) -> None:
+        """Connect the current audio source to the active SSTV decoder."""
+        if self._decoder is None:
+            return
+        pipeline = self._find_sdr_pipeline()
+        if pipeline is not None:
+            with contextlib.suppress(RuntimeError):
+                pipeline.audio_ready.connect(self._decoder.push_samples)
+        elif self._rig_connected:
+            self._start_soundcard_capture()
+
+    def _disconnect_audio_source(self) -> None:
+        """Disconnect all audio sources from the decoder."""
+        pipeline = self._find_sdr_pipeline()
+        if pipeline is not None and self._decoder is not None:
+            with contextlib.suppress(RuntimeError):
+                pipeline.audio_ready.disconnect(self._decoder.push_samples)
+        self._stop_soundcard_capture()
+
+    def _find_sdr_pipeline(self) -> Any | None:
+        """Return the first SDR pipeline found in Rig 1 or Rig 2 slots."""
+        rc = self._radio_control
+        for attr in ("_rig1", "_rig2"):
+            rig = getattr(rc, attr, None)
+            if rig is not None and getattr(rig, "is_sdr", False):
+                return getattr(rig, "_pipeline", None)
+        return None
+
+    def _start_soundcard_capture(self) -> None:
+        """Open a sounddevice InputStream and feed audio to the SSTV decoder."""
+        if self._audio_stream is not None:
+            return
+        try:
+            import sounddevice as sd
+        except ImportError:
+            self._status_label.setText(_("sounddevice not installed — pip install sounddevice"))
+            return
+        in_idx = self._load_soundcard_input_device()
+        decoder = self._decoder
+
+        def _callback(indata: Any, frames: int, time: Any, status: Any) -> None:
+            if decoder is not None:
+                import numpy as np
+
+                decoder.push_samples(indata[:, 0].astype(np.float32))
+
+        try:
+            stream = sd.InputStream(
+                device=in_idx,
+                samplerate=44100,
+                channels=1,
+                dtype="float32",
+                callback=_callback,
+            )
+            stream.start()
+            self._audio_stream = stream
+        except Exception as exc:
+            self._status_label.setText(_("Sound card error: ") + str(exc))
+
+    def _stop_soundcard_capture(self) -> None:
+        if self._audio_stream is not None:
+            with contextlib.suppress(Exception):
+                self._audio_stream.stop()
+                self._audio_stream.close()
+            self._audio_stream = None
+
+    def _load_soundcard_input_device(self) -> int | None:
+        """Read the configured soundcard input device index from app_settings."""
+        try:
+            import json
+
+            row = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'soundcard_settings'"
+            ).fetchone()
+            if row:
+                data = json.loads(row[0])
+                return data.get("input_device_index")
+        except Exception:
+            pass
+        return None
 
     def _start_ssdv(self) -> None:
         """Create SsdvDecoder and subscribe to the APRS engine's raw AX.25 frames."""
@@ -440,6 +538,6 @@ class SstvTab(QWidget):
     # ------------------------------------------------------------------ #
 
     def closeEvent(self, event: Any) -> None:
-        self._stop_decoder()
+        self._stop_decoder()  # also calls _disconnect_audio_source -> _stop_soundcard_capture
         self._stop_ssdv()
         super().closeEvent(event)
