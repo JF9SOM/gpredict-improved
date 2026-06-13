@@ -234,7 +234,7 @@ class SstvTab(QWidget):
             src = _("Sound Card")
             self._source_label.setStyleSheet("color: #4caf50;")
         else:
-            src = _("No audio source — connect Rig or SDR")
+            src = _("No audio source — connect Rig or SDR in Radio Control")
             self._source_label.setStyleSheet("color: #f44336;")
         self._source_label.setText(_("Input: ") + src)
 
