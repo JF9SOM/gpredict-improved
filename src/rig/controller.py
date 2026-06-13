@@ -419,6 +419,7 @@ class HamlibDirectController(RigController):
         self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._last_dl_hz: float | None = None
         self._last_ul_hz: float | None = None
+        self._ptt_active: bool = False
         self._satmode: bool = model_id in _SATMODE_RIG_IDS
 
     # -- Connection management --
