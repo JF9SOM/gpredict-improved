@@ -187,7 +187,7 @@ class AprsTab(QWidget):
         settings_form.addRow(row1)
 
         # Row 2: input source (read-only display) + satellite guide
-        self._input_label = QLabel(_("—"))
+        self._input_label = QLabel(_("Input: —"))
         self._input_label.setStyleSheet("color: #aaa;")
         _aprs_help = QLabel(" ? ")
         _aprs_help.setStyleSheet(
@@ -207,7 +207,7 @@ class AprsTab(QWidget):
         _input_row_l.addWidget(self._input_label)
         _input_row_l.addWidget(_aprs_help)
         _input_row_l.addStretch()
-        settings_form.addRow(_("Input:"), _input_row_w)
+        settings_form.addRow(_input_row_w)
 
         root.addWidget(settings_group)
 
@@ -383,22 +383,24 @@ class AprsTab(QWidget):
 
         can_tx = self._rig_connected and sc_ok
         if can_tx:
-            self._input_label.setText(_("Sound Card + Direwolf  (send + receive)"))
+            self._input_label.setText(_("Input: Sound Card + Direwolf  (send + receive)"))
             self._input_label.setStyleSheet("color: #7bed9f;")
             self._send_btn.setEnabled(True)
         elif self._sdr_connected:
             label = self._sdr_label or "SDR"
-            self._input_label.setText(_("{dev}  (receive only — SDR)").format(dev=label))
+            self._input_label.setText(_("Input: {dev}  (receive only — SDR)").format(dev=label))
             self._input_label.setStyleSheet("color: #4a9eff;")
             self._send_btn.setEnabled(False)
         elif self._rig_connected and not sc_ok:
             self._input_label.setText(
-                _("Sound Card not configured — open Rig Settings > Sound Card")
+                _("Input: Sound Card not configured — open Rig Settings > Sound Card")
             )
             self._input_label.setStyleSheet("color: orange;")
             self._send_btn.setEnabled(False)
         else:
-            self._input_label.setText(_("No audio source — connect Rig or SDR in Radio Control"))
+            self._input_label.setText(
+                _("Input: No audio source — connect Rig or SDR in Radio Control")
+            )
             self._input_label.setStyleSheet("color: #f44336;")
             self._send_btn.setEnabled(False)
 
