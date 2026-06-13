@@ -1,7 +1,7 @@
 """FT4 codec — wraps ft8_lib via ctypes for encode/decode.
 
-TX path: pack77() → genft4() → symbols_to_audio() → sounddevice + PTT
-RX path: capture audio → spectrogram → ft8_lib LDPC decode
+TX path: ftx_message_encode() → ft4_encode() → symbols_to_audio() → sounddevice + PTT
+RX path: capture audio → build waterfall → ftx_find_candidates() → ftx_decode_candidate()
 
 ft8_lib (kgoba/ft8_lib) must be installed as a shared library:
   Linux:   libft8.so
@@ -31,17 +31,25 @@ SAMPLE_RATE: int = 12_000
 FT4_SYMBOL_COUNT: int = 105
 FT4_SAMPLES_PER_SYM: int = 576  # 12000 Hz / (500/24 baud) = exactly 576
 FT4_SYMBOL_RATE: float = SAMPLE_RATE / FT4_SAMPLES_PER_SYM  # ≈ 20.833 Hz
-FT4_TONE_SPACING: float = FT4_SYMBOL_RATE  # Hz between adjacent tones (= symbol rate)
+FT4_TONE_SPACING: float = FT4_SYMBOL_RATE  # Hz between adjacent tones
 FT4_TONE_COUNT: int = 4
 FT4_PERIOD: float = 6.0  # period duration (s)
 FT4_TX_OFFSET: float = 0.5  # TX starts 0.5 s into the period
 FT4_TX_DURATION: float = FT4_SYMBOL_COUNT * FT4_SAMPLES_PER_SYM / SAMPLE_RATE  # ≈ 5.04 s
 
-_PAYLOAD_BYTES: int = 10  # pack77 output: 77 bits padded to 10 bytes
-_MSG_BUFLEN: int = 25  # unpack77 / ft8_decode output buffer
-_MAX_CANDIDATES: int = 200
-_LDPC_ITERATIONS: int = 20
+_PAYLOAD_BYTES: int = 10  # FTX_PAYLOAD_LENGTH_BYTES: 77 bits padded to 10 bytes
+_MSG_BUFLEN: int = 25  # output buffer for ftx_message_decode
+_MAX_CANDIDATES: int = 140
+_LDPC_ITERATIONS: int = 25
 _MIN_SYNC_SCORE: int = 10
+
+# Waterfall frequency range for decode
+_WF_F_MIN: float = 200.0
+_WF_F_MAX: float = 3000.0
+
+# ftx_protocol_t enum values
+_FTX_PROTOCOL_FT4: int = 0
+_FTX_PROTOCOL_FT8: int = 1
 
 # ---------------------------------------------------------------------------
 # Decoded message dataclass
@@ -59,23 +67,36 @@ class Ft4Message:
 
 
 # ---------------------------------------------------------------------------
-# ctypes structures (matching kgoba/ft8_lib ≥ v0.4 API)
+# ctypes structures (kgoba/ft8_lib current API)
 # ---------------------------------------------------------------------------
 
 
-class _MagArray(ctypes.Structure):
-    """Log-magnitude spectrogram passed to ft8_lib decode functions."""
+class _FtxMessage(ctypes.Structure):
+    """ftx_message_t: { uint8_t payload[10]; uint16_t hash; }"""
 
     _fields_ = [
-        ("num_blocks", ctypes.c_int),
-        ("num_bins", ctypes.c_int),
-        ("block_stride", ctypes.c_int),
-        ("mag", ctypes.POINTER(ctypes.c_float)),
+        ("payload", ctypes.c_uint8 * _PAYLOAD_BYTES),
+        ("hash", ctypes.c_uint16),
     ]
 
 
-class _Candidate(ctypes.Structure):
-    """Sync candidate returned by ft8_find_sync."""
+class _FtxWaterfall(ctypes.Structure):
+    """ftx_waterfall_t: spectrogram passed to find/decode functions."""
+
+    _fields_ = [
+        ("max_blocks", ctypes.c_int),
+        ("num_blocks", ctypes.c_int),
+        ("num_bins", ctypes.c_int),
+        ("time_osr", ctypes.c_int),
+        ("freq_osr", ctypes.c_int),
+        ("mag", ctypes.POINTER(ctypes.c_uint8)),
+        ("block_stride", ctypes.c_int),
+        ("protocol", ctypes.c_int),  # ftx_protocol_t enum
+    ]
+
+
+class _FtxCandidate(ctypes.Structure):
+    """ftx_candidate_t: sync candidate returned by ftx_find_candidates."""
 
     _fields_ = [
         ("score", ctypes.c_int16),
@@ -83,6 +104,18 @@ class _Candidate(ctypes.Structure):
         ("freq_offset", ctypes.c_int16),
         ("time_sub", ctypes.c_uint8),
         ("freq_sub", ctypes.c_uint8),
+    ]
+
+
+class _FtxDecodeStatus(ctypes.Structure):
+    """ftx_decode_status_t: decode result status."""
+
+    _fields_ = [
+        ("freq", ctypes.c_float),
+        ("time", ctypes.c_float),
+        ("ldpc_errors", ctypes.c_int),
+        ("crc_extracted", ctypes.c_uint16),
+        ("crc_calculated", ctypes.c_uint16),
     ]
 
 
@@ -125,8 +158,8 @@ def _find_ft8lib() -> ctypes.CDLL | None:
         try:
             lib = ctypes.CDLL(path)
             # Smoke test: essential encode symbols must exist
-            _ = lib.pack77
-            _ = lib.genft4
+            _ = lib.ftx_message_encode
+            _ = lib.ft4_encode
             return lib
         except (OSError, AttributeError):
             continue
@@ -139,8 +172,7 @@ def _find_ft8lib() -> ctypes.CDLL | None:
 
 
 class _Ft8LibBindings:
-    """Thin ctypes wrapper around ft8_lib.  Separated from Ft4Codec so that
-    prototype setup errors are contained."""
+    """Thin ctypes wrapper around ft8_lib."""
 
     def __init__(self, lib: ctypes.CDLL) -> None:
         self._lib = lib
@@ -149,66 +181,67 @@ class _Ft8LibBindings:
         self._setup_decode_prototypes()
 
     def _setup_encode_prototypes(self) -> None:
-        # int pack77(const char *msg, uint8_t *c77)
-        self._lib.pack77.restype = ctypes.c_int
-        self._lib.pack77.argtypes = [
-            ctypes.c_char_p,
-            ctypes.POINTER(ctypes.c_uint8),
-        ]
-        # int unpack77(const uint8_t *c77, char *msg)
-        self._lib.unpack77.restype = ctypes.c_int
-        self._lib.unpack77.argtypes = [
-            ctypes.POINTER(ctypes.c_uint8),
+        # ftx_message_rc_t ftx_message_encode(ftx_message_t*, hash_if*, const char*)
+        self._lib.ftx_message_encode.restype = ctypes.c_int
+        self._lib.ftx_message_encode.argtypes = [
+            ctypes.POINTER(_FtxMessage),
+            ctypes.c_void_p,  # hash_if (NULL for standard messages)
             ctypes.c_char_p,
         ]
-        # void genft4(const uint8_t *payload, uint8_t *tones)
-        self._lib.genft4.restype = None
-        self._lib.genft4.argtypes = [
+        # void ft4_encode(const uint8_t* payload, uint8_t* tones)
+        self._lib.ft4_encode.restype = None
+        self._lib.ft4_encode.argtypes = [
             ctypes.POINTER(ctypes.c_uint8),
             ctypes.POINTER(ctypes.c_uint8),
+        ]
+        # ftx_message_rc_t ftx_message_decode(const ftx_message_t*, void*, char*, void*)
+        self._lib.ftx_message_decode.restype = ctypes.c_int
+        self._lib.ftx_message_decode.argtypes = [
+            ctypes.POINTER(_FtxMessage),
+            ctypes.c_void_p,  # hash_if (NULL)
+            ctypes.c_char_p,
+            ctypes.c_void_p,  # offsets (NULL)
         ]
 
     def _setup_decode_prototypes(self) -> None:
         try:
-            # int ft8_find_sync(const MagArray *power, int num_cands,
-            #                   Candidate *heap, int min_score) -> int
-            self._lib.ft8_find_sync.restype = ctypes.c_int
-            self._lib.ft8_find_sync.argtypes = [
-                ctypes.POINTER(_MagArray),
+            # int ftx_find_candidates(const ftx_waterfall_t*, int, ftx_candidate_t[], int)
+            self._lib.ftx_find_candidates.restype = ctypes.c_int
+            self._lib.ftx_find_candidates.argtypes = [
+                ctypes.POINTER(_FtxWaterfall),
                 ctypes.c_int,
-                ctypes.POINTER(_Candidate),
+                ctypes.POINTER(_FtxCandidate),
                 ctypes.c_int,
             ]
-            # bool ft8_decode(const MagArray *power, const Candidate *cand,
-            #                 int ldpc_iters, char *msg, uint8_t *a91, float *snr)
-            self._lib.ft8_decode.restype = ctypes.c_bool
-            self._lib.ft8_decode.argtypes = [
-                ctypes.POINTER(_MagArray),
-                ctypes.POINTER(_Candidate),
+            # bool ftx_decode_candidate(const ftx_waterfall_t*, const ftx_candidate_t*,
+            #                           int, ftx_message_t*, ftx_decode_status_t*)
+            self._lib.ftx_decode_candidate.restype = ctypes.c_bool
+            self._lib.ftx_decode_candidate.argtypes = [
+                ctypes.POINTER(_FtxWaterfall),
+                ctypes.POINTER(_FtxCandidate),
                 ctypes.c_int,
-                ctypes.c_char_p,
-                ctypes.POINTER(ctypes.c_uint8),
-                ctypes.POINTER(ctypes.c_float),
+                ctypes.POINTER(_FtxMessage),
+                ctypes.POINTER(_FtxDecodeStatus),
             ]
             self._decode_available = True
         except AttributeError:
-            pass  # older ft8_lib without decode API — TX-only mode
+            pass  # older build without decode API
 
     # ------------------------------------------------------------------ #
     # Encode path                                                          #
     # ------------------------------------------------------------------ #
 
-    def pack77(self, message: str) -> bytes | None:
-        """Pack text to 10-byte FT4/FT8 payload. Returns None on bad message."""
-        buf = (ctypes.c_uint8 * _PAYLOAD_BYTES)()
-        ret = self._lib.pack77(message.encode("ascii"), buf)
-        return bytes(buf) if ret == 0 else None
+    def encode_message(self, text: str) -> bytes | None:
+        """Encode text to 10-byte payload. Returns None on invalid message."""
+        msg = _FtxMessage()
+        rc = self._lib.ftx_message_encode(ctypes.byref(msg), None, text.encode("ascii"))
+        return bytes(msg.payload) if rc == 0 else None
 
-    def genft4(self, payload: bytes) -> bytes:
+    def generate_tones(self, payload: bytes) -> bytes:
         """Generate 105 FT4 tone values (0-3) from 10-byte payload."""
         buf_in = (ctypes.c_uint8 * _PAYLOAD_BYTES)(*payload)
         buf_out = (ctypes.c_uint8 * FT4_SYMBOL_COUNT)()
-        self._lib.genft4(buf_in, buf_out)
+        self._lib.ft4_encode(buf_in, buf_out)
         return bytes(buf_out)
 
     # ------------------------------------------------------------------ #
@@ -217,61 +250,63 @@ class _Ft8LibBindings:
 
     def decode_waterfall(
         self,
-        mag: NDArray[np.float32],
+        mag_uint8: NDArray[np.uint8],
         num_blocks: int,
         num_bins: int,
+        bin_hz: float,
     ) -> list[Ft4Message]:
-        """Run ft8_lib sync + LDPC decode on a spectrogram array.
+        """Run ftx_lib sync + LDPC decode on a uint8 spectrogram.
 
-        mag must be shape (num_blocks, num_bins), contiguous float32.
-        Returns list of decoded Ft4Message objects.
+        mag_uint8: shape (num_blocks, num_bins), contiguous uint8.
+        bin_hz: Hz per frequency bin.
         """
         if not self._decode_available:
             return []
 
-        flat = np.ascontiguousarray(mag[:num_blocks, :num_bins], dtype=np.float32)
-        flat_p = flat.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        flat = np.ascontiguousarray(mag_uint8[:num_blocks, :num_bins], dtype=np.uint8)
+        flat_p = flat.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8))
 
-        wf = _MagArray(
+        wf = _FtxWaterfall(
+            max_blocks=num_blocks,
             num_blocks=num_blocks,
             num_bins=num_bins,
-            block_stride=num_bins,
+            time_osr=1,
+            freq_osr=1,
             mag=flat_p,
+            block_stride=num_bins,
+            protocol=_FTX_PROTOCOL_FT4,
         )
-        candidates = (_Candidate * _MAX_CANDIDATES)()
-        n_found = self._lib.ft8_find_sync(
-            ctypes.byref(wf),
-            _MAX_CANDIDATES,
-            candidates,
-            _MIN_SYNC_SCORE,
+        candidates = (_FtxCandidate * _MAX_CANDIDATES)()
+        n_found = self._lib.ftx_find_candidates(
+            ctypes.byref(wf), _MAX_CANDIDATES, candidates, _MIN_SYNC_SCORE
         )
 
         results: list[Ft4Message] = []
         msg_buf = ctypes.create_string_buffer(_MSG_BUFLEN)
-        a91 = (ctypes.c_uint8 * 11)()
-        snr = ctypes.c_float(0.0)
 
         for i in range(n_found):
-            ok: bool = self._lib.ft8_decode(
+            msg = _FtxMessage()
+            status = _FtxDecodeStatus()
+            ok: bool = self._lib.ftx_decode_candidate(
                 ctypes.byref(wf),
                 ctypes.byref(candidates[i]),
                 _LDPC_ITERATIONS,
-                msg_buf,
-                a91,
-                ctypes.byref(snr),
+                ctypes.byref(msg),
+                ctypes.byref(status),
             )
             if ok:
-                text = msg_buf.value.decode("ascii", errors="replace").strip()
-                freq = candidates[i].freq_offset * FT4_TONE_SPACING
-                dt = candidates[i].time_offset * FT4_SAMPLES_PER_SYM / SAMPLE_RATE
-                results.append(
-                    Ft4Message(
-                        text=text,
-                        freq_hz=freq,
-                        snr_db=float(snr.value),
-                        dt_sec=dt,
+                rc = self._lib.ftx_message_decode(ctypes.byref(msg), None, msg_buf, None)
+                if rc == 0:
+                    text = msg_buf.value.decode("ascii", errors="replace").strip()
+                    freq = _WF_F_MIN + candidates[i].freq_offset * bin_hz
+                    results.append(
+                        Ft4Message(
+                            text=text,
+                            freq_hz=freq,
+                            snr_db=0.0,  # SNR not directly available in this API
+                            dt_sec=float(status.time),
+                        )
                     )
-                )
         return results
 
 
@@ -314,21 +349,34 @@ def symbols_to_audio(
 def compute_waterfall(
     audio: NDArray[np.float32],
     sample_rate: int = SAMPLE_RATE,
-) -> NDArray[np.float32]:
-    """Compute log-magnitude spectrogram suitable for ft8_lib decode.
+) -> tuple[NDArray[np.uint8], int, int, float]:
+    """Compute uint8 spectrogram for ft8_lib decode.
 
-    Returns shape (num_blocks, num_bins) float32 where
-    num_bins = FFT_SIZE // 2 + 1 and each block covers one FT4 symbol period.
+    Returns (mag_uint8, num_blocks, num_bins, bin_hz) where
+    mag_uint8 has shape (num_blocks, num_bins).
     """
-    spf = int(round(sample_rate / FT4_SYMBOL_RATE))
-    num_bins = spf // 2 + 1
-    n_blocks = int(np.ceil(len(audio) / spf))
-    padded = np.zeros(n_blocks * spf, dtype=np.float32)
-    padded[: len(audio)] = audio
-    blocks = padded.reshape(n_blocks, spf)
-    window = np.hanning(spf).astype(np.float32)
-    fft_mag = np.abs(np.fft.rfft(blocks * window, axis=1)).astype(np.float32)
-    return np.log10(np.maximum(fft_mag[:, :num_bins], 1e-10))
+    nfft = FT4_SAMPLES_PER_SYM  # one FFT per symbol
+    bin_hz = sample_rate / nfft  # Hz per bin ≈ 20.833 Hz
+    min_bin = int(_WF_F_MIN / bin_hz)
+    max_bin = int(_WF_F_MAX / bin_hz)
+    num_bins = max_bin - min_bin
+
+    n_blocks = len(audio) // nfft
+    window = np.hanning(nfft).astype(np.float32)
+    mag_rows: list[NDArray[np.uint8]] = []
+
+    for i in range(n_blocks):
+        block = audio[i * nfft : (i + 1) * nfft] * window
+        fft_mag = np.abs(np.fft.rfft(block))
+        bins = fft_mag[min_bin:max_bin]
+        mag_db = 10.0 * np.log10(np.maximum(bins**2, 1e-10))
+        uint8_vals = np.clip((2.0 * (mag_db + 120.0)).astype(np.int32), 0, 255).astype(np.uint8)
+        mag_rows.append(uint8_vals)
+
+    if not mag_rows:
+        return np.zeros((0, num_bins), dtype=np.uint8), 0, num_bins, bin_hz
+
+    return np.stack(mag_rows), n_blocks, num_bins, bin_hz
 
 
 # ---------------------------------------------------------------------------
@@ -373,10 +421,10 @@ class Ft4Codec:
         """
         if self._lib is None:
             return None
-        payload = self._lib.pack77(message)
+        payload = self._lib.encode_message(message)
         if payload is None:
             return None
-        tones = self._lib.genft4(payload)
+        tones = self._lib.generate_tones(payload)
         return symbols_to_audio(tones, base_freq, sample_rate)
 
     def decode_audio(
@@ -390,6 +438,7 @@ class Ft4Codec:
         """
         if self._lib is None or not self._lib._decode_available:
             return []
-        wf = compute_waterfall(audio, sample_rate)
-        num_blocks, num_bins = wf.shape
-        return self._lib.decode_waterfall(wf, num_blocks, num_bins)
+        mag, num_blocks, num_bins, bin_hz = compute_waterfall(audio, sample_rate)
+        if num_blocks == 0:
+            return []
+        return self._lib.decode_waterfall(mag, num_blocks, num_bins, bin_hz)
