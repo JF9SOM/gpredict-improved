@@ -29,7 +29,7 @@ try:
 
     _SCIPY = True
 except ImportError:
-    _sp = None  # type: ignore
+    _sp = None
     _SCIPY = False
 
 # ---------------------------------------------------------------------------
@@ -143,15 +143,19 @@ def _sample_range(
 # ---------------------------------------------------------------------------
 
 
+def _ms(t: float, sample_rate: int) -> int:
+    """Convert milliseconds to sample count."""
+    return int(t / 1000.0 * sample_rate)
+
+
 def _decode_robot36(
     freq: np.ndarray, sync_pos: int, sample_rate: int, image: np.ndarray, line: int
 ) -> None:
     """Decode one Robot36 line pair into *image* (H×W×3 uint8, YCbCr→RGB)."""
     sr = sample_rate
-    ms = lambda t: int(t / 1000.0 * sr)  # noqa: E731
 
-    y_start = sync_pos + ms(_R36_SYNC_MS) + ms(_R36_PORCH_MS)
-    c_start = y_start + ms(_R36_Y_MS) + ms(_R36_SEP_MS) + ms(_R36_CPORCH_MS)
+    y_start = sync_pos + _ms(_R36_SYNC_MS, sr) + _ms(_R36_PORCH_MS, sr)
+    c_start = y_start + _ms(_R36_Y_MS, sr) + _ms(_R36_SEP_MS, sr) + _ms(_R36_CPORCH_MS, sr)
 
     y_vals = _sample_range(freq, y_start, _R36_Y_MS, sr, _R36_PIXELS)
     c_vals = _sample_range(freq, c_start, _R36_C_MS, sr, _R36_PIXELS)
@@ -185,12 +189,11 @@ def _decode_pd120(
 ) -> None:
     """Decode one PD120 line into *image* (H×W×3 uint8)."""
     sr = sample_rate
-    ms = lambda t: int(t / 1000.0 * sr)  # noqa: E731
 
-    y1_start = sync_pos + ms(_PD120_SYNC_MS) + ms(_PD120_PORCH_MS)
-    cb_start = y1_start + ms(_PD120_Y_MS)
-    cr_start = cb_start + ms(_PD120_C_MS)
-    y2_start = cr_start + ms(_PD120_C_MS)
+    y1_start = sync_pos + _ms(_PD120_SYNC_MS, sr) + _ms(_PD120_PORCH_MS, sr)
+    cb_start = y1_start + _ms(_PD120_Y_MS, sr)
+    cr_start = cb_start + _ms(_PD120_C_MS, sr)
+    y2_start = cr_start + _ms(_PD120_C_MS, sr)
 
     y1 = _sample_range(freq, y1_start, _PD120_Y_MS, sr, _PD120_PIXELS).astype(np.float32)
     cb = _sample_range(freq, cb_start, _PD120_C_MS, sr, _PD120_PIXELS).astype(np.float32) - 128.0

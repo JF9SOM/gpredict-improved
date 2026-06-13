@@ -340,7 +340,7 @@ class SstvTab(QWidget):
             _("PNG Images (*.png)"),
         )
         if path:
-            self._current_image.save(path, "PNG")
+            self._current_image.save(path)
             self._status_label.setText(_("Saved: ") + os.path.basename(path))
 
     def _on_clear(self) -> None:
@@ -392,13 +392,13 @@ class SstvTab(QWidget):
         save_dir.mkdir(parents=True, exist_ok=True)
         filename = f"SSTV_{self._sat_name or 'image'}_{ts.strftime('%Y%m%d_%H%M%S')}.png"
         path = str(save_dir / filename)
-        qimg.save(path, "PNG")
+        qimg.save(path)
         return path
 
     # ------------------------------------------------------------------ #
     # Lifecycle
     # ------------------------------------------------------------------ #
 
-    def closeEvent(self, event: Any) -> None:  # type: ignore[override]
+    def closeEvent(self, event: Any) -> None:
         self._stop_decoder()
         super().closeEvent(event)
