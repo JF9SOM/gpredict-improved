@@ -127,10 +127,11 @@ class SstvTab(QWidget):
         )
         _sstv_help.setToolTip(
             "SSTV / SSDV is available from:\n"
-            "  • ISS (NORAD 25544)  145.800 MHz FM  — Robot36 / PD120\n"
+            "  • ISS (NORAD 25544)  145.800 MHz FM  — PD120  (Mode V)\n"
+            "  • ISS (NORAD 25544)  437.550 MHz FM  — Robot36  (Mode U)\n"
             "    (Events are announced at https://ariss.psnc.pl)\n"
-            "  • IO-86 / FUNcube-1 (NORAD 39444)  435.880 MHz FM\n"
-            "    (Occasional SSDV events)\n\n"
+            "  • IO-86 (NORAD 39444)  435.880 MHz FM\n"
+            "    (Occasional SSDV experiments)\n\n"
             "Select the satellite in Radio Control to get started."
         )
         top.addWidget(_sstv_help)
