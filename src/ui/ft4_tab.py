@@ -816,8 +816,8 @@ class Ft4Tab(QWidget):
     # Cleanup on tab close                                                 #
     # ------------------------------------------------------------------ #
 
-    def closeEvent(self, event: Any) -> None:  # type: ignore[override]
+    def closeEvent(self, event: Any) -> None:
         self._on_halt()
         self._stop_audio_capture()
         self._scheduler.stop()
-        super().closeEvent(event)  # type: ignore[arg-type]
+        super().closeEvent(event)
