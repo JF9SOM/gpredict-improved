@@ -121,6 +121,20 @@ class SstvTab(QWidget):
         self._source_label.setStyleSheet("color: gray;")
         top.addWidget(self._source_label)
 
+        _sstv_help = QLabel(" ? ")
+        _sstv_help.setStyleSheet(
+            "color:white;background:#2980b9;border-radius:8px;font-weight:bold;padding:2px 6px;"
+        )
+        _sstv_help.setToolTip(
+            "SSTV / SSDV is available from:\n"
+            "  • ISS (NORAD 25544)  145.800 MHz FM  — Robot36 / PD120\n"
+            "    (Events are announced at https://ariss.psnc.pl)\n"
+            "  • IO-86 / FUNcube-1 (NORAD 39444)  435.880 MHz FM\n"
+            "    (Occasional SSDV events)\n\n"
+            "Select the satellite in Radio Control to get started."
+        )
+        top.addWidget(_sstv_help)
+
         top.addStretch()
 
         self._auto_save_cb = QCheckBox(_("Auto-save PNG"))
