@@ -380,8 +380,8 @@ class AprsTab(QWidget):
             self._input_label.setStyleSheet("color: orange;")
             self._send_btn.setEnabled(False)
         else:
-            self._input_label.setText(_("No audio source — connect a Rig or SDR in Radio Control"))
-            self._input_label.setStyleSheet("color: #666;")
+            self._input_label.setText(_("No audio source — connect Rig or SDR in Radio Control"))
+            self._input_label.setStyleSheet("color: #f44336;")
             self._send_btn.setEnabled(False)
 
         # Position send requires TX capability; update button and QTH label
