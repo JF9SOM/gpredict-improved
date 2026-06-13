@@ -531,6 +531,8 @@ class TLEManager:
                     r = await client.get(url_ct, params={"GROUP": group, "FORMAT": "TLE"})
                     r.raise_for_status()
                     _process_tle_text(r.text, f"celestrak-{group}")
+                except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+                    stats["errors"] += 1
                 except httpx.HTTPError as exc:
                     print(f"[TLEManager] active fetch error ({group}): {exc}")
                     stats["errors"] += 1
@@ -572,6 +574,9 @@ class TLEManager:
                             )
                             resp.raise_for_status()
                             data = resp.json()
+                    except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+                        stats["errors"] += 1
+                        return
                     except Exception as exc:
                         print(f"[TLEManager] SATNOGS TLE fallback error {norad}: {exc}")
                         stats["errors"] += 1
@@ -725,6 +730,8 @@ class TLEManager:
                         )
                         stats["hidden"] += 1
 
+                except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+                    stats["errors"] += 1
                 except httpx.HTTPError as exc:
                     print(f"[TLEManager] legacy TLE fetch error for {norad}: {exc}")
                     stats["errors"] += 1
