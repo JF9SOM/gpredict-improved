@@ -450,7 +450,24 @@ jobs:
         shell: pwsh
         run: |
           Set-MpPreference -DisableRealtimeMonitoring $true
-          choco install nsis -y --no-progress
+          # NSIS is pre-installed on windows-latest runners; only install if missing.
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          if (Test-Path "$nsisPath\makensis.exe") {
+            Write-Host "NSIS already installed at $nsisPath"
+          } else {
+            Write-Host "NSIS not found, installing via Chocolatey..."
+            $maxRetries = 3
+            for ($i = 1; $i -le $maxRetries; $i++) {
+              choco install nsis -y --no-progress
+              if ($LASTEXITCODE -eq 0) { Write-Host "NSIS installed successfully"; break }
+              if ($i -lt $maxRetries) {
+                Write-Host "Attempt $i failed, retrying in 15 seconds..."
+                Start-Sleep -Seconds 15
+              } else {
+                throw "NSIS installation failed after $maxRetries attempts"
+              }
+            }
+          }
 
       - name: Build with PyInstaller
         shell: pwsh
