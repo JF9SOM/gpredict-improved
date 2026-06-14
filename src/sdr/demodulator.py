@@ -14,6 +14,7 @@ Supported modes:
 from __future__ import annotations
 
 import logging
+import threading
 from enum import Enum
 
 import numpy as np
@@ -74,6 +75,12 @@ class Demodulator:
                 "scipy is required for SDR demodulation. "
                 "Install it with: pip install 'gpredict-improved[sdr]'"
             )
+        # Protects all filter coefficients and state from concurrent access.
+        # set_mode/set_input_rate/set_* run on the Qt UI thread;
+        # process() runs on the SDRPipeline QThread.  Without this lock,
+        # _build_filters() can overwrite numpy arrays mid-read on Windows,
+        # causing a crash in the scipy C extension.
+        self._lock = threading.Lock()
         self._input_rate = input_rate
         self._mode = DemodMode.USB
         self._audio_gain: float = 1.0
@@ -94,38 +101,44 @@ class Demodulator:
 
     def set_mode(self, mode: DemodMode) -> None:
         """Switch demodulation mode. Rebuilds filters."""
-        self._mode = mode
-        self._fm_phase = 0.0
-        self._dc_zi_i = np.zeros(1)
-        self._dc_zi_q = np.zeros(1)
-        self._build_filters()
+        with self._lock:
+            self._mode = mode
+            self._fm_phase = 0.0
+            self._dc_zi_i = np.zeros(1)
+            self._dc_zi_q = np.zeros(1)
+            self._build_filters()
 
     def set_input_rate(self, rate: float) -> None:
         """Update the I/Q input sample rate and rebuild filters."""
-        self._input_rate = rate
-        self._fm_phase = 0.0
-        self._dc_zi_i = np.zeros(1)
-        self._dc_zi_q = np.zeros(1)
-        self._build_filters()
+        with self._lock:
+            self._input_rate = rate
+            self._fm_phase = 0.0
+            self._dc_zi_i = np.zeros(1)
+            self._dc_zi_q = np.zeros(1)
+            self._build_filters()
 
     def set_audio_gain(self, gain: float) -> None:
         """Set a linear output gain (1.0 = unity)."""
-        self._audio_gain = max(0.0, gain)
+        with self._lock:
+            self._audio_gain = max(0.0, gain)
 
     def set_agc(self, enabled: bool) -> None:
-        self._agc_enabled = enabled
-        if not enabled:
-            self._agc_level = 1.0
+        with self._lock:
+            self._agc_enabled = enabled
+            if not enabled:
+                self._agc_level = 1.0
 
     def set_ssb_bandwidth(self, bw_hz: float) -> None:
         """Set SSB audio bandwidth and rebuild filters."""
-        self._ssb_bw = max(500.0, min(bw_hz, 6_000.0))
-        self._build_filters()
+        with self._lock:
+            self._ssb_bw = max(500.0, min(bw_hz, 6_000.0))
+            self._build_filters()
 
     def set_cw_pitch(self, pitch_hz: float) -> None:
         """Set CW sidetone pitch and rebuild BPF."""
-        self._cw_pitch = max(200.0, min(pitch_hz, 1_500.0))
-        self._build_filters()
+        with self._lock:
+            self._cw_pitch = max(200.0, min(pitch_hz, 1_500.0))
+            self._build_filters()
 
     def process(self, iq: np.ndarray) -> np.ndarray:
         """
@@ -135,18 +148,19 @@ class Demodulator:
         """
         if len(iq) == 0:
             return np.array([], dtype=np.float32)
-        try:
-            if self._mode == DemodMode.NFM:
-                return self._demod_nfm(iq)
-            if self._mode == DemodMode.USB:
-                return self._demod_ssb(iq, upper=True)
-            if self._mode == DemodMode.LSB:
-                return self._demod_ssb(iq, upper=False)
-            if self._mode == DemodMode.CW:
-                return self._demod_cw(iq)
-        except Exception:
-            logger.exception("Demodulator.process error")
-        return np.zeros(int(len(iq) * AUDIO_RATE / self._input_rate), dtype=np.float32)
+        with self._lock:
+            try:
+                if self._mode == DemodMode.NFM:
+                    return self._demod_nfm(iq)
+                if self._mode == DemodMode.USB:
+                    return self._demod_ssb(iq, upper=True)
+                if self._mode == DemodMode.LSB:
+                    return self._demod_ssb(iq, upper=False)
+                if self._mode == DemodMode.CW:
+                    return self._demod_cw(iq)
+            except Exception:
+                logger.exception("Demodulator.process error")
+            return np.zeros(int(len(iq) * AUDIO_RATE / self._input_rate), dtype=np.float32)
 
     # ------------------------------------------------------------------
     # Demodulation internals
