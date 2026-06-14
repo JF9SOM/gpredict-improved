@@ -766,24 +766,42 @@ class HamlibDirectController(RigController):
     def _init_split(self) -> None:
         """Enable split/satmode. Called once at connect.
 
-        Icom satmode rigs (IC-9700 etc.): set_conf("satmode", "1") sends the
-        correct CI-V write frame (16 59 01 fd).  set_split_vfo(MAIN, 1, MAIN)
-        only generates a CI-V read query on these rigs and must not be used.
+        Icom satmode rigs (IC-9700 etc.): rig.set_func(RIG_FUNC_SATMODE, 1)
+        sends the correct CI-V write frame (fe fe a2 e0 16 59 01 fd) via
+        icom_set_func().  set_conf("satmode", "1") only sets an internal Hamlib
+        flag and does NOT send a CI-V command; set_split_vfo(MAIN, 1, MAIN)
+        only generates a CI-V read query (16 59 fd) — both are wrong.
+        Falls back to set_conf if RIG_FUNC_SATMODE is not in the binding.
         Generic rigs: conventional VFOA/VFOB split via set_split_vfo.
         """
         if self._rig is None:
             return
         try:
             if self._satmode:
-                self._rig.set_conf("satmode", "1")
-                logger.info("RigDirect: satmode enabled via set_conf (Main=RX, Sub=TX)")
+                _H = self._hamlib
+                if _H is not None and hasattr(_H, "RIG_FUNC_SATMODE"):
+                    vfo_curr = self._vfo_str_to_const("VFOA")  # RIG_VFO_CURR fallback
+                    if hasattr(_H, "RIG_VFO_CURR"):
+                        vfo_curr = int(_H.RIG_VFO_CURR)
+                    self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
+                    logger.info(
+                        "RigDirect: satmode ON via set_func(RIG_FUNC_SATMODE) "
+                        "(CI-V 16 59 01 fd sent)"
+                    )
+                else:
+                    # Fallback: older Hamlib binding without RIG_FUNC_SATMODE constant.
+                    self._rig.set_conf("satmode", "1")
+                    logger.info(
+                        "RigDirect: satmode ON via set_conf fallback "
+                        "(RIG_FUNC_SATMODE not in binding)"
+                    )
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 tx_vfo = self._vfo_str_to_const("VFOB")
                 self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
                 logger.info("RigDirect: split enabled (RX=VFOA, TX=VFOB)")
         except Exception as exc:
-            logger.warning("RigDirect: set_split_vfo failed — %s", exc)
+            logger.warning("RigDirect: _init_split failed — %s", exc)
 
     def _vfo_str_to_const(self, vfo: str) -> int:
         """Convert a VFO string to the corresponding Hamlib constant (or 0 in mock mode)."""
