@@ -340,12 +340,14 @@ class SdrDevice:
 
     def set_center_freq(self, freq_hz: float) -> bool:
         """Tune the center frequency in Hz."""
+        import SoapySDR
+
         with self._lock:
             self._center_freq = freq_hz
             if self._dev is None:
                 return True
             try:
-                self._dev.setFrequency(0, 0, freq_hz)
+                self._dev.setFrequency(SoapySDR.SOAPY_SDR_RX, 0, freq_hz)
                 return True
             except Exception:
                 logger.exception("set_center_freq failed")
@@ -440,12 +442,14 @@ class SdrDevice:
 
     def set_ppm(self, ppm: float) -> bool:
         """Set frequency correction in parts per million."""
+        import SoapySDR
+
         with self._lock:
             self._ppm = ppm
             if self._dev is None:
                 return True
             try:
-                self._dev.setFrequencyComponent(0, 0, "CORR", ppm)
+                self._dev.setFrequencyComponent(SoapySDR.SOAPY_SDR_RX, 0, "CORR", ppm)
                 return True
             except Exception:
                 # Not all drivers support PPM correction via this call
