@@ -1999,7 +1999,14 @@ class MainWindow(QMainWindow):
         updated immediately) so the Doppler cycle's F/I commands cannot race
         with the V commands inside send_mode_only().  send_mode_only() itself
         runs in a background thread.  The user must reconnect manually.
+
+        Satmode NET rigs (IC-9700 etc.): S 1 Main resets VFO modes, so
+        send_mode_only() must run AFTER connect() completes.  When the rig is
+        already connected we can call it immediately; when it is not yet
+        connected we skip here and let _on_rig_slot_connected() handle it.
         """
+        from rig.controller import HamlibNetController
+
         if self._rig_controller is None or self._current_transmitter is None:
             return
         mode = str(self._current_transmitter.get("mode") or "")
@@ -2009,6 +2016,9 @@ class MainWindow(QMainWindow):
         dl_mode = mode
         ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         rig = self._rig_controller
+        # Satmode NET rigs: if not yet connected, defer until _on_rig_slot_connected().
+        if isinstance(rig, HamlibNetController) and rig._satmode and not rig.is_connected:
+            return
         if rig.is_connected and self._ctcss_method != "ft991":
             self._disconnect_rig()  # UI update must happen on the UI thread
         logger.info(
@@ -3052,8 +3062,34 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_rig_slot_connected(self, slot: int) -> None:
-        """Called when Rig 1 or Rig 2 connects.  Starts SDR pipeline if the slot is an SDR."""
-        from rig.controller import SdrRigAdapter
+        """Called when Rig 1 or Rig 2 connects.  Starts SDR pipeline if the slot is an SDR.
+
+        For satmode NET rigs (IC-9700 etc.), also sends mode after connect so that
+        the mode command arrives after S 1 Main has activated satmode (which resets
+        VFO modes on these rigs).  Only slot 1 (primary rig) participates in mode
+        tracking.
+        """
+        from rig.controller import HamlibNetController, SdrRigAdapter
+
+        # Apply mode after satmode activation for slot-1 NET rigs.
+        if slot == 1:
+            rig = self._rig_controller
+            if (
+                isinstance(rig, HamlibNetController)
+                and rig._satmode
+                and self._current_transmitter is not None
+            ):
+                mode = str(self._current_transmitter.get("mode") or "")
+                if mode:
+                    invert = bool(self._current_transmitter.get("invert", False))
+                    dl_mode = mode
+                    ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
+
+                    def _do_send_satmode() -> None:
+                        rig.send_mode_only(dl_mode, ul_mode)  # type: ignore[union-attr]
+
+                    threading.Thread(target=_do_send_satmode, daemon=True).start()
+
         from sdr import SOAPY_AVAILABLE
 
         if not SOAPY_AVAILABLE:
