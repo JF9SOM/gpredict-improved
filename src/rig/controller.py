@@ -162,13 +162,9 @@ CTCSS_TABLE: dict[float, int] = {
 
 
 # ---------------------------------------------------------------------------
-# Icom satmode rig model IDs
+# Icom satmode rig identifiers
 # ---------------------------------------------------------------------------
-# These Icom dual-band rigs implement satellite mode (satmode) in their Hamlib
-# backend.  Enabling satmode requires set_split_vfo(RIG_VFO_MAIN, 1,
-# RIG_VFO_MAIN) rather than the generic set_split_vfo(RIG_VFO_A, 1, RIG_VFO_B).
-# Once in satmode the firmware always routes Main=RX(DL) and Sub=TX(UL),
-# so set_freq/set_split_freq must also use RIG_VFO_MAIN.
+# Direct mode: model IDs used by HamlibDirectController._satmode
 _SATMODE_RIG_IDS: frozenset[int] = frozenset(
     [
         3081,  # IC-9700
@@ -178,6 +174,17 @@ _SATMODE_RIG_IDS: frozenset[int] = frozenset(
     ]
 )
 
+# NET mode: rigctld reports the connected rig name via the _ command.
+# HamlibNetController queries this at connect time to auto-detect satmode rigs
+# without requiring any user configuration.
+_SATMODE_RIG_NAMES: frozenset[str] = frozenset(
+    [
+        "IC-9700",
+        "IC-9100",
+        "IC-910H",
+        "IC-821H",
+    ]
+)
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -656,6 +663,7 @@ class HamlibDirectController(RigController):
         Opens a dedicated short-lived serial connection so that the mode can be
         set even when the main tracking connection has already been disconnected
         — mirroring HamlibNetController which opens a fresh TCP socket per call.
+        Icom satmode rigs use RIG_VFO_MAIN/SUB; generic rigs use RIG_VFO_A/B.
         Silently ignores all errors (best-effort).
 
         Icom satmode rigs use RIG_VFO_MAIN for DL and RIG_VFO_SUB for UL;
@@ -756,20 +764,17 @@ class HamlibDirectController(RigController):
     # -- Internal utilities --
 
     def _init_split(self) -> None:
-        """Enable split mode: RX=DL, TX=UL. Called once at connect.
+        """Enable split/satmode. Called once at connect.
 
-        Icom satmode rigs (IC-9700 etc.) require set_split_vfo(MAIN, 1, MAIN)
-        to trigger the firmware's satellite mode, where Main=RX and Sub=TX.
-        Generic rigs use the conventional VFOA/VFOB split.
+        Icom satmode rigs (IC-9700 etc.): set_conf("satmode", "1") sends the
+        correct CI-V write frame (16 59 01 fd).  set_split_vfo(MAIN, 1, MAIN)
+        only generates a CI-V read query on these rigs and must not be used.
+        Generic rigs: conventional VFOA/VFOB split via set_split_vfo.
         """
         if self._rig is None:
             return
         try:
             if self._satmode:
-                # set_split_vfo(MAIN, 1, MAIN) only sends a CI-V read query on
-                # Icom rigs rather than a SET command.  Use set_conf("satmode", "1")
-                # which maps directly to the icom backend's satmode flag and sends
-                # the correct CI-V write frame (16 59 01 fd).
                 self._rig.set_conf("satmode", "1")
                 logger.info("RigDirect: satmode enabled via set_conf (Main=RX, Sub=TX)")
             else:
@@ -851,10 +856,16 @@ class HamlibNetController(RigController):
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
         self._cached_model_name: str = ""  # fetched once on connect and cached
+        self._satmode: bool = False  # set in connect() after querying rig name via _
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
 
     # -- Connection management --
+
+    @property
+    def is_satmode(self) -> bool:
+        """True when the connected rig uses satmode (e.g. IC-9700)."""
+        return self._satmode
 
     @property
     def is_connected(self) -> bool:
@@ -895,6 +906,16 @@ class HamlibNetController(RigController):
                     self._state = RigState.ERROR
                 logger.error("RigNet: S 1 Main timed out or failed — aborting connect")
                 return False
+            # Query rig name via the _ command (after S 1 Main, so satmode is already
+            # active on the rig).  _fetch_model_name() uses a raw socket operation that
+            # does not go through _cmd_lock, so it is safe to call here without holding
+            # any lock.  The result is used to auto-detect satmode rigs: for these rigs
+            # send_mode_only() must be deferred until after connect() so that satmode is
+            # active before the V Sub / M commands are issued.
+            self._cached_model_name = self._fetch_model_name()
+            self._satmode = self._cached_model_name in _SATMODE_RIG_NAMES
+            if self._satmode:
+                logger.info("RigNet: satmode rig detected (%s)", self._cached_model_name)
             return True
         except OSError as exc:
             with self._lock:

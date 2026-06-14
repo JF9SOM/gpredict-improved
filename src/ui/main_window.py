@@ -2017,7 +2017,7 @@ class MainWindow(QMainWindow):
         ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         rig = self._rig_controller
         # Satmode NET rigs: if not yet connected, defer until _on_rig_slot_connected().
-        if isinstance(rig, HamlibNetController) and rig._satmode and not rig.is_connected:
+        if isinstance(rig, HamlibNetController) and rig.is_satmode and not rig.is_connected:
             return
         if rig.is_connected and self._ctcss_method != "ft991":
             self._disconnect_rig()  # UI update must happen on the UI thread
@@ -3076,7 +3076,7 @@ class MainWindow(QMainWindow):
             rig = self._rig_controller
             if (
                 isinstance(rig, HamlibNetController)
-                and rig._satmode
+                and rig.is_satmode
                 and self._current_transmitter is not None
             ):
                 mode = str(self._current_transmitter.get("mode") or "")
