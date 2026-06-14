@@ -999,9 +999,15 @@ class HamlibNetController(RigController):
     def _fetch_model_name(self) -> str:
         """Fetch the model name once at connect time using the _ command.
 
-        Operates on the raw socket directly, bypassing _cmd(), so that an
-        unsupported _ command or a timeout does not break the connection —
-        it falls back to "host:port" instead.
+        rigctld responds to _ with a multi-line block, e.g.:
+            Model name:\tIC-9700
+            Mfg name:\tIcom
+            ...
+            RPRT 0
+
+        We extract the value after "Model name:" so the result matches the
+        strings in _SATMODE_RIG_NAMES ("IC-9700" etc.).  Falls back to
+        "host:port" if the command is unsupported or times out.
         """
         if self._sock is None:
             return f"{self._host}:{self._port}"
@@ -1017,7 +1023,17 @@ class HamlibNetController(RigController):
                 data += chunk
                 if b"RPRT" in data:
                     break
-            resp = data.decode(errors="replace").strip()
+            resp = data.decode(errors="replace")
+            for line in resp.splitlines():
+                line = line.strip()
+                if line.lower().startswith("model name"):
+                    # "Model name:\tIC-9700" → "IC-9700"
+                    parts = line.split(":", 1)
+                    if len(parts) == 2:
+                        name = parts[1].strip()
+                        logger.info("RigNet: rigctld rig model = %r", name)
+                        return name
+            # Fallback: return first non-RPRT line (old single-line rigctld behaviour)
             lines = [
                 ln.strip() for ln in resp.splitlines() if ln.strip() and not ln.startswith("RPRT")
             ]
