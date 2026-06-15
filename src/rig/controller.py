@@ -700,9 +700,14 @@ class HamlibDirectController(RigController):
                         last_ul = self._last_ul_hz
                         now = time.monotonic()
                         elapsed = now - self._last_ul_update_time
-                        is_fm = self._current_dl_mode in ("FM", "DIGITALVOICE")
-                        _UL_THRESH = 10.0 if is_fm else 20.0
-                        _UL_MAX_S = 5.0 if is_fm else 15.0
+                        is_fm = self._current_dl_mode in ("FM", "AFSK", "DIGITALVOICE")
+                        # FM same-band split: VFO-B switch causes display flicker on
+                        # IC-9100.  FM/AFSK capture range (±5 kHz) exceeds ISS max
+                        # Doppler (±3.5 kHz at 145 MHz), so infrequent UL updates are
+                        # fine.  2 kHz threshold + 60 s ceiling minimises flicker while
+                        # keeping UL within the capture range throughout the pass.
+                        _UL_THRESH = 2000.0 if is_fm else 20.0
+                        _UL_MAX_S = 60.0 if is_fm else 15.0
                         if (
                             last_ul is None
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
@@ -797,20 +802,21 @@ class HamlibDirectController(RigController):
                 "CW": _H.RIG_MODE_CW,
                 "CW-R": _H.RIG_MODE_CWR,
                 "AM": _H.RIG_MODE_AM,
-                "AFSK": _H.RIG_MODE_PKTFM,
+                # AFSK (e.g. APRS) is carried over FM; PKTFM is not universally
+                # supported (IC-9100 ignores it and leaves the rig in the previous
+                # mode).  Plain FM is the correct receiver mode for APRS monitoring.
+                "AFSK": _H.RIG_MODE_FM,
                 "BPSK": _H.RIG_MODE_PKTUSB,
             }
             dl_hamlib = hamlib_mode.get(dl_mode, _H.RIG_MODE_FM)
             ul_hamlib = hamlib_mode.get(ul_mode, _H.RIG_MODE_FM)
-            # For satmode rigs: use Main/Sub VFOs for cross-band pairs.
-            # Same-band pairs (V/V FM etc.) fall back to VFO-A/B because IC-9100
-            # satmode always forces Main and Sub to DIFFERENT bands.
-            _dl_is_same_band = (
-                self._last_dl_hz is not None
-                and self._last_ul_hz is not None
-                and self._freq_band(self._last_dl_hz) == self._freq_band(self._last_ul_hz)
-            )
-            _use_satmode_vfo = self._satmode and not _dl_is_same_band
+            # For satmode rigs: use Main/Sub VFOs only while satmode is active
+            # (cross-band operation).  When satmode has been exited (same-band
+            # duplex path called _satmode_exit), use VFOA/VFOB so that mode is
+            # set on the correct split VFOs.  Using _satmode_active avoids the
+            # earlier _last_ul_hz=None race that selected wrong VFOs on the very
+            # first mode-set call after connect.
+            _use_satmode_vfo = self._satmode and self._satmode_active
             dl_vfo = _H.RIG_VFO_MAIN if _use_satmode_vfo else _H.RIG_VFO_A
             # RIG_VFO_SUB (0x02000000) is remapped to VFOB by vfo_fixup →
             # ic9700_set_vfo sends CI-V 07 01 (VFO-B of Main band) instead of
