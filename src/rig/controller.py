@@ -455,8 +455,14 @@ class HamlibDirectController(RigController):
                 rig.set_conf("data_bits", str(self._data_bits))
                 rig.set_conf("stop_bits", str(self._stop_bits))
                 if self._civ_addr:
-                    rig.set_conf("civaddr", self._civ_addr)
-                    logger.info("RigDirect: CI-V address set to %s", self._civ_addr)
+                    # Ensure hex prefix so Hamlib parses it correctly.
+                    # Users enter what the rig menu shows (e.g. "65"); without
+                    # "0x", strtol() would interpret it as decimal 65 (= 0x41).
+                    addr = self._civ_addr
+                    if not addr.lower().startswith("0x"):
+                        addr = "0x" + addr
+                    rig.set_conf("civaddr", addr)
+                    logger.info("RigDirect: CI-V address set to %s", addr)
                 rig.open()
                 self._rig = rig
             else:

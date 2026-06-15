@@ -363,7 +363,9 @@ class _RigPanel(QWidget):
         direct_form.addRow(_("Rig Model:"), self._model_combo)
 
         self._civ_addr_edit = QLineEdit()
-        self._civ_addr_edit.setPlaceholderText(_("e.g. 0x65  (blank = model default)"))
+        self._civ_addr_edit.setPlaceholderText(
+            _("e.g. 65  (hex as shown on rig menu, blank = default)")
+        )
         self._civ_addr_edit.setMaximumWidth(160)
         direct_form.addRow(_("CI-V Address (Icom):"), self._civ_addr_edit)
 
