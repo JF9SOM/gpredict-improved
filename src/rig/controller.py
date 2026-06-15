@@ -676,7 +676,13 @@ class HamlibDirectController(RigController):
                         self._last_dl_hz = vfoa_hz
                 if vfob_hz is not None:
                     last_ul = self._last_ul_hz
-                    if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
+                    # Use a 25 Hz threshold for UL in satmode: each update requires
+                    # CI-V 07 d1 (select Sub Band) / 07 d0 (restore Main), causing the
+                    # rig display to flash "SUB" for ~400 ms.  25 Hz is below the
+                    # human-audible pitch threshold for SSB yet limits the flicker to
+                    # roughly every 3-4 seconds at peak Doppler rate (~7 Hz/s on 145 MHz).
+                    _UL_THRESH = 25.0
+                    if last_ul is None or abs(vfob_hz - last_ul) >= _UL_THRESH:
                         logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
                         self._rig.set_freq(sub_vfo, int(vfob_hz))
                         self._last_ul_hz = vfob_hz
