@@ -673,7 +673,19 @@ class HamlibDirectController(RigController):
                 sub_vfo = int(_H.RIG_VFO_SUB_A)
                 if vfoa_hz is not None:
                     last_dl = self._last_dl_hz
-                    if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
+                    need_reinit = last_dl is None or (
+                        self._freq_band(vfoa_hz) != self._freq_band(last_dl)
+                    )
+                    if need_reinit:
+                        # First DL update after connect, or band changed (e.g. UHF→VHF).
+                        # IC-9100/9700 in satmode locks Main to the band that was active
+                        # when satmode was enabled, so a simple set_freq(CURR, vhf_freq)
+                        # is silently ignored when Main is on UHF.
+                        # Fix: satmode OFF → set_freq (switches Main to target band) →
+                        # satmode ON.  This reinitialises satmode with Main on the correct
+                        # band and costs ~3 CI-V round-trips (one-time or rare).
+                        self._satmode_reinit_main(vfoa_hz)
+                    elif abs(vfoa_hz - last_dl) >= 1.0:
                         logger.info("RigDirect satmode DL: set_freq(CURR, %d)", int(vfoa_hz))
                         self._rig.set_freq(curr_vfo, int(vfoa_hz))
                         self._last_dl_hz = vfoa_hz
@@ -839,6 +851,48 @@ class HamlibDirectController(RigController):
         )
 
     # -- Internal utilities --
+
+    @staticmethod
+    def _freq_band(hz: float) -> str:
+        """Return a coarse band label used for satmode band-change detection."""
+        if hz < 200e6:
+            return "VHF"
+        if hz < 500e6:
+            return "UHF"
+        return "SHF"
+
+    def _satmode_reinit_main(self, dl_hz: float) -> None:
+        """Switch IC-9100/9700 Main to the band required by *dl_hz*.
+
+        In satmode the rig locks Main to whichever band was active when satmode
+        was first enabled (e.g. UHF after a V/U pass).  A plain set_freq(CURR)
+        is silently ignored when the frequency is outside that band.
+
+        Sequence:
+          1. satmode OFF  — releases the band lock so set_freq can switch bands
+          2. set_freq(CURR, dl_hz) — moves Main to the target band
+          3. satmode ON   — re-enables satmode with Main now on the correct band
+        """
+        if self._rig is None or self._hamlib is None:
+            return
+        _H = self._hamlib
+        if not hasattr(_H, "RIG_FUNC_SATMODE"):
+            return
+        vfo_curr = int(_H.RIG_VFO_CURR)
+        logger.info(
+            "RigDirect satmode: reinit Main for band %s (%.3f MHz)",
+            self._freq_band(dl_hz),
+            dl_hz / 1e6,
+        )
+        try:
+            self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
+            self._rig.set_freq(vfo_curr, int(dl_hz))
+            self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
+            self._last_dl_hz = dl_hz
+            self._last_ul_hz = None  # force UL re-send after band switch
+            self._last_ul_update_time = 0.0
+        except Exception as exc:
+            logger.warning("RigDirect: _satmode_reinit_main failed — %s", exc)
 
     def _init_split(self) -> None:
         """Enable split/satmode. Called once at connect.
