@@ -537,13 +537,10 @@ class DopplerCalculator:
 
         Physical model:
           Non-inverting / simplex (invert=False):
-            Transmit lower when satellite approaches so the signal arrives at the
-            satellite at the nominal frequency.  UL correction is in the OPPOSITE
-            direction to the DL correction.
+            DL and UL corrections go in the SAME direction.
           Inverting linear transponder (invert=True):
-            The transponder mirrors the passband, so both DL and UL corrections go
-            in the SAME direction.  Tune UL up when approaching, down when receding,
-            exactly like the DL.
+            The transponder mirrors the passband, so DL and UL corrections go
+            in OPPOSITE directions.
 
         Args:
             uplink_hz: Nominal uplink frequency (Hz)
@@ -554,8 +551,7 @@ class DopplerCalculator:
             (corrected frequency Hz, shift amount Hz)
         """
         shift = DopplerCalculator.shift_hz(uplink_hz, range_rate_km_s)
-        if not invert:
-            # Non-inverting: pre-compensate in the opposite direction to DL.
+        if invert:
             shift = -shift
         return uplink_hz + shift, shift
 
