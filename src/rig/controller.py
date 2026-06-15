@@ -575,23 +575,28 @@ class HamlibDirectController(RigController):
         try:
             # Hamlib represents tones as integers scaled by 10 (e.g. 88.5 Hz → 885)
             tone_int = int(round(tone_hz * 10))
+            # In satmode the current VFO is Main (RX). CTCSS must be set on the
+            # TX side, which is Sub (RIG_VFO_SUB_A) in satmode and VFO_CURR otherwise.
+            if self._satmode and self._satmode_active:
+                tx_vfo = int(self._hamlib.RIG_VFO_SUB_A)
+            else:
+                tx_vfo = self._hamlib.RIG_VFO_CURR
+            logger.info(
+                "RigDirect.set_ctcss_tone: tone_hz=%.1f tone_int=%d satmode=%s tx_vfo=%s",
+                tone_hz,
+                tone_int,
+                self._satmode_active,
+                tx_vfo,
+            )
             if tone_hz > 0:
-                self._rig.set_func(
-                    self._hamlib.RIG_VFO_CURR,
-                    self._hamlib.RIG_FUNC_TONE,
-                    1,
-                )
+                self._rig.set_func(tx_vfo, self._hamlib.RIG_FUNC_TONE, 1)
                 self._rig.set_level(
-                    self._hamlib.RIG_VFO_CURR,
+                    tx_vfo,
                     self._hamlib.RIG_LEVEL_CTCSS_TONE,
                     tone_int,
                 )
             else:
-                self._rig.set_func(
-                    self._hamlib.RIG_VFO_CURR,
-                    self._hamlib.RIG_FUNC_TONE,
-                    0,
-                )
+                self._rig.set_func(tx_vfo, self._hamlib.RIG_FUNC_TONE, 0)
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
