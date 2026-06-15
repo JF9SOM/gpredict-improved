@@ -2074,6 +2074,11 @@ class MainWindow(QMainWindow):
             # Standard Hamlib CTCSS: call set_ctcss_tone() automatically on
             # transponder change so rigs like IC-9100 get the tone without
             # requiring the user to press the CTCSS button manually.
+            logger.info(
+                "_send_ctcss_cat_to_rig hamlib: rig_type=%s tone_hz=%.1f",
+                type(self._rig_controller).__name__,
+                tone_hz,
+            )
             rig = self._rig_controller
 
             def _send_hamlib() -> None:

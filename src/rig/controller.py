@@ -566,18 +566,19 @@ class HamlibDirectController(RigController):
 
     def set_ctcss_tone(self, tone_hz: float) -> bool:
         """Set the CTCSS tone. Pass tone_hz=0.0 to disable."""
+        logger.info(
+            "RigDirect.set_ctcss_tone ENTRY: %.1fHz conn=%s rig_none=%s hamlib_none=%s",
+            tone_hz,
+            self.is_connected,
+            self._rig is None,
+            self._hamlib is None,
+        )
         if not self.is_connected or self._rig is None:
             return False
         if self._hamlib is None:
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
-        logger.info(
-            "RigDirect.set_ctcss_tone: tone_hz=%.1f is_connected=%s rig_none=%s",
-            tone_hz,
-            self.is_connected,
-            self._rig is None,
-        )
         try:
             # Hamlib represents tones as integers scaled by 10 (e.g. 88.5 Hz → 885)
             tone_int = int(round(tone_hz * 10))
