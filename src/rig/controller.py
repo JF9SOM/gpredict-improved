@@ -430,6 +430,7 @@ class HamlibDirectController(RigController):
         self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._last_dl_hz: float | None = None
         self._last_ul_hz: float | None = None
+        self._last_ul_update_time: float = 0.0
         self._ptt_active: bool = False
         self._satmode: bool = model_id in _SATMODE_RIG_IDS
         self._current_dl_mode: str = ""  # updated by send_mode_only; drives UL threshold
@@ -471,6 +472,7 @@ class HamlibDirectController(RigController):
 
             self._last_dl_hz = None
             self._last_ul_hz = None
+            self._last_ul_update_time = 0.0
             self._init_split()
 
             with self._lock:
@@ -681,16 +683,29 @@ class HamlibDirectController(RigController):
                     )
                 else:
                     last_ul = self._last_ul_hz
-                    # UL threshold controls how often CI-V 07 d1 (Sub Band select) is
-                    # sent, which causes the rig display to flash "SUB" for ~400 ms.
-                    # FM needs tighter tracking (fast ISS passes, capture effect still
-                    # requires being within ~1 kHz); SSB/CW transponders tolerate wider
-                    # offsets so a larger threshold keeps the display flicker down.
-                    _UL_THRESH = 10.0 if self._current_dl_mode in ("FM", "DIGITALVOICE") else 25.0
-                    if last_ul is None or abs(vfob_hz - last_ul) >= _UL_THRESH:
+                    now = time.monotonic()
+                    elapsed = now - self._last_ul_update_time
+                    # Two-condition update policy for satmode UL to balance tracking
+                    # accuracy against the "SUB" display flicker (~400 ms per CI-V cycle):
+                    #   1. Frequency threshold: send when Doppler drift exceeds N Hz.
+                    #   2. Time ceiling: send regardless after M seconds so the rig
+                    #      stays current during slow-Doppler phases (low-elevation passes).
+                    # FM (ISS etc.): 10 Hz / 5 s ceiling — ISS passes are fast and the
+                    #   capture effect requires being within ~1 kHz of the repeater input.
+                    # SSB/CW transponders: 20 Hz / 15 s ceiling — wider tolerance, fewer
+                    #   band-select interruptions on linear transponder work.
+                    is_fm = self._current_dl_mode in ("FM", "DIGITALVOICE")
+                    _UL_THRESH = 10.0 if is_fm else 20.0
+                    _UL_MAX_S = 5.0 if is_fm else 15.0
+                    if (
+                        last_ul is None
+                        or abs(vfob_hz - last_ul) >= _UL_THRESH
+                        or elapsed >= _UL_MAX_S
+                    ):
                         logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
                         self._rig.set_freq(sub_vfo, int(vfob_hz))
                         self._last_ul_hz = vfob_hz
+                        self._last_ul_update_time = now
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 if vfoa_hz is not None:
