@@ -433,6 +433,10 @@ class HamlibDirectController(RigController):
         self._last_ul_update_time: float = 0.0
         self._ptt_active: bool = False
         self._satmode: bool = model_id in _SATMODE_RIG_IDS
+        # True while IC-9100/9700 satmode is actually active on the rig.
+        # Dynamically toggled: same-band pairs (V/V, U/U) use normal split
+        # because IC-9100 satmode always assigns Main/Sub to different bands.
+        self._satmode_active: bool = False
         self._current_dl_mode: str = ""  # updated by send_mode_only; drives UL threshold
 
     # -- Connection management --
@@ -658,66 +662,103 @@ class HamlibDirectController(RigController):
             return True
         try:
             if self._satmode:
-                # IC-9700/9100 satmode: Main=RX(DL), Sub=TX(UL).
-                # vfo_fixup() maps RIG_VFO_SUB (generic 0x02000000) → VFOB, which
-                # causes ic9700_set_vfo to send CI-V 07 01 ("select VFO-B of current
-                # band").  In IC-9100 satmode the current band is Main, so this sets
-                # Main VFO-B to the UL frequency instead of the Sub Band — the root
-                # cause of "Main alternating DL/UL" and Sub stuck at 7 MHz.
-                # Fix: use RIG_VFO_SUB_A (specific 0x00200000) which passes through
-                # vfo_fixup unchanged.  ic9700_set_vfo(SubA) sends CI-V 07 d1
-                # ("select Sub Band") → sets Sub Band frequency → restores to Main
-                # with 07 d0.  Sub Band (TX/UL) is correctly updated.
+                # IC-9100/9700 dual-band rig.  Choose satmode vs normal split:
+                #
+                # CROSS-BAND (V/U or U/V): satmode ON — IC-9100 routes
+                #   Main=RX(DL) and Sub=TX(UL) across two bands automatically.
+                #   RIG_VFO_SUB_A (0x00200000) bypasses vfo_fixup so ic9700_set_vfo
+                #   sends CI-V 07 d1 (Sub Band select) rather than 07 01 (VFO-B of
+                #   current band), which was the root cause of Sub stuck at 7 MHz.
+                #
+                # SAME-BAND (V/V or U/U, e.g. ISS V/V FM, ISS APRS): satmode OFF.
+                #   IC-9100 satmode always forces Main and Sub to *different* bands,
+                #   so same-band duplex is impossible in satmode.  Use conventional
+                #   VFO-A (RX/DL) / VFO-B (TX/UL) split on the single-band
+                #   transceiver instead.
                 _H = self._hamlib
                 curr_vfo = int(_H.RIG_VFO_CURR)
                 sub_vfo = int(_H.RIG_VFO_SUB_A)
-                if vfoa_hz is not None:
+
+                # Determine whether DL and UL are on the same band.
+                dl_band = self._freq_band(vfoa_hz) if vfoa_hz is not None else None
+                ul_band = self._freq_band(vfob_hz) if vfob_hz is not None else None
+                same_band = dl_band is not None and ul_band is not None and dl_band == ul_band
+
+                if same_band and self._satmode_active:
+                    # Cross-band → same-band transition: exit satmode.
+                    self._satmode_exit()
+
+                elif not same_band and not self._satmode_active:
+                    # Same-band → cross-band transition: re-enter satmode.
+                    self._satmode_enter(vfoa_hz or 0.0)
+
+                elif not same_band and self._satmode_active:
+                    # Already in satmode; reinit if Main band needs to change
+                    # (e.g. first connect, or V/U → U/V switch).
                     last_dl = self._last_dl_hz
-                    need_reinit = last_dl is None or (
-                        self._freq_band(vfoa_hz) != self._freq_band(last_dl)
-                    )
-                    if need_reinit:
-                        # First DL update after connect, or band changed (e.g. UHF→VHF).
-                        # IC-9100/9700 in satmode locks Main to the band that was active
-                        # when satmode was enabled, so a simple set_freq(CURR, vhf_freq)
-                        # is silently ignored when Main is on UHF.
-                        # Fix: satmode OFF → set_freq (switches Main to target band) →
-                        # satmode ON.  This reinitialises satmode with Main on the correct
-                        # band and costs ~3 CI-V round-trips (one-time or rare).
-                        self._satmode_reinit_main(vfoa_hz)
-                    elif abs(vfoa_hz - last_dl) >= 1.0:
-                        logger.info("RigDirect satmode DL: set_freq(CURR, %d)", int(vfoa_hz))
-                        self._rig.set_freq(curr_vfo, int(vfoa_hz))
-                        self._last_dl_hz = vfoa_hz
-                if vfob_hz is None:
-                    logger.debug(
-                        "RigDirect satmode: vfob_hz is None — transmitter has no uplink, UL skipped"
-                    )
-                else:
-                    last_ul = self._last_ul_hz
-                    now = time.monotonic()
-                    elapsed = now - self._last_ul_update_time
-                    # Two-condition update policy for satmode UL to balance tracking
-                    # accuracy against the "SUB" display flicker (~400 ms per CI-V cycle):
-                    #   1. Frequency threshold: send when Doppler drift exceeds N Hz.
-                    #   2. Time ceiling: send regardless after M seconds so the rig
-                    #      stays current during slow-Doppler phases (low-elevation passes).
-                    # FM (ISS etc.): 10 Hz / 5 s ceiling — ISS passes are fast and the
-                    #   capture effect requires being within ~1 kHz of the repeater input.
-                    # SSB/CW transponders: 20 Hz / 15 s ceiling — wider tolerance, fewer
-                    #   band-select interruptions on linear transponder work.
-                    is_fm = self._current_dl_mode in ("FM", "DIGITALVOICE")
-                    _UL_THRESH = 10.0 if is_fm else 20.0
-                    _UL_MAX_S = 5.0 if is_fm else 15.0
-                    if (
-                        last_ul is None
-                        or abs(vfob_hz - last_ul) >= _UL_THRESH
-                        or elapsed >= _UL_MAX_S
+                    if last_dl is None or self._freq_band(vfoa_hz or 0.0) != self._freq_band(
+                        last_dl
                     ):
-                        logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
-                        self._rig.set_freq(sub_vfo, int(vfob_hz))
-                        self._last_ul_hz = vfob_hz
-                        self._last_ul_update_time = now
+                        self._satmode_enter(vfoa_hz or 0.0)
+
+                if self._satmode_active:
+                    # --- Cross-band satmode path ---
+                    if vfoa_hz is not None:
+                        last_dl = self._last_dl_hz
+                        if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
+                            logger.info("RigDirect satmode DL: set_freq(CURR, %d)", int(vfoa_hz))
+                            self._rig.set_freq(curr_vfo, int(vfoa_hz))
+                            self._last_dl_hz = vfoa_hz
+                    if vfob_hz is None:
+                        logger.debug(
+                            "RigDirect satmode: vfob_hz is None — no uplink defined, UL skipped"
+                        )
+                    else:
+                        last_ul = self._last_ul_hz
+                        now = time.monotonic()
+                        elapsed = now - self._last_ul_update_time
+                        # Two-condition update: threshold OR time ceiling.
+                        # FM (ISS V/U, etc.): 10 Hz / 5 s — fast passes, tight tracking.
+                        # SSB/CW transponders: 20 Hz / 15 s — wider tolerance, less flicker.
+                        is_fm = self._current_dl_mode in ("FM", "DIGITALVOICE")
+                        _UL_THRESH = 10.0 if is_fm else 20.0
+                        _UL_MAX_S = 5.0 if is_fm else 15.0
+                        if (
+                            last_ul is None
+                            or abs(vfob_hz - last_ul) >= _UL_THRESH
+                            or elapsed >= _UL_MAX_S
+                        ):
+                            logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
+                            self._rig.set_freq(sub_vfo, int(vfob_hz))
+                            self._last_ul_hz = vfob_hz
+                            self._last_ul_update_time = now
+                else:
+                    # --- Same-band normal split path (VFO-A = DL, VFO-B = UL) ---
+                    rx_vfo = self._vfo_str_to_const("VFOA")
+                    if vfoa_hz is not None:
+                        last_dl = self._last_dl_hz
+                        if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
+                            logger.info("RigDirect split DL: set_freq(VFO-A, %d)", int(vfoa_hz))
+                            self._rig.set_freq(rx_vfo, int(vfoa_hz))
+                            self._last_dl_hz = vfoa_hz
+                    if vfob_hz is not None:
+                        last_ul = self._last_ul_hz
+                        now = time.monotonic()
+                        elapsed = now - self._last_ul_update_time
+                        is_fm = self._current_dl_mode in ("FM", "DIGITALVOICE")
+                        _UL_THRESH = 10.0 if is_fm else 20.0
+                        _UL_MAX_S = 5.0 if is_fm else 15.0
+                        if (
+                            last_ul is None
+                            or abs(vfob_hz - last_ul) >= _UL_THRESH
+                            or elapsed >= _UL_MAX_S
+                        ):
+                            logger.info(
+                                "RigDirect split UL: set_split_freq(VFO-A→B, %d)", int(vfob_hz)
+                            )
+                            self._rig.set_split_freq(rx_vfo, int(vfob_hz))
+                            self._last_ul_hz = vfob_hz
+                            self._last_ul_update_time = now
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 if vfoa_hz is not None:
@@ -771,13 +812,17 @@ class HamlibDirectController(RigController):
             }
             dl_hamlib = hamlib_mode.get(dl_mode, _H.RIG_MODE_FM)
             ul_hamlib = hamlib_mode.get(ul_mode, _H.RIG_MODE_FM)
-            dl_vfo = _H.RIG_VFO_MAIN if self._satmode else _H.RIG_VFO_A
-            # RIG_VFO_SUB (0x02000000) is remapped to VFOB by vfo_fixup, causing
-            # ic9700_set_vfo to send CI-V 07 01 (VFO-B of current/Main band) instead
-            # of 07 d1 (Sub Band select) — same root cause as the UL frequency bug.
-            # Use RIG_VFO_SUB_A (0x00200000) which bypasses vfo_fixup and reaches
-            # ic9700_set_vfo as SubA → CI-V 07 d1 → correct Sub Band mode setting.
-            ul_vfo = int(_H.RIG_VFO_SUB_A) if self._satmode else _H.RIG_VFO_B
+            # In satmode (cross-band): Main=DL, SubA=UL.
+            # In same-band split: VFO-A=DL, VFO-B=UL.
+            # _satmode_active reflects the current runtime state set by
+            # set_vfo_frequencies(); fall back to satmode when not yet known.
+            use_satmode_now = self._satmode and self._satmode_active
+            dl_vfo = _H.RIG_VFO_MAIN if use_satmode_now else _H.RIG_VFO_A
+            # RIG_VFO_SUB (0x02000000) is remapped to VFOB by vfo_fixup →
+            # ic9700_set_vfo sends CI-V 07 01 (VFO-B of Main band) instead of
+            # 07 d1 (Sub Band select).  Use RIG_VFO_SUB_A (0x00200000) which
+            # bypasses vfo_fixup → CI-V 07 d1 → correct Sub Band mode setting.
+            ul_vfo = int(_H.RIG_VFO_SUB_A) if use_satmode_now else _H.RIG_VFO_B
             rig = _H.Rig(self._model_id)
             rig.set_conf("rig_pathname", self._port)
             rig.set_conf("serial_speed", str(self._baud_rate))
@@ -861,17 +906,11 @@ class HamlibDirectController(RigController):
             return "UHF"
         return "SHF"
 
-    def _satmode_reinit_main(self, dl_hz: float) -> None:
-        """Switch IC-9100/9700 Main to the band required by *dl_hz*.
+    def _satmode_enter(self, dl_hz: float) -> None:
+        """Enable satmode with Main on the band of *dl_hz*.
 
-        In satmode the rig locks Main to whichever band was active when satmode
-        was first enabled (e.g. UHF after a V/U pass).  A plain set_freq(CURR)
-        is silently ignored when the frequency is outside that band.
-
-        Sequence:
-          1. satmode OFF  — releases the band lock so set_freq can switch bands
-          2. set_freq(CURR, dl_hz) — moves Main to the target band
-          3. satmode ON   — re-enables satmode with Main now on the correct band
+        Sequences: satmode OFF → set_freq(CURR, dl_hz) [band switch] → satmode ON.
+        Resets last-frequency state so the next tick re-sends both DL and UL.
         """
         if self._rig is None or self._hamlib is None:
             return
@@ -880,7 +919,7 @@ class HamlibDirectController(RigController):
             return
         vfo_curr = int(_H.RIG_VFO_CURR)
         logger.info(
-            "RigDirect satmode: reinit Main for band %s (%.3f MHz)",
+            "RigDirect: entering satmode, Main → %s (%.3f MHz)",
             self._freq_band(dl_hz),
             dl_hz / 1e6,
         )
@@ -888,11 +927,39 @@ class HamlibDirectController(RigController):
             self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
             self._rig.set_freq(vfo_curr, int(dl_hz))
             self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
-            self._last_dl_hz = dl_hz
-            self._last_ul_hz = None  # force UL re-send after band switch
-            self._last_ul_update_time = 0.0
+            self._satmode_active = True
         except Exception as exc:
-            logger.warning("RigDirect: _satmode_reinit_main failed — %s", exc)
+            logger.warning("RigDirect: _satmode_enter failed — %s", exc)
+        finally:
+            self._last_dl_hz = None
+            self._last_ul_hz = None
+            self._last_ul_update_time = 0.0
+
+    def _satmode_exit(self) -> None:
+        """Disable satmode and enable normal VFO-A/B split (same-band duplex).
+
+        IC-9100 satmode always assigns Main and Sub to *different* bands, so
+        same-band pairs (V/V FM, U/U) must use conventional split instead.
+        """
+        if self._rig is None or self._hamlib is None:
+            return
+        _H = self._hamlib
+        if not hasattr(_H, "RIG_FUNC_SATMODE"):
+            return
+        vfo_curr = int(_H.RIG_VFO_CURR)
+        rx_vfo = self._vfo_str_to_const("VFOA")
+        tx_vfo = self._vfo_str_to_const("VFOB")
+        logger.info("RigDirect: exiting satmode → normal VFO-A/B split (same-band)")
+        try:
+            self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
+            self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
+            self._satmode_active = False
+        except Exception as exc:
+            logger.warning("RigDirect: _satmode_exit failed — %s", exc)
+        finally:
+            self._last_dl_hz = None
+            self._last_ul_hz = None
+            self._last_ul_update_time = 0.0
 
     def _init_split(self) -> None:
         """Enable split/satmode. Called once at connect.
@@ -913,6 +980,7 @@ class HamlibDirectController(RigController):
                 if _H is not None and hasattr(_H, "RIG_FUNC_SATMODE"):
                     vfo_curr = int(_H.RIG_VFO_CURR)
                     self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
+                    self._satmode_active = True
                     logger.info(
                         "RigDirect: satmode ON via set_func(RIG_FUNC_SATMODE) "
                         "(CI-V 16 59 01 fd sent)"
