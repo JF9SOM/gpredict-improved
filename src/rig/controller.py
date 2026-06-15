@@ -674,7 +674,11 @@ class HamlibDirectController(RigController):
                         logger.info("RigDirect satmode DL: set_freq(CURR, %d)", int(vfoa_hz))
                         self._rig.set_freq(curr_vfo, int(vfoa_hz))
                         self._last_dl_hz = vfoa_hz
-                if vfob_hz is not None:
+                if vfob_hz is None:
+                    logger.debug(
+                        "RigDirect satmode: vfob_hz is None — transmitter has no uplink, UL skipped"
+                    )
+                else:
                     last_ul = self._last_ul_hz
                     # Use a 25 Hz threshold for UL in satmode: each update requires
                     # CI-V 07 d1 (select Sub Band) / 07 d0 (restore Main), causing the
