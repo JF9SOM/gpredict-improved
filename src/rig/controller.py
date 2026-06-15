@@ -656,21 +656,25 @@ class HamlibDirectController(RigController):
         try:
             if self._satmode:
                 # IC-9700/9100 satmode: Main=RX(DL), Sub=TX(UL).
-                # RIG_VFO_MAIN resolves to "MainA" internally which ic9700_set_vfo
-                # rejects in satmode.  Use RIG_VFO_CURR for DL (current = Main in
-                # satmode) and RIG_VFO_SUB directly for UL to avoid the rejection.
+                # Mirror rigctld F/I command semantics: RIG_VFO_RX (=CURR) for DL
+                # and RIG_VFO_TX for UL.  RIG_VFO_TX resolves the TX VFO without
+                # an explicit VFO-switch CI-V command, avoiding the "alternating
+                # Main" symptom caused by set_freq(RIG_VFO_SUB) switching the
+                # active VFO and corrupting the next RIG_VFO_CURR lookup.
                 _H = self._hamlib
-                curr_vfo = int(_H.RIG_VFO_CURR)
-                sub_vfo = self._vfo_str_to_const("Sub")
+                rx_vfo = int(_H.RIG_VFO_CURR)  # RIG_VFO_RX alias
+                tx_vfo = int(_H.RIG_VFO_TX)
                 if vfoa_hz is not None:
                     last_dl = self._last_dl_hz
                     if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
-                        self._rig.set_freq(curr_vfo, int(vfoa_hz))
+                        logger.debug("RigDirect satmode DL: set_freq(RX, %d)", int(vfoa_hz))
+                        self._rig.set_freq(rx_vfo, int(vfoa_hz))
                         self._last_dl_hz = vfoa_hz
                 if vfob_hz is not None:
                     last_ul = self._last_ul_hz
                     if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
-                        self._rig.set_freq(sub_vfo, int(vfob_hz))
+                        logger.debug("RigDirect satmode UL: set_freq(TX, %d)", int(vfob_hz))
+                        self._rig.set_freq(tx_vfo, int(vfob_hz))
                         self._last_ul_hz = vfob_hz
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
@@ -729,6 +733,11 @@ class HamlibDirectController(RigController):
             rig = _H.Rig(self._model_id)
             rig.set_conf("rig_pathname", self._port)
             rig.set_conf("serial_speed", str(self._baud_rate))
+            if self._civ_addr:
+                addr = self._civ_addr
+                if not addr.lower().startswith("0x"):
+                    addr = "0x" + addr
+                rig.set_conf("civaddr", addr)
             rig.open()
             rig.set_mode(dl_hamlib, 0, dl_vfo)
             rig.set_mode(ul_hamlib, 0, ul_vfo)
