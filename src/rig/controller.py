@@ -690,6 +690,7 @@ class HamlibDirectController(RigController):
                     # Same-band fallback: exit satmode once and use VFO-A/B split.
                     if self._satmode_active:
                         self._satmode_exit()
+                    tx_vfo = self._vfo_str_to_const("VFOB")
                     if vfoa_hz is not None:
                         last_dl = self._last_dl_hz
                         if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
@@ -707,10 +708,13 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            logger.info(
-                                "RigDirect same-band UL: set_split_freq(VFOA, %d)", int(vfob_hz)
-                            )
-                            self._rig.set_split_freq(rx_vfo, int(vfob_hz))
+                            # Use set_freq(VFOB) instead of set_split_freq: Hamlib's
+                            # set_split_freq checks an internal tx_freq cache populated
+                            # by set_split_vfo and may skip the actual CI-V command
+                            # ("freq set not needed") even when VFO-B on the rig still
+                            # holds a stale value from a previous session.
+                            logger.info("RigDirect same-band UL: set_freq(VFOB, %d)", int(vfob_hz))
+                            self._rig.set_freq(tx_vfo, int(vfob_hz))
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
                 else:
