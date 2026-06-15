@@ -739,7 +739,12 @@ class HamlibDirectController(RigController):
             dl_hamlib = hamlib_mode.get(dl_mode, _H.RIG_MODE_FM)
             ul_hamlib = hamlib_mode.get(ul_mode, _H.RIG_MODE_FM)
             dl_vfo = _H.RIG_VFO_MAIN if self._satmode else _H.RIG_VFO_A
-            ul_vfo = _H.RIG_VFO_SUB if self._satmode else _H.RIG_VFO_B
+            # RIG_VFO_SUB (0x02000000) is remapped to VFOB by vfo_fixup, causing
+            # ic9700_set_vfo to send CI-V 07 01 (VFO-B of current/Main band) instead
+            # of 07 d1 (Sub Band select) — same root cause as the UL frequency bug.
+            # Use RIG_VFO_SUB_A (0x00200000) which bypasses vfo_fixup and reaches
+            # ic9700_set_vfo as SubA → CI-V 07 d1 → correct Sub Band mode setting.
+            ul_vfo = int(_H.RIG_VFO_SUB_A) if self._satmode else _H.RIG_VFO_B
             rig = _H.Rig(self._model_id)
             rig.set_conf("rig_pathname", self._port)
             rig.set_conf("serial_speed", str(self._baud_rate))
