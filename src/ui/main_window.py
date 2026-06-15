@@ -2037,9 +2037,12 @@ class MainWindow(QMainWindow):
     _CAT_CTCSS_METHODS: frozenset[str] = frozenset({"custom_cat", "ftx1", "ft991"})
 
     def _send_ctcss_cat_to_rig(self, tone_hz: float | None = None) -> None:
-        """Send custom CAT CTCSS command for methods that bypass Hamlib CTCSS.
+        """Send CTCSS tone to the rig when a transponder is selected or the button is pressed.
 
-        Handles "custom_cat", "ftx1", and "ft991" methods.
+        For custom CAT methods ("custom_cat", "ftx1", "ft991"), sends raw CAT
+        commands directly to the serial port.  For the standard "hamlib" method,
+        calls set_ctcss_tone() via the python-hamlib binding so the IC-9100 and
+        other Hamlib-capable rigs are set automatically on transponder change.
         Runs in a background thread so the UI is not blocked.
 
         Args:
@@ -2049,23 +2052,39 @@ class MainWindow(QMainWindow):
                      takes precedence so the Activate button can force 74.4 Hz
                      regardless of what the transmitter record says.
         """
-        if self._ctcss_method not in self._CAT_CTCSS_METHODS:
-            return
         if self._rig_controller is None:
             return
         if tone_hz is None:
             tone_hz = float(self._ctcss_tone_hz or 0.0)
-        rig = self._rig_controller
-        cat_on = self._ctcss_cat_on
-        cat_off = self._ctcss_cat_off
 
-        def _send() -> None:
-            try:
-                rig.send_ctcss_cat(tone_hz, cat_on, cat_off)
-            except Exception as exc:
-                self._rig_error.emit(f"send_ctcss_cat: {exc}")
+        if self._ctcss_method in self._CAT_CTCSS_METHODS:
+            rig = self._rig_controller
+            cat_on = self._ctcss_cat_on
+            cat_off = self._ctcss_cat_off
 
-        threading.Thread(target=_send, daemon=True).start()
+            def _send_cat() -> None:
+                try:
+                    rig.send_ctcss_cat(tone_hz, cat_on, cat_off)
+                except Exception as exc:
+                    self._rig_error.emit(f"send_ctcss_cat: {exc}")
+
+            threading.Thread(target=_send_cat, daemon=True).start()
+
+        elif self._ctcss_method == "hamlib":
+            # Standard Hamlib CTCSS: call set_ctcss_tone() automatically on
+            # transponder change so rigs like IC-9100 get the tone without
+            # requiring the user to press the CTCSS button manually.
+            rig = self._rig_controller
+
+            def _send_hamlib() -> None:
+                try:
+                    ok = rig.set_ctcss_tone(tone_hz)
+                    if not ok:
+                        self._rig_error.emit(f"set_ctcss_tone({tone_hz} Hz): rig returned failure")
+                except Exception as exc:
+                    self._rig_error.emit(f"set_ctcss_tone: {exc}")
+
+            threading.Thread(target=_send_hamlib, daemon=True).start()
 
     def _refresh_passes(self) -> None:
         """Fetch pass predictions for the selected satellite and update the pass list and chart."""
