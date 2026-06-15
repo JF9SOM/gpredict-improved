@@ -656,17 +656,18 @@ class HamlibDirectController(RigController):
         try:
             if self._satmode:
                 # IC-9700/9100 satmode: Main=RX(DL), Sub=TX(UL).
-                # rig->state.satmode cannot be set to 1 via any Python-accessible
-                # Hamlib API for IC-9100 (set_conf key not available; rig.state.satmode
-                # not exposed in SWIG binding).  Without satmode=1, vfo_fixup() does not
-                # route RIG_VFO_TX → SubA, so set_freq(TX) fails with "Invalid parameter".
-                # Workaround: use RIG_VFO_SUB which triggers ic9700_set_vfo(SubA) via a
-                # VFO-switch CI-V sequence (07 d1 → set freq → 07 d0).  This causes a
-                # brief display flicker on the IC-9100 as focus alternates Main↔Sub, but
-                # both Main (DL) and Sub (UL) frequencies are set correctly.
+                # vfo_fixup() maps RIG_VFO_SUB (generic 0x02000000) → VFOB, which
+                # causes ic9700_set_vfo to send CI-V 07 01 ("select VFO-B of current
+                # band").  In IC-9100 satmode the current band is Main, so this sets
+                # Main VFO-B to the UL frequency instead of the Sub Band — the root
+                # cause of "Main alternating DL/UL" and Sub stuck at 7 MHz.
+                # Fix: use RIG_VFO_SUB_A (specific 0x00200000) which passes through
+                # vfo_fixup unchanged.  ic9700_set_vfo(SubA) sends CI-V 07 d1
+                # ("select Sub Band") → sets Sub Band frequency → restores to Main
+                # with 07 d0.  Sub Band (TX/UL) is correctly updated.
                 _H = self._hamlib
                 curr_vfo = int(_H.RIG_VFO_CURR)
-                sub_vfo = self._vfo_str_to_const("Sub")
+                sub_vfo = int(_H.RIG_VFO_SUB_A)
                 if vfoa_hz is not None:
                     last_dl = self._last_dl_hz
                     if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
