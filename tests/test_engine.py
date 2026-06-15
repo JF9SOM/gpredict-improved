@@ -294,21 +294,22 @@ class TestDopplerCalculator:
         assert shift < 0.0
 
     def test_correct_uplink_non_invert(self) -> None:
-        """非反転: アップリンクもダウンリンクと同方向に補正"""
+        """Non-inverting: UL correction is OPPOSITE to DL (transmit lower when approaching)."""
         _, dl_shift = DopplerCalculator.correct_downlink(self._DL_HZ, range_rate_km_s=-7.0)
         _, ul_shift = DopplerCalculator.correct_uplink(
             self._UL_HZ, range_rate_km_s=-7.0, invert=False
         )
-        # 符号は同じはず（どちらも正）
-        assert dl_shift > 0 and ul_shift > 0
+        # DL shift is positive (approaching); UL shift is negative (transmit lower).
+        assert dl_shift > 0 and ul_shift < 0
 
     def test_correct_uplink_invert(self) -> None:
-        """反転トランスポンダ: アップリンクはダウンリンクと逆方向に補正"""
+        """Inverting transponder: UL correction is in the SAME direction as DL."""
         _, dl_shift = DopplerCalculator.correct_downlink(self._DL_HZ, range_rate_km_s=-7.0)
         _, ul_shift = DopplerCalculator.correct_uplink(
             self._UL_HZ, range_rate_km_s=-7.0, invert=True
         )
-        assert dl_shift > 0 and ul_shift < 0
+        # Both DL and UL shift positive when approaching (passband is mirrored).
+        assert dl_shift > 0 and ul_shift > 0
 
     def test_correct_transponder_returns_dataclass(self) -> None:
         result = DopplerCalculator.correct_transponder(
