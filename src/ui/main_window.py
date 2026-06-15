@@ -2052,7 +2052,7 @@ class MainWindow(QMainWindow):
                      takes precedence so the Activate button can force 74.4 Hz
                      regardless of what the transmitter record says.
         """
-        if self._rig_controller is None:
+        if self._rig_controller is None or not self._rig_controller.is_connected:
             return
         if tone_hz is None:
             tone_hz = float(self._ctcss_tone_hz or 0.0)
@@ -3114,6 +3114,11 @@ class MainWindow(QMainWindow):
                         rig.send_mode_only(dl_mode, ul_mode)  # type: ignore[union-attr]
 
                     threading.Thread(target=_do_send_satmode, daemon=True).start()
+
+            # Send CTCSS tone now that rig is connected (was skipped if transponder
+            # was selected before connection).
+            if self._ctcss_tone_hz:
+                self._send_ctcss_cat_to_rig()
 
         from sdr import SOAPY_AVAILABLE
 
