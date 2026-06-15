@@ -432,6 +432,7 @@ class HamlibDirectController(RigController):
         self._last_ul_hz: float | None = None
         self._ptt_active: bool = False
         self._satmode: bool = model_id in _SATMODE_RIG_IDS
+        self._current_dl_mode: str = ""  # updated by send_mode_only; drives UL threshold
 
     # -- Connection management --
 
@@ -680,12 +681,12 @@ class HamlibDirectController(RigController):
                     )
                 else:
                     last_ul = self._last_ul_hz
-                    # Use a 25 Hz threshold for UL in satmode: each update requires
-                    # CI-V 07 d1 (select Sub Band) / 07 d0 (restore Main), causing the
-                    # rig display to flash "SUB" for ~400 ms.  25 Hz is below the
-                    # human-audible pitch threshold for SSB yet limits the flicker to
-                    # roughly every 3-4 seconds at peak Doppler rate (~7 Hz/s on 145 MHz).
-                    _UL_THRESH = 25.0
+                    # UL threshold controls how often CI-V 07 d1 (Sub Band select) is
+                    # sent, which causes the rig display to flash "SUB" for ~400 ms.
+                    # FM needs tighter tracking (fast ISS passes, capture effect still
+                    # requires being within ~1 kHz); SSB/CW transponders tolerate wider
+                    # offsets so a larger threshold keeps the display flicker down.
+                    _UL_THRESH = 10.0 if self._current_dl_mode in ("FM", "DIGITALVOICE") else 25.0
                     if last_ul is None or abs(vfob_hz - last_ul) >= _UL_THRESH:
                         logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
                         self._rig.set_freq(sub_vfo, int(vfob_hz))
@@ -719,6 +720,7 @@ class HamlibDirectController(RigController):
         Icom satmode rigs use RIG_VFO_MAIN for DL and RIG_VFO_SUB for UL;
         generic rigs use RIG_VFO_A and RIG_VFO_B respectively.
         """
+        self._current_dl_mode = dl_mode
         logger.info("RigDirect: send_mode_only dl=%s ul=%s", dl_mode, ul_mode)
         if not HAMLIB_AVAILABLE:
             return
