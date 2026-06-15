@@ -572,6 +572,12 @@ class HamlibDirectController(RigController):
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
+        logger.info(
+            "RigDirect.set_ctcss_tone: tone_hz=%.1f is_connected=%s rig_none=%s",
+            tone_hz,
+            self.is_connected,
+            self._rig is None,
+        )
         try:
             # Hamlib represents tones as integers scaled by 10 (e.g. 88.5 Hz → 885)
             tone_int = int(round(tone_hz * 10))
@@ -582,8 +588,7 @@ class HamlibDirectController(RigController):
             else:
                 tx_vfo = self._hamlib.RIG_VFO_CURR
             logger.info(
-                "RigDirect.set_ctcss_tone: tone_hz=%.1f tone_int=%d satmode=%s tx_vfo=%s",
-                tone_hz,
+                "RigDirect.set_ctcss_tone: tone_int=%d satmode=%s tx_vfo=%s",
                 tone_int,
                 self._satmode_active,
                 tx_vfo,
