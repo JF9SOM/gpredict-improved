@@ -820,26 +820,18 @@ class HamlibDirectController(RigController):
         try:
             if self._satmode:
                 _H = self._hamlib
-                if _H is not None and hasattr(_H, "RIG_FUNC_SATMODE"):
-                    vfo_curr = self._vfo_str_to_const("VFOA")  # RIG_VFO_CURR fallback
-                    if hasattr(_H, "RIG_VFO_CURR"):
-                        vfo_curr = int(_H.RIG_VFO_CURR)
-                    self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
-                    # Sync the internal Hamlib state flag so vfo_fixup correctly
-                    # routes RIG_VFO_TX → SubA (required for set_freq to work).
-                    # set_func sends the CI-V command but does NOT set
-                    # rig->state.satmode; set_conf sets the flag without CI-V.
-                    self._rig.set_conf("satmode", "1")
+                if _H is not None:
+                    main_vfo = int(_H.RIG_VFO_MAIN)
+                    # set_split_vfo(MAIN, 1, MAIN) is the Direct-mode equivalent of
+                    # rigctld "S 1 Main".  The Hamlib icom backend detects tx_vfo==MAIN
+                    # and (1) sends the CI-V 16 59 01 fd satmode-ON command and
+                    # (2) sets rig->state.satmode=1 so that vfo_fixup() routes
+                    # RIG_VFO_TX → SubA.  set_func(RIG_FUNC_SATMODE) sends the CI-V
+                    # but does NOT update rig->state.satmode for IC-9100/9700.
+                    self._rig.set_split_vfo(main_vfo, 1, main_vfo)
                     logger.info(
-                        "RigDirect: satmode ON via set_func(RIG_FUNC_SATMODE) "
-                        "(CI-V 16 59 01 fd sent) + set_conf satmode=1"
-                    )
-                else:
-                    # Fallback: older Hamlib binding without RIG_FUNC_SATMODE constant.
-                    self._rig.set_conf("satmode", "1")
-                    logger.info(
-                        "RigDirect: satmode ON via set_conf fallback "
-                        "(RIG_FUNC_SATMODE not in binding)"
+                        "RigDirect: satmode via set_split_vfo(MAIN, 1, MAIN) "
+                        "(mirrors rigctld 'S 1 Main')"
                     )
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
