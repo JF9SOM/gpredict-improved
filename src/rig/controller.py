@@ -656,25 +656,28 @@ class HamlibDirectController(RigController):
         try:
             if self._satmode:
                 # IC-9700/9100 satmode: Main=RX(DL), Sub=TX(UL).
-                # Mirror rigctld F/I command semantics: RIG_VFO_RX (=CURR) for DL
-                # and RIG_VFO_TX for UL.  RIG_VFO_TX resolves the TX VFO without
-                # an explicit VFO-switch CI-V command, avoiding the "alternating
-                # Main" symptom caused by set_freq(RIG_VFO_SUB) switching the
-                # active VFO and corrupting the next RIG_VFO_CURR lookup.
+                # rig->state.satmode cannot be set to 1 via any Python-accessible
+                # Hamlib API for IC-9100 (set_conf key not available; rig.state.satmode
+                # not exposed in SWIG binding).  Without satmode=1, vfo_fixup() does not
+                # route RIG_VFO_TX → SubA, so set_freq(TX) fails with "Invalid parameter".
+                # Workaround: use RIG_VFO_SUB which triggers ic9700_set_vfo(SubA) via a
+                # VFO-switch CI-V sequence (07 d1 → set freq → 07 d0).  This causes a
+                # brief display flicker on the IC-9100 as focus alternates Main↔Sub, but
+                # both Main (DL) and Sub (UL) frequencies are set correctly.
                 _H = self._hamlib
-                rx_vfo = int(_H.RIG_VFO_CURR)  # RIG_VFO_RX alias
-                tx_vfo = int(_H.RIG_VFO_TX)
+                curr_vfo = int(_H.RIG_VFO_CURR)
+                sub_vfo = self._vfo_str_to_const("Sub")
                 if vfoa_hz is not None:
                     last_dl = self._last_dl_hz
                     if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
-                        logger.debug("RigDirect satmode DL: set_freq(RX, %d)", int(vfoa_hz))
-                        self._rig.set_freq(rx_vfo, int(vfoa_hz))
+                        logger.info("RigDirect satmode DL: set_freq(CURR, %d)", int(vfoa_hz))
+                        self._rig.set_freq(curr_vfo, int(vfoa_hz))
                         self._last_dl_hz = vfoa_hz
                 if vfob_hz is not None:
                     last_ul = self._last_ul_hz
                     if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
-                        logger.debug("RigDirect satmode UL: set_freq(TX, %d)", int(vfob_hz))
-                        self._rig.set_freq(tx_vfo, int(vfob_hz))
+                        logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
+                        self._rig.set_freq(sub_vfo, int(vfob_hz))
                         self._last_ul_hz = vfob_hz
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
@@ -820,18 +823,12 @@ class HamlibDirectController(RigController):
         try:
             if self._satmode:
                 _H = self._hamlib
-                if _H is not None:
-                    main_vfo = int(_H.RIG_VFO_MAIN)
-                    # set_split_vfo(MAIN, 1, MAIN) is the Direct-mode equivalent of
-                    # rigctld "S 1 Main".  The Hamlib icom backend detects tx_vfo==MAIN
-                    # and (1) sends the CI-V 16 59 01 fd satmode-ON command and
-                    # (2) sets rig->state.satmode=1 so that vfo_fixup() routes
-                    # RIG_VFO_TX → SubA.  set_func(RIG_FUNC_SATMODE) sends the CI-V
-                    # but does NOT update rig->state.satmode for IC-9100/9700.
-                    self._rig.set_split_vfo(main_vfo, 1, main_vfo)
+                if _H is not None and hasattr(_H, "RIG_FUNC_SATMODE"):
+                    vfo_curr = int(_H.RIG_VFO_CURR)
+                    self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
                     logger.info(
-                        "RigDirect: satmode via set_split_vfo(MAIN, 1, MAIN) "
-                        "(mirrors rigctld 'S 1 Main')"
+                        "RigDirect: satmode ON via set_func(RIG_FUNC_SATMODE) "
+                        "(CI-V 16 59 01 fd sent)"
                     )
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
