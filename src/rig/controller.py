@@ -654,17 +654,36 @@ class HamlibDirectController(RigController):
         if self._ptt_active:
             return True
         try:
-            rx_vfo = self._vfo_str_to_const("Main" if self._satmode else "VFOA")
-            if vfoa_hz is not None:
-                last_dl = self._last_dl_hz
-                if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
-                    self._rig.set_freq(rx_vfo, int(vfoa_hz))
-                    self._last_dl_hz = vfoa_hz
-            if vfob_hz is not None:
-                last_ul = self._last_ul_hz
-                if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
-                    self._rig.set_split_freq(rx_vfo, int(vfob_hz))
-                    self._last_ul_hz = vfob_hz
+            if self._satmode:
+                # IC-9700/9100 satmode: Main=RX(DL), Sub=TX(UL).
+                # RIG_VFO_MAIN resolves to "MainA" internally which ic9700_set_vfo
+                # rejects in satmode.  Use RIG_VFO_CURR for DL (current = Main in
+                # satmode) and RIG_VFO_SUB directly for UL to avoid the rejection.
+                _H = self._hamlib
+                curr_vfo = int(_H.RIG_VFO_CURR)
+                sub_vfo = self._vfo_str_to_const("Sub")
+                if vfoa_hz is not None:
+                    last_dl = self._last_dl_hz
+                    if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
+                        self._rig.set_freq(curr_vfo, int(vfoa_hz))
+                        self._last_dl_hz = vfoa_hz
+                if vfob_hz is not None:
+                    last_ul = self._last_ul_hz
+                    if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
+                        self._rig.set_freq(sub_vfo, int(vfob_hz))
+                        self._last_ul_hz = vfob_hz
+            else:
+                rx_vfo = self._vfo_str_to_const("VFOA")
+                if vfoa_hz is not None:
+                    last_dl = self._last_dl_hz
+                    if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
+                        self._rig.set_freq(rx_vfo, int(vfoa_hz))
+                        self._last_dl_hz = vfoa_hz
+                if vfob_hz is not None:
+                    last_ul = self._last_ul_hz
+                    if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
+                        self._rig.set_split_freq(rx_vfo, int(vfob_hz))
+                        self._last_ul_hz = vfob_hz
             return True
         except Exception as exc:
             logger.error("RigDirect.set_vfo_frequencies: %s", exc)
