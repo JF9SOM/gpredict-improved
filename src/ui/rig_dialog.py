@@ -218,6 +218,36 @@ def _load_hamlib_models() -> list[tuple[int, str, str]]:
     return sorted(models, key=lambda x: (x[1].lower(), x[2].lower()))
 
 
+_icom_civ_cache: dict[int, str] = {}
+
+
+def _get_icom_default_civ(model_id: int) -> str:
+    """Return the Hamlib default CI-V address for an Icom rig as a hex string.
+
+    Creates a Rig instance without opening the port and reads the compile-time
+    default via get_conf("civaddr").  Results are cached so repeated model
+    switches don't re-query Hamlib.
+
+    Returns e.g. "60" (without 0x prefix) or "" if unavailable.
+    """
+    if model_id in _icom_civ_cache:
+        return _icom_civ_cache[model_id]
+    result = ""
+    try:
+        import Hamlib as _H  # noqa: N812
+
+        rig = _H.Rig(model_id)
+        raw = rig.get_conf("civaddr")
+        # Hamlib returns a decimal string (e.g. "96" for 0x60)
+        if raw and raw.strip() not in ("", "0"):
+            addr_int = int(raw.strip(), 0)
+            result = format(addr_int, "X")  # "60", "A2" etc.
+    except Exception:
+        pass
+    _icom_civ_cache[model_id] = result
+    return result
+
+
 def _scan_serial_ports() -> list[str]:
     """Scan for available serial ports and return them. No extra dependencies needed."""
     if sys.platform.startswith("win"):
@@ -501,12 +531,24 @@ class _RigPanel(QWidget):
             self._ctcss_cat_off_edit.setEnabled(False)
 
     def _on_model_changed(self, _index: int) -> None:
-        """Enable CI-V Address field only for Icom rigs."""
+        """Enable CI-V Address field only for Icom rigs; show model default as placeholder."""
         model_id: int = self._model_combo.currentData() or 0
         is_icom = any(
             mid == model_id and mfg.lower() == "icom" for mid, mfg, _name in self._all_models
         )
         self._civ_addr_edit.setEnabled(is_icom)
+        if is_icom:
+            default = _get_icom_default_civ(model_id)
+            if default:
+                self._civ_addr_edit.setPlaceholderText(
+                    _("default: {addr}  (blank = use default)").format(addr=default)
+                )
+            else:
+                self._civ_addr_edit.setPlaceholderText(
+                    _("e.g. 65  (hex as shown on rig menu, blank = default)")
+                )
+        else:
+            self._civ_addr_edit.setPlaceholderText(_("N/A"))
 
     def _on_model_search(self, text: str) -> None:
         """Filter the Hamlib model list as the user types."""
