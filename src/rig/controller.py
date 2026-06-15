@@ -596,13 +596,12 @@ class HamlibDirectController(RigController):
             )
             if tone_hz > 0:
                 self._rig.set_func(tx_vfo, self._hamlib.RIG_FUNC_TONE, 1)
-                self._rig.set_level(
-                    tx_vfo,
-                    self._hamlib.RIG_LEVEL_CTCSS_TONE,
-                    tone_int,
-                )
+                # Use the Rig.set_ctcss_tone(vfo, tone) method directly;
+                # RIG_LEVEL_CTCSS_TONE is not exposed in all Python binding versions.
+                self._rig.set_ctcss_tone(tx_vfo, tone_int)
             else:
                 self._rig.set_func(tx_vfo, self._hamlib.RIG_FUNC_TONE, 0)
+                self._rig.set_ctcss_tone(tx_vfo, 0)
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
