@@ -2635,6 +2635,7 @@ class MainWindow(QMainWindow):
             model_id=int(settings.get("model_id", 1)),
             port=str(settings.get("port", "/dev/ttyUSB0")),
             baud_rate=int(settings.get("baud_rate", 9600)),
+            civ_addr=str(settings.get("civ_addr", "")),
         )
 
     def _build_sdr_rig_adapter(self, sdr_cfg: dict[str, Any]) -> RigController:

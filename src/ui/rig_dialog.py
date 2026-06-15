@@ -359,7 +359,13 @@ class _RigPanel(QWidget):
         self._model_combo = QComboBox()
         self._model_combo.setMinimumWidth(280)
         self._populate_model_combo(self._all_models)
+        self._model_combo.currentIndexChanged.connect(self._on_model_changed)
         direct_form.addRow(_("Rig Model:"), self._model_combo)
+
+        self._civ_addr_edit = QLineEdit()
+        self._civ_addr_edit.setPlaceholderText(_("e.g. 0x65  (blank = model default)"))
+        self._civ_addr_edit.setMaximumWidth(160)
+        direct_form.addRow(_("CI-V Address (Icom):"), self._civ_addr_edit)
 
         form.addWidget(self._direct_group)
 
@@ -492,6 +498,14 @@ class _RigPanel(QWidget):
             self._ctcss_cat_on_edit.setEnabled(False)
             self._ctcss_cat_off_edit.setEnabled(False)
 
+    def _on_model_changed(self, _index: int) -> None:
+        """Enable CI-V Address field only for Icom rigs."""
+        model_id: int = self._model_combo.currentData() or 0
+        is_icom = any(
+            mid == model_id and mfg.lower() == "icom" for mid, mfg, _name in self._all_models
+        )
+        self._civ_addr_edit.setEnabled(is_icom)
+
     def _on_model_search(self, text: str) -> None:
         """Filter the Hamlib model list as the user types."""
         query = text.lower().strip()
@@ -619,7 +633,9 @@ class _RigPanel(QWidget):
         if idx >= 0:
             self._direct_cat_baud_combo.setCurrentIndex(idx)
 
+        self._civ_addr_edit.setText(str(s.get("civ_addr", "")))
         self._on_ctcss_method_changed()
+        self._on_model_changed(0)
 
     def save(self) -> dict[str, Any]:
         """Return the current form state as a settings dictionary.
@@ -636,6 +652,7 @@ class _RigPanel(QWidget):
             "model_id": model_id,
             "host": self._host_edit.text(),
             "net_port": self._net_port_spin.value(),
+            "civ_addr": self._civ_addr_edit.text().strip(),
             "ctcss_method": self._ctcss_method_combo.currentData() or "hamlib",
             "ctcss_cat_on": self._ctcss_cat_on_edit.text(),
             "ctcss_cat_off": self._ctcss_cat_off_edit.text(),

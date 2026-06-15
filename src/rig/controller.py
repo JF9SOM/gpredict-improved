@@ -167,10 +167,10 @@ CTCSS_TABLE: dict[float, int] = {
 # Direct mode: model IDs used by HamlibDirectController._satmode
 _SATMODE_RIG_IDS: frozenset[int] = frozenset(
     [
-        3081,  # IC-9700
-        3074,  # IC-9100
-        3068,  # IC-910H
-        3062,  # IC-821H
+        3081,  # IC-9700  (rigctl -l verified 2026-06-15)
+        3068,  # IC-9100  (rigctl -l verified 2026-06-15)
+        3044,  # IC-910   (rigctl -l verified 2026-06-15)
+        3034,  # IC-821H  (rigctl -l verified 2026-06-15)
     ]
 )
 
@@ -181,7 +181,7 @@ _SATMODE_RIG_NAMES: frozenset[str] = frozenset(
     [
         "IC-9700",
         "IC-9100",
-        "IC-910H",
+        "IC-910",
         "IC-821H",
     ]
 )
@@ -405,6 +405,7 @@ class HamlibDirectController(RigController):
         data_bits: int = 8,
         stop_bits: int = 1,
         handshake: str = "None",
+        civ_addr: str = "",
     ) -> None:
         """
         Args:
@@ -414,6 +415,8 @@ class HamlibDirectController(RigController):
             data_bits: Data bits
             stop_bits: Stop bits
             handshake: Flow control ("None", "XONXOFF", "Hardware")
+            civ_addr:  CI-V address override for Icom rigs (e.g. "0x65").
+                       Empty string uses Hamlib's default for the model.
         """
         super().__init__()
         self._model_id = model_id
@@ -422,6 +425,7 @@ class HamlibDirectController(RigController):
         self._data_bits = data_bits
         self._stop_bits = stop_bits
         self._handshake = handshake
+        self._civ_addr = civ_addr.strip()
         self._rig: Any = None  # Hamlib.Rig instance or _MockRig
         self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._last_dl_hz: float | None = None
@@ -450,6 +454,9 @@ class HamlibDirectController(RigController):
                 rig.set_conf("serial_speed", str(self._baud_rate))
                 rig.set_conf("data_bits", str(self._data_bits))
                 rig.set_conf("stop_bits", str(self._stop_bits))
+                if self._civ_addr:
+                    rig.set_conf("civaddr", self._civ_addr)
+                    logger.info("RigDirect: CI-V address set to %s", self._civ_addr)
                 rig.open()
                 self._rig = rig
             else:
