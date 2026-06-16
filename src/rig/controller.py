@@ -1047,10 +1047,6 @@ class HamlibDirectController(RigController):
             # Record the DL frequency so the next tick does NOT re-trigger
             # _satmode_enter (last_dl is None would loop infinitely).
             self._last_dl_hz = dl_hz
-            # Re-apply CTCSS via send_raw (rig.send_raw works while Hamlib holds
-            # the port; set_func(TONE) does not generate CI-V for IC-9100).
-            if self._ctcss_tone_hz != 0.0:
-                self._apply_ctcss_civ_via_send_raw(self._ctcss_tone_hz)
         except Exception as exc:
             logger.warning("RigDirect: _satmode_enter failed — %s", exc)
         finally:
