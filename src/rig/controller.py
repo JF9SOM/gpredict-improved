@@ -780,6 +780,12 @@ class HamlibDirectController(RigController):
                         ):
                             logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
                             self._rig.set_freq(sub_vfo, int(vfob_hz))
+                            # Hamlib icom backend internally calls icom_set_vfo(SUB_A)
+                            # before setting the Sub band frequency, leaving the rig's
+                            # active band on Sub.  Subsequent set_freq(CURR, dl_hz)
+                            # then writes DL to Sub instead of Main.  Restore Main
+                            # focus immediately after each UL update.
+                            self._rig.set_vfo(int(self._hamlib.RIG_VFO_MAIN))
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
             else:
