@@ -1081,6 +1081,11 @@ class HamlibDirectController(RigController):
             self._rig.send_raw(frame(0x16, 0x42, tone_byte))  # TONE ON/OFF
             _time.sleep(0.15)
             self._rig.send_raw(frame(0x07, 0xD0))  # Select Main
+            # Sync Hamlib's internal VFO state to MAIN so the next
+            # set_freq(SUB_A) call triggers the 07 D1 CI-V select command
+            # instead of being skipped by Hamlib's VFO cache.
+            if self._hamlib is not None:
+                self._rig.set_vfo(int(self._hamlib.RIG_VFO_MAIN))
             logger.info(
                 "RigDirect: send_raw CTCSS %.1fHz enable=%s civ=0x%02X applied",
                 tone_hz,
