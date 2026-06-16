@@ -446,7 +446,8 @@ class _RigPanel(QWidget):
 
         # --- CTCSS Tone Settings ---
         ctcss_group = QGroupBox(_("CTCSS Tone Settings"))
-        ctcss_form = QFormLayout(ctcss_group)
+        self._ctcss_form = QFormLayout(ctcss_group)
+        ctcss_form = self._ctcss_form
         self._ctcss_method_combo = QComboBox()
         self._ctcss_method_combo.addItem(_("Hamlib standard"), "hamlib")
         self._ctcss_method_combo.addItem(_("IC-9700/9100/910/821 (CI-V)"), "icom_civ")
@@ -470,9 +471,9 @@ class _RigPanel(QWidget):
         self._direct_cat_port_edit = QComboBox()
         self._direct_cat_port_edit.setEditable(True)
         self._direct_cat_port_edit.setMinimumWidth(160)
-        self._direct_cat_port_edit.lineEdit().setPlaceholderText(
-            _("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)")
-        )
+        _line = self._direct_cat_port_edit.lineEdit()
+        if _line is not None:
+            _line.setPlaceholderText(_("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)"))
         self._direct_cat_scan_btn = QPushButton(_("Scan"))
         self._direct_cat_scan_btn.setMaximumWidth(80)
         self._direct_cat_scan_btn.clicked.connect(self._on_scan_cat_ports)
@@ -549,18 +550,17 @@ class _RigPanel(QWidget):
         show_port = is_cat or is_civ
 
         # QFormLayout.setRowVisible hides both label and field together (Qt 6)
-        ctcss_form: QFormLayout = self._ctcss_method_combo.parent().layout()  # type: ignore[assignment]
-        ctcss_form.setRowVisible(self._ctcss_civ_addr_edit, is_civ)
-        ctcss_form.setRowVisible(self._ctcss_cat_on_edit, not is_civ)
-        ctcss_form.setRowVisible(self._ctcss_cat_off_edit, not is_civ)
-        ctcss_form.setRowVisible(self._direct_cat_port_row, show_port)
-        ctcss_form.setRowVisible(self._direct_cat_baud_combo, show_port)
+        self._ctcss_form.setRowVisible(self._ctcss_civ_addr_edit, is_civ)
+        self._ctcss_form.setRowVisible(self._ctcss_cat_on_edit, not is_civ)
+        self._ctcss_form.setRowVisible(self._ctcss_cat_off_edit, not is_civ)
+        self._ctcss_form.setRowVisible(self._direct_cat_port_row, show_port)
+        self._ctcss_form.setRowVisible(self._direct_cat_baud_combo, show_port)
 
         if not is_civ:
             # Restore the standard placeholder for CAT-based methods
-            self._direct_cat_port_edit.setPlaceholderText(
-                _("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)")
-            )
+            _le = self._direct_cat_port_edit.lineEdit()
+            if _le is not None:
+                _le.setPlaceholderText(_("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)"))
 
         if method in CTCSS_PRESET_TEMPLATES:
             on_cmd, off_cmd = CTCSS_PRESET_TEMPLATES[method]

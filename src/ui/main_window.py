@@ -2774,7 +2774,7 @@ class MainWindow(QMainWindow):
                     return
                 from PySide6.QtCore import QMetaObject, Qt
 
-                QMetaObject.invokeMethod(
+                QMetaObject.invokeMethod(  # type: ignore[call-overload]
                     self,
                     "_on_satmode_rig_reconnected",
                     Qt.ConnectionType.QueuedConnection,
