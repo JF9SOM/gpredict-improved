@@ -444,8 +444,9 @@ class _RigPanel(QWidget):
             split_form.addRow(_("Split Mode:"), self._split_mode_combo)
             form.addWidget(split_group)
 
-        # --- CTCSS Tone Settings ---
-        ctcss_group = QGroupBox(_("CTCSS Tone Settings"))
+        # --- CTCSS Tone Settings (NET mode only) ---
+        ctcss_group = QGroupBox(_("CTCSS Tone Settings (NET Mode)"))
+        self._ctcss_group = ctcss_group
         self._ctcss_form = QFormLayout(ctcss_group)
         ctcss_form = self._ctcss_form
         self._ctcss_method_combo = QComboBox()
@@ -487,6 +488,7 @@ class _RigPanel(QWidget):
         self._direct_cat_baud_combo.setCurrentText("38400")
         ctcss_form.addRow(_("Direct CAT Baud:"), self._direct_cat_baud_combo)
         form.addWidget(ctcss_group)
+        ctcss_group.setEnabled(False)  # disabled by default; enabled when NET mode is selected
 
         # Status label (port-scan / model-search results)
         self._status_label = QLabel("")
@@ -510,6 +512,7 @@ class _RigPanel(QWidget):
         is_direct = self._radio_direct.isChecked()
         self._direct_group.setVisible(is_direct)
         self._net_group.setVisible(not is_direct)
+        self._ctcss_group.setEnabled(not is_direct)
 
     def _on_scan_ports(self) -> None:
         """Scan serial ports and update the COM port combo box."""
