@@ -594,14 +594,27 @@ class HamlibDirectController(RigController):
                 self._satmode_active,
                 tx_vfo,
             )
-            if tone_hz > 0:
-                self._rig.set_func(tx_vfo, self._hamlib.RIG_FUNC_TONE, 1)
-                # Use the Rig.set_ctcss_tone(vfo, tone) method directly;
-                # RIG_LEVEL_CTCSS_TONE is not exposed in all Python binding versions.
-                self._rig.set_ctcss_tone(tx_vfo, tone_int)
+            if self._satmode and self._satmode_active:
+                # Satmode: explicitly switch to Sub (TX) VFO so that set_func
+                # and set_ctcss_tone target the correct band, then restore Main.
+                sub_vfo = int(self._hamlib.RIG_VFO_SUB_A)
+                self._rig.set_vfo(sub_vfo)
+                try:
+                    self._rig.set_func(
+                        self._hamlib.RIG_VFO_CURR,
+                        self._hamlib.RIG_FUNC_TONE,
+                        1 if tone_hz > 0 else 0,
+                    )
+                    self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
+                finally:
+                    self._rig.set_vfo(self._hamlib.RIG_VFO_MAIN)
             else:
-                self._rig.set_func(tx_vfo, self._hamlib.RIG_FUNC_TONE, 0)
-                self._rig.set_ctcss_tone(tx_vfo, 0)
+                self._rig.set_func(
+                    self._hamlib.RIG_VFO_CURR,
+                    self._hamlib.RIG_FUNC_TONE,
+                    1 if tone_hz > 0 else 0,
+                )
+                self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
