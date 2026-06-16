@@ -2052,12 +2052,15 @@ class MainWindow(QMainWindow):
                      takes precedence so the Activate button can force 74.4 Hz
                      regardless of what the transmitter record says.
         """
-        if self._rig_controller is None or not self._rig_controller.is_connected:
+        if self._rig_controller is None:
             return
         if tone_hz is None:
             tone_hz = float(self._ctcss_tone_hz or 0.0)
 
         if self._ctcss_method in self._CAT_CTCSS_METHODS:
+            # CAT methods require an active connection to the serial port.
+            if not self._rig_controller.is_connected:
+                return
             rig = self._rig_controller
             cat_on = self._ctcss_cat_on
             cat_off = self._ctcss_cat_off
@@ -2071,9 +2074,22 @@ class MainWindow(QMainWindow):
             threading.Thread(target=_send_cat, daemon=True).start()
 
         elif self._ctcss_method == "hamlib":
-            # Standard Hamlib CTCSS: call set_ctcss_tone() automatically on
-            # transponder change so rigs like IC-9100 get the tone without
-            # requiring the user to press the CTCSS button manually.
+            # Hamlib CTCSS: HamlibDirectController.set_ctcss_tone() handles both
+            # the connected case (existing handle, under _rig_cmd_lock) and the
+            # not-yet-connected case (temporary connection, then close).  This
+            # way CTCSS is written to the rig at transponder-selection time, not
+            # at Doppler-connect time, so no VFO switching occurs during the
+            # Doppler cycle.  HamlibNetController requires an active connection;
+            # for NET rigs the tone is sent here if already connected, and
+            # re-sent in _on_rig_slot_connected if not.
+            from rig.controller import HamlibDirectController
+
+            if (
+                not isinstance(self._rig_controller, HamlibDirectController)
+                and not self._rig_controller.is_connected
+            ):
+                # NET / SDR: require active connection (Direct handles it via temp connection).
+                return
             logger.info(
                 "_send_ctcss_cat_to_rig hamlib: rig_type=%s tone_hz=%.1f",
                 type(self._rig_controller).__name__,
@@ -3094,7 +3110,7 @@ class MainWindow(QMainWindow):
         VFO modes on these rigs).  Only slot 1 (primary rig) participates in mode
         tracking.
         """
-        from rig.controller import HamlibNetController, SdrRigAdapter
+        from rig.controller import HamlibDirectController, HamlibNetController, SdrRigAdapter
 
         # Apply mode after satmode activation for slot-1 NET rigs.
         if slot == 1:
@@ -3115,9 +3131,10 @@ class MainWindow(QMainWindow):
 
                     threading.Thread(target=_do_send_satmode, daemon=True).start()
 
-            # Send CTCSS tone now that rig is connected (was skipped if transponder
-            # was selected before connection).
-            if self._ctcss_tone_hz:
+            # For NET rigs, re-send CTCSS now that connection is established
+            # (transponder may have been selected before connect).
+            # Direct rigs use a temp connection at selection time, so no re-send needed.
+            if self._ctcss_tone_hz and not isinstance(rig, HamlibDirectController):
                 self._send_ctcss_cat_to_rig()
 
         from sdr import SOAPY_AVAILABLE

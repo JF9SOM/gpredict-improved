@@ -441,10 +441,6 @@ class HamlibDirectController(RigController):
         # Serialises multi-step rig command sequences (VFO switch + CTCSS etc.)
         # so they never interleave with the Doppler cycle's set_vfo_frequencies.
         self._rig_cmd_lock = threading.Lock()
-        # Satmode CTCSS pending: >0 means the Doppler cycle must apply this tone
-        # on Sub band on the next tick (inside _rig_cmd_lock, after UL update).
-        # 0.0 means no pending CTCSS action needed.
-        self._ctcss_pending_hz: float = 0.0
 
     # -- Connection management --
 
@@ -572,46 +568,104 @@ class HamlibDirectController(RigController):
             return "FM"
 
     def set_ctcss_tone(self, tone_hz: float) -> bool:
-        """Set the CTCSS tone. Pass tone_hz=0.0 to disable."""
-        logger.info(
-            "RigDirect.set_ctcss_tone ENTRY: %.1fHz conn=%s rig_none=%s hamlib_none=%s",
-            tone_hz,
-            self.is_connected,
-            self._rig is None,
-            self._hamlib is None,
-        )
-        if not self.is_connected or self._rig is None:
-            return False
+        """Set CTCSS tone via a one-shot sequence that avoids Doppler-cycle interference.
+
+        If the rig is already connected (Doppler running), acquires _rig_cmd_lock
+        and switches to Sub VFO for the CTCSS commands, then restores Main.
+        If the rig is not yet connected, opens a temporary Hamlib connection,
+        applies the tone, and closes immediately — the IC-9100 retains the CTCSS
+        setting in its VFO state so the value persists through the subsequent
+        Doppler connect.  This avoids CTCSS-triggered VFO switching inside the
+        Doppler cycle which caused the 5/1 alternating display on the IC-9100.
+        """
+        logger.info("RigDirect.set_ctcss_tone: %.1fHz connected=%s", tone_hz, self.is_connected)
+        if self.is_connected and self._rig is not None:
+            return self._apply_ctcss_connected(tone_hz)
+        return self._apply_ctcss_temp_connection(tone_hz)
+
+    def _apply_ctcss_connected(self, tone_hz: float) -> bool:
+        """Apply CTCSS using the already-open rig handle, serialised under _rig_cmd_lock."""
         if self._hamlib is None:
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
         try:
-            if self._satmode and self._satmode_active:
-                # Satmode Sub=TX.  VFO switching must happen inside the Doppler
-                # cycle's _rig_cmd_lock to avoid display alternating.  Store the
-                # tone as pending; _set_vfo_frequencies_locked will apply it on
-                # the next tick after the UL update (already holds the lock).
-                logger.info(
-                    "RigDirect.set_ctcss_tone: satmode — deferred to Doppler tick %.1fHz",
-                    tone_hz,
-                )
-                self._ctcss_pending_hz = tone_hz
-            else:
-                # Non-satmode or satmode not yet active: send immediately.
-                tone_int = int(round(tone_hz * 10))
-                logger.info("RigDirect.set_ctcss_tone: direct path tone_int=%d", tone_int)
-                self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
-                self._rig.set_func(
-                    self._hamlib.RIG_VFO_CURR,
-                    self._hamlib.RIG_FUNC_TONE,
-                    1 if tone_hz > 0 else 0,
-                )
+            _H = self._hamlib
+            tone_int = int(round(abs(tone_hz) * 10))
+            enable = tone_hz > 0
+            with self._rig_cmd_lock:
+                if self._satmode and self._satmode_active:
+                    self._rig.set_vfo(int(_H.RIG_VFO_SUB_A))
+                    try:
+                        self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
+                        self._rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
+                        logger.info("RigDirect: CTCSS %.1fHz applied on Sub (connected)", tone_hz)
+                    finally:
+                        self._rig.set_vfo(int(_H.RIG_VFO_MAIN))
+                else:
+                    self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
+                    self._rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
+                    logger.info("RigDirect: CTCSS %.1fHz applied on CURR (connected)", tone_hz)
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
         except Exception as exc:
-            logger.error("RigDirect.set_ctcss_tone: %s", exc)
+            logger.error("RigDirect._apply_ctcss_connected: %s", exc)
+            return False
+
+    def _apply_ctcss_temp_connection(self, tone_hz: float) -> bool:
+        """Open a temporary Hamlib connection, set CTCSS, then close immediately.
+
+        Used when the rig is not yet connected for Doppler tracking so CTCSS is
+        written to the rig before the Doppler session starts — avoiding any need
+        to touch the VFO inside the Doppler cycle.
+        """
+        if not HAMLIB_AVAILABLE:
+            with self._lock:
+                self._freq_state.ctcss_tone = tone_hz
+            return True
+        try:
+            import Hamlib as _H
+
+            if self._hamlib is None:
+                self._hamlib = _H
+            rig = _H.Rig(self._model_id)
+            rig.set_conf("rig_pathname", self._port)
+            rig.set_conf("serial_speed", str(self._baud_rate))
+            rig.set_conf("data_bits", str(self._data_bits))
+            rig.set_conf("stop_bits", str(self._stop_bits))
+            if self._civ_addr:
+                addr = self._civ_addr
+                if not addr.lower().startswith("0x"):
+                    addr = "0x" + addr
+                rig.set_conf("civaddr", addr)
+            rig.open()
+            logger.info("RigDirect: temp connection opened for CTCSS %.1fHz", tone_hz)
+            try:
+                tone_int = int(round(abs(tone_hz) * 10))
+                enable = tone_hz > 0
+                if self._satmode:
+                    # Activate satmode so the rig routes Sub=TX before VFO switch.
+                    rig.set_split_vfo(int(_H.RIG_VFO_MAIN), 1, int(_H.RIG_VFO_MAIN))
+                    rig.set_vfo(int(_H.RIG_VFO_SUB_A))
+                    try:
+                        rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
+                        rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
+                        logger.info("RigDirect: temp-conn CTCSS %.1fHz applied on Sub", tone_hz)
+                    finally:
+                        rig.set_vfo(int(_H.RIG_VFO_MAIN))
+                else:
+                    rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
+                    rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
+                    logger.info("RigDirect: temp-conn CTCSS %.1fHz applied on CURR", tone_hz)
+            finally:
+                rig.close()
+                logger.info("RigDirect: temp connection closed")
+            with self._lock:
+                self._freq_state.ctcss_tone = tone_hz
+            return True
+        except Exception as exc:
+            logger.error("RigDirect._apply_ctcss_temp_connection: %s", exc)
             return False
 
     def set_dcs_code(self, code: int) -> bool:
@@ -785,25 +839,6 @@ class HamlibDirectController(RigController):
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
 
-                # Apply pending satmode CTCSS (set by set_ctcss_tone while we
-                # already hold _rig_cmd_lock, so no deadlock or interleaving).
-                ctcss_hz = self._ctcss_pending_hz
-                if ctcss_hz != 0.0:
-                    tone_int = int(round(abs(ctcss_hz) * 10))
-                    enable = ctcss_hz > 0
-                    logger.info(
-                        "RigDirect: applying pending satmode CTCSS %.1fHz enable=%s",
-                        ctcss_hz,
-                        enable,
-                    )
-                    _H = self._hamlib
-                    self._rig.set_vfo(int(_H.RIG_VFO_SUB_A))
-                    try:
-                        self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
-                        self._rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
-                    finally:
-                        self._rig.set_vfo(int(_H.RIG_VFO_MAIN))
-                    self._ctcss_pending_hz = 0.0
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 if vfoa_hz is not None:
