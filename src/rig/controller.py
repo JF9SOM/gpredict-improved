@@ -582,12 +582,13 @@ class HamlibDirectController(RigController):
         try:
             # Hamlib represents tones as integers scaled by 10 (e.g. 88.5 Hz → 885)
             tone_int = int(round(tone_hz * 10))
-            # In satmode: Sub (TX) VFO is RIG_VFO_SUB_A.  RIG_VFO_TX is not
-            # handled by the icom backend and results in a no-op.
-            if self._satmode and self._satmode_active:
-                tx_vfo = int(self._hamlib.RIG_VFO_SUB_A)
-            else:
-                tx_vfo = self._hamlib.RIG_VFO_CURR
+            # Use RIG_VFO_CURR for all cases.  In IC-9100/IC-9700 satmode the
+            # icom backend's split routing makes the *current* (Main) VFO the
+            # TX side for set_func / set_ctcss_tone, matching the behaviour
+            # confirmed with rigctl (TX VFO: Main after S 1 Main).
+            # RIG_VFO_SUB_A routes to the wrong band; RIG_VFO_TX is a no-op
+            # in the icom backend.
+            tx_vfo = self._hamlib.RIG_VFO_CURR
             logger.info(
                 "RigDirect.set_ctcss_tone: tone_int=%d satmode=%s tx_vfo=0x%x",
                 tone_int,
