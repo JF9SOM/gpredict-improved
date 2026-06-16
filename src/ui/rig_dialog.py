@@ -531,6 +531,12 @@ class _RigPanel(QWidget):
         ctcss_form.setRowVisible(self._direct_cat_port_edit, show_port)
         ctcss_form.setRowVisible(self._direct_cat_baud_combo, show_port)
 
+        if not is_civ:
+            # Restore the standard placeholder for CAT-based methods
+            self._direct_cat_port_edit.setPlaceholderText(
+                _("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)")
+            )
+
         if method in CTCSS_PRESET_TEMPLATES:
             on_cmd, off_cmd = CTCSS_PRESET_TEMPLATES[method]
             self._ctcss_cat_on_edit.setText(on_cmd)
@@ -559,6 +565,10 @@ class _RigPanel(QWidget):
             else:
                 placeholder = _("hex as shown on rig CI-V menu")
             self._ctcss_civ_addr_edit.setPlaceholderText(placeholder)
+            # Direct CAT Port is required for CI-V; override the FT-991 placeholder
+            self._direct_cat_port_edit.setPlaceholderText(
+                _("e.g. /dev/ttyUSB0  (required — rigctld w cmd does not work for Icom CI-V)")
+            )
         else:  # "hamlib"
             self._ctcss_cat_on_edit.setText("")
             self._ctcss_cat_off_edit.setText("")
