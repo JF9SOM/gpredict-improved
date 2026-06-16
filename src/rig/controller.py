@@ -441,6 +441,8 @@ class HamlibDirectController(RigController):
         # Serialises multi-step rig command sequences (VFO switch + CTCSS etc.)
         # so they never interleave with the Doppler cycle's set_vfo_frequencies.
         self._rig_cmd_lock = threading.Lock()
+        # Last CTCSS tone set for satmode rigs (Hz). Re-applied in _satmode_enter.
+        self._ctcss_tone_hz: float = 0.0
 
     # -- Connection management --
 
@@ -568,136 +570,136 @@ class HamlibDirectController(RigController):
             return "FM"
 
     def set_ctcss_tone(self, tone_hz: float) -> bool:
-        """Set CTCSS tone via a one-shot sequence that avoids Doppler-cycle interference.
+        """Set CTCSS tone for satmode rigs via raw CI-V bytes (pyserial).
 
-        If the rig is already connected (Doppler running), acquires _rig_cmd_lock
-        and switches to Sub VFO for the CTCSS commands, then restores Main.
-        If the rig is not yet connected, opens a temporary Hamlib connection,
-        applies the tone, and closes immediately — the IC-9100 retains the CTCSS
-        setting in its VFO state so the value persists through the subsequent
-        Doppler connect.  This avoids CTCSS-triggered VFO switching inside the
-        Doppler cycle which caused the 5/1 alternating display on the IC-9100.
+        Hamlib set_func(RIG_FUNC_TONE) does not generate a CI-V command for
+        IC-9100 (confirmed by absence of Hamlib debug output).  Direct CI-V
+        via pyserial is the only reliable path for satmode rigs.
+
+        When the rig is NOT connected (before Doppler), the serial port is free
+        and pyserial sends CI-V directly.  When the rig IS connected (Doppler
+        running), the port is held by Hamlib; _satmode_enter re-applies CTCSS
+        after satmode is activated so no extra action is needed here.
+
+        For non-satmode rigs, the standard Hamlib set_ctcss_tone / set_func
+        path is used (works for FTX-1F, FT-991A etc.).
         """
-        logger.info("RigDirect.set_ctcss_tone: %.1fHz connected=%s", tone_hz, self.is_connected)
-        if self.is_connected and self._rig is not None:
-            return self._apply_ctcss_connected(tone_hz)
-        return self._apply_ctcss_temp_connection(tone_hz)
+        logger.info(
+            "RigDirect.set_ctcss_tone: %.1fHz satmode=%s connected=%s",
+            tone_hz,
+            self._satmode,
+            self.is_connected,
+        )
+        self._ctcss_tone_hz = tone_hz
+        with self._lock:
+            self._freq_state.ctcss_tone = tone_hz
 
-    def _apply_ctcss_connected(self, tone_hz: float) -> bool:
-        """Apply CTCSS using the already-open rig handle, serialised under _rig_cmd_lock."""
-        if self._hamlib is None:
-            with self._lock:
-                self._freq_state.ctcss_tone = tone_hz
+        if self._satmode:
+            if not self.is_connected:
+                # Port is free: send CI-V directly.
+                return self._apply_ctcss_civ(tone_hz)
+            # Port held by Hamlib; _satmode_enter will apply CTCSS after connect.
+            logger.info("RigDirect.set_ctcss_tone: connected — deferred to _satmode_enter")
+            return True
+
+        # Non-satmode rig: use Hamlib binding on current VFO.
+        if self._rig is None or self._hamlib is None:
             return True
         try:
             _H = self._hamlib
             tone_int = int(round(abs(tone_hz) * 10))
-            enable = tone_hz > 0
-            with self._rig_cmd_lock:
-                sub_vfo_const = int(_H.RIG_VFO_SUB_A)
-                if self._satmode and self._satmode_active:
-                    self._rig.set_vfo(sub_vfo_const)
-                    try:
-                        rc_tone = self._rig.set_ctcss_tone(sub_vfo_const, tone_int)
-                        rc_func = self._rig.set_func(
-                            sub_vfo_const, _H.RIG_FUNC_TONE, 1 if enable else 0
-                        )
-                        logger.info(
-                            "RigDirect: CTCSS %.1fHz on Sub (connected) "
-                            "set_ctcss_tone rc=%s set_func rc=%s",
-                            tone_hz,
-                            rc_tone,
-                            rc_func,
-                        )
-                    finally:
-                        self._rig.set_vfo(int(_H.RIG_VFO_MAIN))
-                else:
-                    rc_tone = self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
-                    rc_func = self._rig.set_func(
-                        _H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0
-                    )
-                    logger.info(
-                        "RigDirect: CTCSS %.1fHz on CURR (connected) "
-                        "set_ctcss_tone rc=%s set_func rc=%s",
-                        tone_hz,
-                        rc_tone,
-                        rc_func,
-                    )
-            with self._lock:
-                self._freq_state.ctcss_tone = tone_hz
+            self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
+            self._rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if tone_hz > 0 else 0)
             return True
         except Exception as exc:
-            logger.error("RigDirect._apply_ctcss_connected: %s", exc)
+            logger.error("RigDirect.set_ctcss_tone (non-satmode): %s", exc)
             return False
 
-    def _apply_ctcss_temp_connection(self, tone_hz: float) -> bool:
-        """Open a temporary Hamlib connection, set CTCSS, then close immediately.
-
-        Used when the rig is not yet connected for Doppler tracking so CTCSS is
-        written to the rig before the Doppler session starts — avoiding any need
-        to touch the VFO inside the Doppler cycle.
-        """
-        if not HAMLIB_AVAILABLE:
-            with self._lock:
-                self._freq_state.ctcss_tone = tone_hz
-            return True
-        try:
-            import Hamlib as _H
-
-            if self._hamlib is None:
-                self._hamlib = _H
-            rig = _H.Rig(self._model_id)
-            rig.set_conf("rig_pathname", self._port)
-            rig.set_conf("serial_speed", str(self._baud_rate))
-            rig.set_conf("data_bits", str(self._data_bits))
-            rig.set_conf("stop_bits", str(self._stop_bits))
-            if self._civ_addr:
-                addr = self._civ_addr
-                if not addr.lower().startswith("0x"):
-                    addr = "0x" + addr
-                rig.set_conf("civaddr", addr)
-            rig.open()
-            logger.info("RigDirect: temp connection opened for CTCSS %.1fHz", tone_hz)
+    def _civ_addr_int(self) -> int:
+        """Return the CI-V rig address as an integer (default 0x65 for IC-9100)."""
+        if self._civ_addr:
+            addr = self._civ_addr
+            if not addr.lower().startswith("0x"):
+                addr = "0x" + addr
             try:
-                tone_int = int(round(abs(tone_hz) * 10))
-                enable = tone_hz > 0
-                if self._satmode:
-                    # Switch to Sub band so CTCSS targets TX (Sub=TX in satmode).
-                    # Do NOT call set_split_vfo here — it can reset the CTCSS state
-                    # on IC-9100.  The rig retains satmode from the previous session;
-                    # if it is not yet in satmode the Doppler connect will activate it.
-                    sub_vfo_const = int(_H.RIG_VFO_SUB_A)
-                    rig.set_vfo(sub_vfo_const)
-                    try:
-                        rc_tone = rig.set_ctcss_tone(sub_vfo_const, tone_int)
-                        rc_func = rig.set_func(sub_vfo_const, _H.RIG_FUNC_TONE, 1 if enable else 0)
-                        logger.info(
-                            "RigDirect: temp-conn CTCSS %.1fHz on Sub — "
-                            "set_ctcss_tone rc=%s set_func rc=%s",
-                            tone_hz,
-                            rc_tone,
-                            rc_func,
-                        )
-                    finally:
-                        rig.set_vfo(int(_H.RIG_VFO_MAIN))
-                else:
-                    rc_tone = rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
-                    rc_func = rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
-                    logger.info(
-                        "RigDirect: temp-conn CTCSS %.1fHz on CURR — "
-                        "set_ctcss_tone rc=%s set_func rc=%s",
-                        tone_hz,
-                        rc_tone,
-                        rc_func,
-                    )
+                return int(addr, 16)
+            except ValueError:
+                pass
+        return 0x65
+
+    @staticmethod
+    def _civ_bcd_tone(tone_hz: float) -> bytes:
+        """Encode CTCSS tone Hz as 2-byte BCD for IC-9100 CI-V command 1B 00.
+
+        IC-9100 encodes the tone as 4 BCD digits (67.0 Hz -> 0670 -> 0x06 0x70).
+        """
+        val = int(round(tone_hz * 10))
+        high = val // 100
+        low = val % 100
+        return bytes([(high // 10) << 4 | (high % 10), (low // 10) << 4 | (low % 10)])
+
+    def _apply_ctcss_civ(self, tone_hz: float) -> bool:
+        """Send CI-V commands to set CTCSS on IC-9100 Sub band via pyserial.
+
+        Replicates the rigctl sequence confirmed to work:
+          V Sub -> set_ctcss_tone 670 -> U TONE 1/0 -> V Main
+
+        CI-V frames (example civ_addr=0x65, ctrl=0xE0):
+          Select Sub:    FE FE 65 E0 07 D1 FD
+          Set tone freq: FE FE 65 E0 1B 00 <bcd> FD
+          TONE ON/OFF:   FE FE 65 E0 16 42 01/00 FD
+          Select Main:   FE FE 65 E0 07 D0 FD
+        """
+        try:
+            import serial
+        except ImportError:
+            logger.warning("RigDirect: pyserial not available — cannot apply CTCSS via CI-V")
+            return False
+
+        civ = self._civ_addr_int()
+        ctrl = 0xE0
+
+        def frame(*payload: int) -> bytes:
+            return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
+
+        enable = tone_hz > 0
+        tone_bcd = self._civ_bcd_tone(tone_hz) if enable else b"\x00\x00"
+        tone_byte = 0x01 if enable else 0x00
+
+        try:
+            ser = serial.Serial(
+                self._port,
+                self._baud_rate,
+                bytesize=self._data_bits,
+                stopbits=self._stop_bits,
+                timeout=0.5,
+            )
+            logger.info(
+                "RigDirect: CI-V CTCSS %.1fHz enable=%s civ=0x%02X port=%s",
+                tone_hz,
+                enable,
+                civ,
+                self._port,
+            )
+            try:
+                ser.write(frame(0x07, 0xD1))
+                ser.flush()
+                ser.read(32)  # Select Sub
+                ser.write(frame(0x1B, 0x00, *tone_bcd))
+                ser.flush()
+                ser.read(32)  # Tone freq
+                ser.write(frame(0x16, 0x42, tone_byte))
+                ser.flush()
+                ser.read(32)  # TONE ON/OFF
+                ser.write(frame(0x07, 0xD0))
+                ser.flush()
+                ser.read(32)  # Select Main
+                logger.info("RigDirect: CI-V CTCSS applied OK")
             finally:
-                rig.close()
-                logger.info("RigDirect: temp connection closed")
-            with self._lock:
-                self._freq_state.ctcss_tone = tone_hz
+                ser.close()
             return True
         except Exception as exc:
-            logger.error("RigDirect._apply_ctcss_temp_connection: %s", exc)
+            logger.error("RigDirect._apply_ctcss_civ: %s", exc)
             return False
 
     def set_dcs_code(self, code: int) -> bool:
@@ -1045,11 +1047,52 @@ class HamlibDirectController(RigController):
             # Record the DL frequency so the next tick does NOT re-trigger
             # _satmode_enter (last_dl is None would loop infinitely).
             self._last_dl_hz = dl_hz
+            # Re-apply CTCSS via send_raw (rig.send_raw works while Hamlib holds
+            # the port; set_func(TONE) does not generate CI-V for IC-9100).
+            if self._ctcss_tone_hz != 0.0:
+                self._apply_ctcss_civ_via_send_raw(self._ctcss_tone_hz)
         except Exception as exc:
             logger.warning("RigDirect: _satmode_enter failed — %s", exc)
         finally:
             self._last_ul_hz = None
             self._last_ul_update_time = 0.0
+
+    def _apply_ctcss_civ_via_send_raw(self, tone_hz: float) -> None:
+        """Apply CTCSS via rig.send_raw() while Hamlib already holds the port.
+
+        rig.send_raw(bytes) writes arbitrary bytes to the CI-V bus without
+        going through Hamlib's command dispatching, so it works even when
+        set_func(TONE) generates no CI-V for the IC-9100.
+        """
+        if self._rig is None:
+            return
+        civ = self._civ_addr_int()
+        ctrl = 0xE0
+
+        def frame(*payload: int) -> bytes:
+            return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
+
+        enable = tone_hz > 0
+        tone_bcd = self._civ_bcd_tone(tone_hz) if enable else b"\x00\x00"
+        tone_byte = 0x01 if enable else 0x00
+        try:
+            import time as _time
+
+            self._rig.send_raw(frame(0x07, 0xD1))  # Select Sub
+            _time.sleep(0.15)
+            self._rig.send_raw(frame(0x1B, 0x00, *tone_bcd))  # Tone freq
+            _time.sleep(0.15)
+            self._rig.send_raw(frame(0x16, 0x42, tone_byte))  # TONE ON/OFF
+            _time.sleep(0.15)
+            self._rig.send_raw(frame(0x07, 0xD0))  # Select Main
+            logger.info(
+                "RigDirect: send_raw CTCSS %.1fHz enable=%s civ=0x%02X applied",
+                tone_hz,
+                enable,
+                civ,
+            )
+        except Exception as exc:
+            logger.error("RigDirect._apply_ctcss_civ_via_send_raw: %s", exc)
 
     def _satmode_exit(self) -> None:
         """Disable satmode and enable normal VFO-A/B split (same-band duplex).
