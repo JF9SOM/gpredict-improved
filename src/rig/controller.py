@@ -786,7 +786,6 @@ class HamlibDirectController(RigController):
                 # to get correct frequencies (display alternates during UL updates but
                 # at most every 5 s, which is acceptable).
                 _H = self._hamlib
-                sub_vfo = int(_H.RIG_VFO_SUB_A)
                 rx_vfo = self._vfo_str_to_const("VFOA")
 
                 # Detect same-band: when DL and UL are in the same frequency band
@@ -865,8 +864,8 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
-                            self._rig.set_freq(sub_vfo, int(vfob_hz))
+                            logger.info("RigDirect satmode UL: CIV %.3f MHz", vfob_hz / 1e6)
+                            self._apply_ul_freq_civ(vfob_hz)
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
 
@@ -1089,6 +1088,45 @@ class HamlibDirectController(RigController):
             )
         except Exception as exc:
             logger.error("RigDirect._apply_ctcss_civ_via_send_raw: %s", exc)
+
+    def _apply_ul_freq_civ(self, ul_hz: float) -> None:
+        """Set Sub band (UL/TX) frequency via raw CI-V send_raw.
+
+        set_freq(RIG_VFO_SUB_A) does not reliably update the IC-9100 Sub band
+        display in satmode — Hamlib appears to generate no CI-V command or the
+        rig ignores it.  This method bypasses Hamlib by sending raw CI-V frames:
+          1. Select Sub band  (07 D1)
+          2. Set frequency    (00 <5-byte BCD, LSB first>)
+          3. Restore Main     (07 D0)
+        Uses the same send_raw() path as _apply_ctcss_civ_via_send_raw.
+        """
+        if self._rig is None:
+            return
+        civ = self._civ_addr_int()
+        ctrl = 0xE0
+
+        def frame(*payload: int) -> bytes:
+            return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
+
+        # IC-9100 frequency BCD: 5 bytes, 2 BCD digits per byte, LSB first.
+        # e.g. 145,935,835 Hz → digits 5,3,8,5,3,9,5,4,1,0 (LSB first)
+        #                     → bytes 0x35, 0x58, 0x93, 0x45, 0x01
+        f = int(round(ul_hz))
+        digits: list[int] = []
+        for _ in range(10):
+            digits.append(f % 10)
+            f //= 10
+        freq_bcd = bytes([digits[i + 1] << 4 | digits[i] for i in range(0, 10, 2)])
+
+        try:
+            self._rig.send_raw(frame(0x07, 0xD1))  # select Sub
+            time.sleep(0.05)
+            self._rig.send_raw(frame(0x00, *freq_bcd))  # set freq
+            time.sleep(0.05)
+            self._rig.send_raw(frame(0x07, 0xD0))  # restore Main
+            logger.info("RigDirect: CIV UL %.3f MHz (civ=0x%02X)", ul_hz / 1e6, civ)
+        except Exception as exc:
+            logger.error("RigDirect._apply_ul_freq_civ: %s", exc)
 
     def _satmode_exit(self) -> None:
         """Disable satmode and enable normal VFO-A/B split (same-band duplex).
