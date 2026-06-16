@@ -1157,9 +1157,65 @@ S 1 Mainはrigctld標準プロトコル。全機種共通。
 - Direct mode split init: `set_split_vfo(RIG_VFO_MAIN, 1, RIG_VFO_MAIN)` — NOT VFOA/VFOB
   (The Hamlib icom backend triggers satmode only when `tx_vfo == RIG_VFO_MAIN`)
 - Direct mode freq: `set_freq(RIG_VFO_MAIN, dl_hz)` + `set_split_freq(RIG_VFO_MAIN, ul_hz)`
+  - **DL must use `RIG_VFO_MAIN` explicitly** (not `RIG_VFO_CURR`): `set_freq(RIG_VFO_SUB_A, ul_hz)` causes the icom backend to internally call `icom_set_vfo(SUB_A)`, leaving CURR=Sub. A subsequent `set_freq(CURR, dl_hz)` then writes DL to Sub, causing the display to alternate between Sub (5 s) and Main (1 s).
 - Direct mode mode: `set_mode(dl, 0, RIG_VFO_MAIN)` + `set_mode(ul, 0, RIG_VFO_SUB)`
 - NET mode: `S 1 Main` (same as all rigs) — rigctld backend handles satmode internally; no special handling needed
 - `HamlibDirectController._satmode` flag is set automatically when model_id ∈ `_SATMODE_RIG_IDS`
+
+#### CTCSS tone setting — Direct mode only (IC-9100 / IC-9700 etc.)
+
+**Hamlib `set_func(RIG_FUNC_TONE)` does NOT work** for satmode rigs: the Hamlib icom backend silently ignores the call and generates no CI-V command (confirmed by zero CI-V output in Hamlib debug log).
+
+**The only working approach is raw CI-V via pyserial** (Approach B, confirmed 2026-06-15):
+
+CI-V sequence to set CTCSS on Sub band (TX):
+```
+FE FE <civ_addr> E0 07 D1 FD          # Select Sub band
+FE FE <civ_addr> E0 1B 00 <bcd> FD    # Set tone freq (BCD: 67.0 Hz → 06 70)
+FE FE <civ_addr> E0 16 42 01/00 FD    # TONE ON (01) / OFF (00)
+FE FE <civ_addr> E0 07 D0 FD          # Select Main band
+```
+
+BCD encoding: `tone_hz * 10` as 4-digit BCD in 2 bytes (e.g. 74.4 Hz → 0744 → `07 44`).
+
+**Implementation (src/rig/controller.py — `HamlibDirectController`)**:
+- `_civ_addr_int()`: parses CI-V address from settings string (default `0x65` for IC-9100)
+- `_civ_bcd_tone(tone_hz)`: BCD encoder
+- `_apply_ctcss_civ(tone_hz)`: sends the 4-frame sequence above via `pyserial.Serial`
+- `set_ctcss_tone(tone_hz)`: entry point
+  - satmode + **not connected** → calls `_apply_ctcss_civ()` directly (port is free)
+  - satmode + **connected** → returns `True` without sending (port held by Hamlib; see UI flow below)
+  - non-satmode → standard Hamlib `set_ctcss_tone` / `set_func` path (FTX-1F, FT-991A etc.)
+
+**pyserial availability**: `main.py` removes `/usr/lib/python3/dist-packages` from `sys.path` for the `/opt/hamlib/4.7` dev build. `serial` (pyserial) must be pre-imported **before** the path surgery so it stays in `sys.modules`:
+```python
+with contextlib.suppress(Exception):
+    import serial as _serial_preload  # noqa: F401
+if _HAMLIB_SYS in sys.path:
+    sys.path.remove(_HAMLIB_SYS)
+```
+
+**When transponder is selected (not connected)**: `_send_ctcss_cat_to_rig()` in `main_window.py` calls `set_ctcss_tone()` → `_apply_ctcss_civ()`. The "T" indicator appears on the rig immediately and persists through subsequent `connect()` (confirmed: satmode entry does not reset CTCSS).
+
+**When CTCSS button is pressed while connected (Doppler running)**: the serial port is held by Hamlib and CI-V cannot be sent directly. `_on_ctcss_send()` in `main_window.py` takes a special path for `HamlibDirectController` + `_satmode=True` + `is_connected=True`:
+1. `_disconnect_rig()` on UI thread (releases port)
+2. Background thread: `set_ctcss_tone(tone_hz)` → `_apply_ctcss_civ()` (port now free)
+3. Background thread: `rig.connect()` to resume Doppler tracking
+4. `QMetaObject.invokeMethod(self, "_on_satmode_rig_reconnected", QueuedConnection)` to refresh UI on UI thread
+
+This path handles **all tones** (67.0 / 74.4 / 88.5 / 141.3 Hz etc.) because `tone_hz` is passed through as a parameter.
+
+**FT-991A / FTX-1F are completely unaffected**: they use `_CAT_CTCSS_METHODS` (checked first in `_on_ctcss_send`) and never reach the satmode CI-V path.
+
+**`_SATMODE_RIG_IDS`** (src/rig/controller.py):
+```python
+_SATMODE_RIG_IDS: frozenset[int] = frozenset({
+    3081,  # IC-9700
+    3068,  # IC-9100
+    3044,  # IC-910H
+    3034,  # IC-821H
+})
+```
 
 ### NET mode (rigctld) vs Direct mode (Hamlib built-in)
 - FTX-1F: both NET and Direct work; NET preferred (more stable)
