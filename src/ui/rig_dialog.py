@@ -569,6 +569,7 @@ class _RigPanel(QWidget):
             self._direct_cat_port_edit.setPlaceholderText(
                 _("e.g. /dev/ttyUSB0  (required — rigctld w cmd does not work for Icom CI-V)")
             )
+            self._direct_cat_baud_combo.setCurrentText("9600")
         else:  # "hamlib"
             self._ctcss_cat_on_edit.setText("")
             self._ctcss_cat_off_edit.setText("")
