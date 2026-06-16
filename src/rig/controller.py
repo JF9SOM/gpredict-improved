@@ -594,18 +594,35 @@ class HamlibDirectController(RigController):
             tone_int = int(round(abs(tone_hz) * 10))
             enable = tone_hz > 0
             with self._rig_cmd_lock:
+                sub_vfo_const = int(_H.RIG_VFO_SUB_A)
                 if self._satmode and self._satmode_active:
-                    self._rig.set_vfo(int(_H.RIG_VFO_SUB_A))
+                    self._rig.set_vfo(sub_vfo_const)
                     try:
-                        self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
-                        self._rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
-                        logger.info("RigDirect: CTCSS %.1fHz applied on Sub (connected)", tone_hz)
+                        rc_tone = self._rig.set_ctcss_tone(sub_vfo_const, tone_int)
+                        rc_func = self._rig.set_func(
+                            sub_vfo_const, _H.RIG_FUNC_TONE, 1 if enable else 0
+                        )
+                        logger.info(
+                            "RigDirect: CTCSS %.1fHz on Sub (connected) "
+                            "set_ctcss_tone rc=%s set_func rc=%s",
+                            tone_hz,
+                            rc_tone,
+                            rc_func,
+                        )
                     finally:
                         self._rig.set_vfo(int(_H.RIG_VFO_MAIN))
                 else:
-                    self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
-                    self._rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
-                    logger.info("RigDirect: CTCSS %.1fHz applied on CURR (connected)", tone_hz)
+                    rc_tone = self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
+                    rc_func = self._rig.set_func(
+                        _H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0
+                    )
+                    logger.info(
+                        "RigDirect: CTCSS %.1fHz on CURR (connected) "
+                        "set_ctcss_tone rc=%s set_func rc=%s",
+                        tone_hz,
+                        rc_tone,
+                        rc_func,
+                    )
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
@@ -645,19 +662,34 @@ class HamlibDirectController(RigController):
                 tone_int = int(round(abs(tone_hz) * 10))
                 enable = tone_hz > 0
                 if self._satmode:
-                    # Activate satmode so the rig routes Sub=TX before VFO switch.
-                    rig.set_split_vfo(int(_H.RIG_VFO_MAIN), 1, int(_H.RIG_VFO_MAIN))
-                    rig.set_vfo(int(_H.RIG_VFO_SUB_A))
+                    # Switch to Sub band so CTCSS targets TX (Sub=TX in satmode).
+                    # Do NOT call set_split_vfo here — it can reset the CTCSS state
+                    # on IC-9100.  The rig retains satmode from the previous session;
+                    # if it is not yet in satmode the Doppler connect will activate it.
+                    sub_vfo_const = int(_H.RIG_VFO_SUB_A)
+                    rig.set_vfo(sub_vfo_const)
                     try:
-                        rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
-                        rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
-                        logger.info("RigDirect: temp-conn CTCSS %.1fHz applied on Sub", tone_hz)
+                        rc_tone = rig.set_ctcss_tone(sub_vfo_const, tone_int)
+                        rc_func = rig.set_func(sub_vfo_const, _H.RIG_FUNC_TONE, 1 if enable else 0)
+                        logger.info(
+                            "RigDirect: temp-conn CTCSS %.1fHz on Sub — "
+                            "set_ctcss_tone rc=%s set_func rc=%s",
+                            tone_hz,
+                            rc_tone,
+                            rc_func,
+                        )
                     finally:
                         rig.set_vfo(int(_H.RIG_VFO_MAIN))
                 else:
-                    rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
-                    rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
-                    logger.info("RigDirect: temp-conn CTCSS %.1fHz applied on CURR", tone_hz)
+                    rc_tone = rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
+                    rc_func = rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
+                    logger.info(
+                        "RigDirect: temp-conn CTCSS %.1fHz on CURR — "
+                        "set_ctcss_tone rc=%s set_func rc=%s",
+                        tone_hz,
+                        rc_tone,
+                        rc_func,
+                    )
             finally:
                 rig.close()
                 logger.info("RigDirect: temp connection closed")
@@ -752,7 +784,6 @@ class HamlibDirectController(RigController):
                 # to get correct frequencies (display alternates during UL updates but
                 # at most every 5 s, which is acceptable).
                 _H = self._hamlib
-                curr_vfo = int(_H.RIG_VFO_CURR)
                 sub_vfo = int(_H.RIG_VFO_SUB_A)
                 rx_vfo = self._vfo_str_to_const("VFOA")
 
@@ -802,14 +833,18 @@ class HamlibDirectController(RigController):
                             self._last_ul_update_time = now
                 else:
                     # Cross-band: use satmode (IC-9100/9700 firmware routing).
-                    # Reinit satmode when first connecting or when DL band changes.
+                    # Always use RIG_VFO_MAIN for DL and RIG_VFO_SUB_A for UL
+                    # explicitly — never RIG_VFO_CURR.  The icom backend leaves
+                    # CURR pointing at Sub_A after set_freq(Sub_A, ...) which
+                    # caused DL to be written to Sub on the next tick.
+                    main_vfo = int(_H.RIG_VFO_MAIN)
                     if vfoa_hz is not None:
                         last_dl = self._last_dl_hz
                         if last_dl is None or self._freq_band(vfoa_hz) != self._freq_band(last_dl):
                             self._satmode_enter(vfoa_hz)
                         elif abs(vfoa_hz - last_dl) >= 1.0:
-                            logger.info("RigDirect satmode DL: set_freq(CURR, %d)", int(vfoa_hz))
-                            self._rig.set_freq(curr_vfo, int(vfoa_hz))
+                            logger.info("RigDirect satmode DL: set_freq(MAIN, %d)", int(vfoa_hz))
+                            self._rig.set_freq(main_vfo, int(vfoa_hz))
                             self._last_dl_hz = vfoa_hz
 
                     if vfob_hz is None:
@@ -830,12 +865,6 @@ class HamlibDirectController(RigController):
                         ):
                             logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
                             self._rig.set_freq(sub_vfo, int(vfob_hz))
-                            # Hamlib icom backend internally calls icom_set_vfo(SUB_A)
-                            # before setting the Sub band frequency, leaving the rig's
-                            # active band on Sub.  Subsequent set_freq(CURR, dl_hz)
-                            # then writes DL to Sub instead of Main.  Restore Main
-                            # focus immediately after each UL update.
-                            self._rig.set_vfo(int(self._hamlib.RIG_VFO_MAIN))
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
 
