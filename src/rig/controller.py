@@ -438,6 +438,9 @@ class HamlibDirectController(RigController):
         # because IC-9100 satmode always assigns Main/Sub to different bands.
         self._satmode_active: bool = False
         self._current_dl_mode: str = ""  # updated by send_mode_only; drives UL threshold
+        # Serialises multi-step rig command sequences (VFO switch + CTCSS etc.)
+        # so they never interleave with the Doppler cycle's set_vfo_frequencies.
+        self._rig_cmd_lock = threading.Lock()
 
     # -- Connection management --
 
@@ -582,34 +585,32 @@ class HamlibDirectController(RigController):
         try:
             # Hamlib represents tones as integers scaled by 10 (e.g. 88.5 Hz → 885)
             tone_int = int(round(tone_hz * 10))
-            # In satmode: Sub band = TX (uplink).  Use RIG_VFO_SUB_A so the
-            # icom backend targets the Sub band CI-V address.
-            # Note: the IC-9100 may not show a "T" indicator on the Sub band
-            # display in satmode even when CTCSS is active; the tone is still
-            # transmitted.
             if self._satmode and self._satmode_active:
-                tx_vfo = int(self._hamlib.RIG_VFO_SUB_A)
+                # In satmode Sub=TX (uplink).  Setting CTCSS on Sub requires an
+                # explicit VFO switch: V Sub → set_ctcss_tone → set_func(TONE)
+                # → V Main.  _rig_cmd_lock prevents this sequence from
+                # interleaving with the Doppler cycle's set_vfo_frequencies.
+                logger.info("RigDirect.set_ctcss_tone: satmode Sub path tone_int=%d", tone_int)
+                with self._rig_cmd_lock:
+                    self._rig.set_vfo(int(self._hamlib.RIG_VFO_SUB_A))
+                    try:
+                        self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
+                        self._rig.set_func(
+                            self._hamlib.RIG_VFO_CURR,
+                            self._hamlib.RIG_FUNC_TONE,
+                            1 if tone_hz > 0 else 0,
+                        )
+                        logger.info("RigDirect.set_ctcss_tone: Sub band CTCSS set OK")
+                    finally:
+                        self._rig.set_vfo(self._hamlib.RIG_VFO_MAIN)
             else:
-                tx_vfo = self._hamlib.RIG_VFO_CURR
-            logger.info(
-                "RigDirect.set_ctcss_tone: tone_int=%d satmode=%s tx_vfo=0x%x",
-                tone_int,
-                self._satmode_active,
-                tx_vfo,
-            )
-            # Set frequency first; then enable/disable tone encode.
-            self._rig.set_ctcss_tone(tx_vfo, tone_int)
-            try:
+                logger.info("RigDirect.set_ctcss_tone: normal path tone_int=%d", tone_int)
+                self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
                 self._rig.set_func(
-                    tx_vfo,
+                    self._hamlib.RIG_VFO_CURR,
                     self._hamlib.RIG_FUNC_TONE,
                     1 if tone_hz > 0 else 0,
                 )
-                logger.info(
-                    "RigDirect.set_ctcss_tone: set_func(TONE,%d) OK", 1 if tone_hz > 0 else 0
-                )
-            except Exception as func_exc:
-                logger.warning("RigDirect.set_ctcss_tone: set_func(TONE) failed: %s", func_exc)
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
@@ -678,6 +679,15 @@ class HamlibDirectController(RigController):
             return False
         if self._ptt_active:
             return True
+        with self._rig_cmd_lock:
+            return self._set_vfo_frequencies_locked(vfoa_hz, vfob_hz)
+
+    def _set_vfo_frequencies_locked(
+        self,
+        vfoa_hz: float | None,
+        vfob_hz: float | None,
+    ) -> bool:
+        """Inner implementation of set_vfo_frequencies; caller must hold _rig_cmd_lock."""
         try:
             if self._satmode:
                 # IC-9100/9700 satmode: satmode routes Main=RX(DL) and Sub=TX(UL).
