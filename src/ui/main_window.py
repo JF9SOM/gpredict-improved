@@ -2744,9 +2744,46 @@ class MainWindow(QMainWindow):
         if self._ctcss_method in self._CAT_CTCSS_METHODS:
             self._send_ctcss_cat_to_rig(tone_hz=tone_hz)
             return
-        if self._rig_controller is None or not self._rig_controller.is_connected:
+
+        from rig.controller import HamlibDirectController
+
+        if self._rig_controller is None:
             return
+
         rig = self._rig_controller
+
+        # Satmode Direct rigs (IC-9100 etc.): CTCSS must be set via CI-V while the
+        # serial port is not held by Hamlib.  When connected, disconnect first, send
+        # CI-V tone, then reconnect.  This path is NEVER reached for FT-991A / FTX-1F
+        # (they use _CAT_CTCSS_METHODS above) or NET rigs (not HamlibDirectController).
+        if isinstance(rig, HamlibDirectController) and rig._satmode and rig.is_connected:
+            self._disconnect_rig()  # release serial port on UI thread
+
+            def _satmode_civ_reconnect() -> None:
+                # Port is now free; set_ctcss_tone() will call _apply_ctcss_civ().
+                try:
+                    rig.set_ctcss_tone(tone_hz)
+                except Exception as exc:
+                    self._rig_error.emit(f"set_ctcss_tone (satmode CI-V): {exc}")
+                # Reconnect Doppler tracking.
+                try:
+                    rig.connect()
+                except Exception as exc:
+                    self._rig_error.emit(f"reconnect after CTCSS: {exc}")
+                    return
+                from PySide6.QtCore import QMetaObject, Qt
+
+                QMetaObject.invokeMethod(
+                    self,
+                    "_on_satmode_rig_reconnected",
+                    Qt.ConnectionType.QueuedConnection,
+                )
+
+            threading.Thread(target=_satmode_civ_reconnect, daemon=True).start()
+            return
+
+        if not rig.is_connected:
+            return
 
         def _send() -> None:
             try:
@@ -2757,6 +2794,13 @@ class MainWindow(QMainWindow):
                 self._rig_error.emit(f"set_ctcss_tone: {exc}")
 
         threading.Thread(target=_send, daemon=True).start()
+
+    @Slot()
+    def _on_satmode_rig_reconnected(self) -> None:
+        """Called on the UI thread after satmode CI-V CTCSS + reconnect completes."""
+        self._radio_control.refresh_status()
+        self._update_rig_label()
+        self._on_rig_slot_connected(1)
 
     def _on_tune_requested(self) -> None:
         """T button pressed: reset to the centre frequency of the current transponder band."""
