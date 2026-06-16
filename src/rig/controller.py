@@ -441,6 +441,10 @@ class HamlibDirectController(RigController):
         # Serialises multi-step rig command sequences (VFO switch + CTCSS etc.)
         # so they never interleave with the Doppler cycle's set_vfo_frequencies.
         self._rig_cmd_lock = threading.Lock()
+        # Satmode CTCSS pending: >0 means the Doppler cycle must apply this tone
+        # on Sub band on the next tick (inside _rig_cmd_lock, after UL update).
+        # 0.0 means no pending CTCSS action needed.
+        self._ctcss_pending_hz: float = 0.0
 
     # -- Connection management --
 
@@ -583,28 +587,20 @@ class HamlibDirectController(RigController):
                 self._freq_state.ctcss_tone = tone_hz
             return True
         try:
-            # Hamlib represents tones as integers scaled by 10 (e.g. 88.5 Hz → 885)
-            tone_int = int(round(tone_hz * 10))
             if self._satmode and self._satmode_active:
-                # In satmode Sub=TX (uplink).  Setting CTCSS on Sub requires an
-                # explicit VFO switch: V Sub → set_ctcss_tone → set_func(TONE)
-                # → V Main.  _rig_cmd_lock prevents this sequence from
-                # interleaving with the Doppler cycle's set_vfo_frequencies.
-                logger.info("RigDirect.set_ctcss_tone: satmode Sub path tone_int=%d", tone_int)
-                with self._rig_cmd_lock:
-                    self._rig.set_vfo(int(self._hamlib.RIG_VFO_SUB_A))
-                    try:
-                        self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
-                        self._rig.set_func(
-                            self._hamlib.RIG_VFO_CURR,
-                            self._hamlib.RIG_FUNC_TONE,
-                            1 if tone_hz > 0 else 0,
-                        )
-                        logger.info("RigDirect.set_ctcss_tone: Sub band CTCSS set OK")
-                    finally:
-                        self._rig.set_vfo(self._hamlib.RIG_VFO_MAIN)
+                # Satmode Sub=TX.  VFO switching must happen inside the Doppler
+                # cycle's _rig_cmd_lock to avoid display alternating.  Store the
+                # tone as pending; _set_vfo_frequencies_locked will apply it on
+                # the next tick after the UL update (already holds the lock).
+                logger.info(
+                    "RigDirect.set_ctcss_tone: satmode — deferred to Doppler tick %.1fHz",
+                    tone_hz,
+                )
+                self._ctcss_pending_hz = tone_hz
             else:
-                logger.info("RigDirect.set_ctcss_tone: normal path tone_int=%d", tone_int)
+                # Non-satmode or satmode not yet active: send immediately.
+                tone_int = int(round(tone_hz * 10))
+                logger.info("RigDirect.set_ctcss_tone: direct path tone_int=%d", tone_int)
                 self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
                 self._rig.set_func(
                     self._hamlib.RIG_VFO_CURR,
@@ -788,6 +784,26 @@ class HamlibDirectController(RigController):
                             self._rig.set_vfo(int(self._hamlib.RIG_VFO_MAIN))
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
+
+                # Apply pending satmode CTCSS (set by set_ctcss_tone while we
+                # already hold _rig_cmd_lock, so no deadlock or interleaving).
+                ctcss_hz = self._ctcss_pending_hz
+                if ctcss_hz != 0.0:
+                    tone_int = int(round(abs(ctcss_hz) * 10))
+                    enable = ctcss_hz > 0
+                    logger.info(
+                        "RigDirect: applying pending satmode CTCSS %.1fHz enable=%s",
+                        ctcss_hz,
+                        enable,
+                    )
+                    _H = self._hamlib
+                    self._rig.set_vfo(int(_H.RIG_VFO_SUB_A))
+                    try:
+                        self._rig.set_ctcss_tone(_H.RIG_VFO_CURR, tone_int)
+                        self._rig.set_func(_H.RIG_VFO_CURR, _H.RIG_FUNC_TONE, 1 if enable else 0)
+                    finally:
+                        self._rig.set_vfo(int(_H.RIG_VFO_MAIN))
+                    self._ctcss_pending_hz = 0.0
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 if vfoa_hz is not None:
