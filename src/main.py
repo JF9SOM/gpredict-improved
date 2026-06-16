@@ -74,6 +74,8 @@ if sys.platform == "linux":
 
         with contextlib.suppress(Exception):
             import SoapySDR as _soapy_preload  # noqa: F401
+        with contextlib.suppress(Exception):
+            import serial as _serial_preload  # noqa: F401
         if _HAMLIB_SYS in sys.path:
             sys.path.remove(_HAMLIB_SYS)
         if _HAMLIB_SITE not in sys.path:
