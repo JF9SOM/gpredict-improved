@@ -1623,6 +1623,10 @@ class HamlibNetController(RigController):
           2. Set tone frequency (BCD encoded)
           3. Tone ON / OFF
           4. Restore Main band
+
+        All 4 frames are sent in a single write() call so rigctld cannot
+        interleave its own commands between them (OS serial driver transmits
+        the buffer atomically without interruption from other processes).
         Silently ignores all errors (best-effort).
         """
         if not self._direct_port:
@@ -1645,9 +1649,8 @@ class HamlibNetController(RigController):
             select_main = bytes([0xFE, 0xFE, civ, ctrl, 0x07, 0xD0, 0xFD])
 
             with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
-                for frame in (select_sub, set_tone, tone_onoff, select_main):
-                    s.write(frame)
-                    time.sleep(0.05)
+                s.write(select_sub + set_tone + tone_onoff + select_main)
+                time.sleep(0.3)  # allow rig to process all frames before port is released
 
             logger.info(
                 "RigNet: CI-V CTCSS %.1f Hz (enable=%s addr=0x%02X) sent via %s",
