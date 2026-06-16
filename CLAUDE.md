@@ -1217,6 +1217,38 @@ _SATMODE_RIG_IDS: frozenset[int] = frozenset({
 })
 ```
 
+#### Same-band duplex (V/V, U/U) — Direct mode
+
+IC-9100/9700 のサットモードは **Main と Sub を必ず異なるバンドに割り当てる** ハードウェア制約がある。
+ISS APRS (145.825 MHz UL/DL 同一) や AO-91 (435 MHz UL/435 MHz DL 同一) などの同バンド衛星では satmode が使えない。
+
+`_freq_band(hz)` で DL と UL のバンドを比較し、同一の場合は **`_is_same_band = True`** と判定して自動的に分岐する：
+
+| 条件 | VFO割り当て | 周波数更新方式 |
+|---|---|---|
+| **クロスバンド** (V/U, U/V) | satmode (Main=RX, Sub=TX) | `set_freq(RIG_VFO_MAIN, dl)` + `set_freq(RIG_VFO_SUB_A, ul)` |
+| **同バンド** (V/V, U/U) | 通常split (VFO-A=RX, VFO-B=TX) | `set_freq(RIG_VFO_A, dl)` + `set_freq(RIG_VFO_B, ul)` |
+
+**同バンド時の処理フロー** (`_set_vfo_frequencies_locked`):
+1. `_is_same_band == True` を検出
+2. `_satmode_active == True` ならば `_satmode_exit()` を呼んでサットモードを解除 (SATMODE OFF → split ON)
+3. 以降は VFO-A/B の通常 split でドップラー補正
+
+**`_satmode_exit()`**:
+- `set_func(SATMODE, 0)` でサットモードを OFF
+- `set_split_vfo(RIG_VFO_CURR, 1, RIG_VFO_B)` で通常 split (VFO-B=TX) を有効化
+- `_satmode_active = False` にセット
+
+**UL更新頻度（同バンドFM）**: IC-9100 は VFO-B 切り替え時に表示がちらつく。FM/AFSK の場合はキャプチャーレンジ (±5 kHz) が ISS 最大ドップラー (±3.5 kHz at 145 MHz) を上回るため、UL 更新を間引く:
+- 閾値: 2000 Hz 以上の変化、または前回更新から 60 秒経過（FM/AFSK）
+- 非 FM は 20 Hz / 15 秒
+
+**モード設定 (`send_mode_only`)**: `_satmode_active` フラグで VFO を選択
+- `_satmode_active == True` → `RIG_VFO_MAIN` / `RIG_VFO_SUB_A`
+- `_satmode_active == False`（同バンド）→ `RIG_VFO_A` / `RIG_VFO_B`
+
+**同バンド時の CTCSS**: サットモードが解除されているため Sub バンド選択の CI-V は不要。通常の Hamlib `set_ctcss_tone` / `set_func(TONE)` パスを使う（ただし IC-9100 では `set_func(TONE)` が CI-V を生成しないため実質的にトーンが設定されない既知問題あり — 同バンド FM 衛星でのトーン設定は今後の課題）。
+
 ### NET mode (rigctld) vs Direct mode (Hamlib built-in)
 - FTX-1F: both NET and Direct work; NET preferred (more stable)
 - FT-991A: both NET and Direct work
