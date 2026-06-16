@@ -1247,7 +1247,7 @@ ISS APRS (145.825 MHz UL/DL 同一) や AO-91 (435 MHz UL/435 MHz DL 同一) な
 - `_satmode_active == True` → `RIG_VFO_MAIN` / `RIG_VFO_SUB_A`
 - `_satmode_active == False`（同バンド）→ `RIG_VFO_A` / `RIG_VFO_B`
 
-**同バンド時の CTCSS**: サットモードが解除されているため Sub バンド選択の CI-V は不要。通常の Hamlib `set_ctcss_tone` / `set_func(TONE)` パスを使う（ただし IC-9100 では `set_func(TONE)` が CI-V を生成しないため実質的にトーンが設定されない既知問題あり — 同バンド FM 衛星でのトーン設定は今後の課題）。
+**同バンド時の CTCSS**: `HamlibDirectController.set_ctcss_tone()` は `self._satmode == True` であれば `_satmode_active` の状態（cross-band / same-band）に関わらず常に `_apply_ctcss_civ()` を呼ぶ。したがって同バンド衛星でも CI-V 経由でトーンが正しく設定され、動作する（実機確認済み）。
 
 ### NET mode (rigctld) vs Direct mode (Hamlib built-in)
 - FTX-1F: both NET and Direct work; NET preferred (more stable)
