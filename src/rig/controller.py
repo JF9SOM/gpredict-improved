@@ -1639,14 +1639,21 @@ class HamlibNetController(RigController):
             ctrl = 0xE0
             enable = tone_hz > 0
 
-            tone_bcd_raw = int(round(tone_hz * 10))  # e.g. 67.0 Hz → 670
-            bcd_hi = ((tone_bcd_raw // 100) % 10) << 4 | ((tone_bcd_raw // 10) % 10)
-            bcd_lo = (tone_bcd_raw % 10) << 4
+            # BCD encoding: tone_hz * 10 as 4-digit BCD in 2 bytes.
+            # e.g. 67.0 Hz → 670 → high=6, low=70 → 0x06 0x70
+            #      141.3 Hz → 1413 → high=14, low=13 → 0x14 0x13
+            val = int(round(tone_hz * 10))
+            high = val // 100
+            low = val % 100
+            tone_bcd = bytes([(high // 10) << 4 | (high % 10), (low // 10) << 4 | (low % 10)])
 
-            select_sub = bytes([0xFE, 0xFE, civ, ctrl, 0x07, 0xD1, 0xFD])
-            set_tone = bytes([0xFE, 0xFE, civ, ctrl, 0x1B, 0x00, bcd_hi, bcd_lo, 0xFD])
-            tone_onoff = bytes([0xFE, 0xFE, civ, ctrl, 0x16, 0x42, 0x01 if enable else 0x00, 0xFD])
-            select_main = bytes([0xFE, 0xFE, civ, ctrl, 0x07, 0xD0, 0xFD])
+            def frame(*payload: int) -> bytes:
+                return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
+
+            select_sub = frame(0x07, 0xD1)
+            set_tone = frame(0x1B, 0x00, *tone_bcd)
+            tone_onoff = frame(0x16, 0x42, 0x01 if enable else 0x00)
+            select_main = frame(0x07, 0xD0)
 
             with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
                 s.write(select_sub + set_tone + tone_onoff + select_main)
