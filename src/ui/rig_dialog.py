@@ -456,9 +456,6 @@ class _RigPanel(QWidget):
         self._ctcss_method_combo.currentIndexChanged.connect(self._on_ctcss_method_changed)
         ctcss_form.addRow(_("CTCSS Method:"), self._ctcss_method_combo)
         self._ctcss_civ_addr_edit = QLineEdit()
-        self._ctcss_civ_addr_edit.setPlaceholderText(
-            _("e.g. 65  (hex as shown on rig menu, blank = default 65)")
-        )
         self._ctcss_civ_addr_edit.setMaximumWidth(200)
         ctcss_form.addRow(_("CI-V Address (Icom):"), self._ctcss_civ_addr_edit)
         self._ctcss_cat_on_edit = QLineEdit()
@@ -544,7 +541,24 @@ class _RigPanel(QWidget):
             self._ctcss_cat_on_edit.setEnabled(True)
             self._ctcss_cat_off_edit.setEnabled(True)
         elif is_civ:
-            pass  # CI-V addr field handles everything; port/baud already shown above
+            # Build placeholder from Hamlib defaults for the 4 satmode models.
+            # _get_icom_default_civ() is cached so only slow on the first call.
+            _SATMODE_MODELS = [
+                (3081, "IC-9700"),
+                (3068, "IC-9100"),
+                (3044, "IC-910H"),
+                (3034, "IC-821H"),
+            ]
+            hints = []
+            for mid, name in _SATMODE_MODELS:
+                addr = _get_icom_default_civ(mid)
+                if addr:
+                    hints.append(f"{name}: {addr}")
+            if hints:
+                placeholder = _("hex (e.g. {examples})").format(examples=", ".join(hints))
+            else:
+                placeholder = _("hex as shown on rig CI-V menu")
+            self._ctcss_civ_addr_edit.setPlaceholderText(placeholder)
         else:  # "hamlib"
             self._ctcss_cat_on_edit.setText("")
             self._ctcss_cat_off_edit.setText("")
