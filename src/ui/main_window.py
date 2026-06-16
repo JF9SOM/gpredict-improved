@@ -2772,13 +2772,9 @@ class MainWindow(QMainWindow):
                 except Exception as exc:
                     self._rig_error.emit(f"reconnect after CTCSS: {exc}")
                     return
-                from PySide6.QtCore import QMetaObject, Qt
+                from PySide6.QtCore import QTimer
 
-                QMetaObject.invokeMethod(  # type: ignore[call-overload]
-                    self,
-                    "_on_satmode_rig_reconnected",
-                    Qt.ConnectionType.QueuedConnection,
-                )
+                QTimer.singleShot(0, self._on_satmode_rig_reconnected)
 
             threading.Thread(target=_satmode_civ_reconnect, daemon=True).start()
             return
