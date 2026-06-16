@@ -452,8 +452,15 @@ class _RigPanel(QWidget):
         self._ctcss_method_combo.addItem(_("FTX-1 (Custom CAT)"), "ftx1")
         self._ctcss_method_combo.addItem(_("FT-991 (Custom CAT)"), "ft991")
         self._ctcss_method_combo.addItem(_("Custom CAT command"), "custom_cat")
+        self._ctcss_method_combo.addItem(_("IC-9700/9100/910/821 (CI-V)"), "icom_civ")
         self._ctcss_method_combo.currentIndexChanged.connect(self._on_ctcss_method_changed)
         ctcss_form.addRow(_("CTCSS Method:"), self._ctcss_method_combo)
+        self._ctcss_civ_addr_edit = QLineEdit()
+        self._ctcss_civ_addr_edit.setPlaceholderText(
+            _("e.g. 65  (hex as shown on rig menu, blank = default 65)")
+        )
+        self._ctcss_civ_addr_edit.setMaximumWidth(200)
+        ctcss_form.addRow(_("CI-V Address (Icom):"), self._ctcss_civ_addr_edit)
         self._ctcss_cat_on_edit = QLineEdit()
         self._ctcss_cat_on_edit.setPlaceholderText(_("e.g. CN1{tone:03d};CT11;"))
         ctcss_form.addRow(_("CAT ON command:"), self._ctcss_cat_on_edit)
@@ -513,8 +520,20 @@ class _RigPanel(QWidget):
                 self._port_combo.setEditText(current)
 
     def _on_ctcss_method_changed(self) -> None:
-        """Show/hide CAT command fields based on the selected CTCSS method."""
+        """Show/hide CAT/CI-V fields based on the selected CTCSS method."""
         method = self._ctcss_method_combo.currentData()
+        is_civ = method == "icom_civ"
+        is_cat = method in CTCSS_PRESET_TEMPLATES or method == "custom_cat"
+        show_port = is_cat or is_civ
+
+        # QFormLayout.setRowVisible hides both label and field together (Qt 6)
+        ctcss_form: QFormLayout = self._ctcss_method_combo.parent().layout()  # type: ignore[assignment]
+        ctcss_form.setRowVisible(self._ctcss_civ_addr_edit, is_civ)
+        ctcss_form.setRowVisible(self._ctcss_cat_on_edit, not is_civ)
+        ctcss_form.setRowVisible(self._ctcss_cat_off_edit, not is_civ)
+        ctcss_form.setRowVisible(self._direct_cat_port_edit, show_port)
+        ctcss_form.setRowVisible(self._direct_cat_baud_combo, show_port)
+
         if method in CTCSS_PRESET_TEMPLATES:
             on_cmd, off_cmd = CTCSS_PRESET_TEMPLATES[method]
             self._ctcss_cat_on_edit.setText(on_cmd)
@@ -524,6 +543,8 @@ class _RigPanel(QWidget):
         elif method == "custom_cat":
             self._ctcss_cat_on_edit.setEnabled(True)
             self._ctcss_cat_off_edit.setEnabled(True)
+        elif is_civ:
+            pass  # CI-V addr field handles everything; port/baud already shown above
         else:  # "hamlib"
             self._ctcss_cat_on_edit.setText("")
             self._ctcss_cat_off_edit.setText("")
@@ -676,6 +697,7 @@ class _RigPanel(QWidget):
         idx = self._direct_cat_baud_combo.findText(baud_str)
         if idx >= 0:
             self._direct_cat_baud_combo.setCurrentIndex(idx)
+        self._ctcss_civ_addr_edit.setText(str(s.get("ctcss_civ_addr", "")))
 
         self._civ_addr_edit.setText(str(s.get("civ_addr", "")))
         self._on_ctcss_method_changed()
@@ -702,6 +724,7 @@ class _RigPanel(QWidget):
             "ctcss_cat_off": self._ctcss_cat_off_edit.text(),
             "direct_cat_port": self._direct_cat_port_edit.text(),
             "direct_cat_baud": int(self._direct_cat_baud_combo.currentText()),
+            "ctcss_civ_addr": self._ctcss_civ_addr_edit.text().strip(),
         }
         # Rig 1: store its own radio_type (used when Rig 2 is disabled)
         if self._rig_index == 1 and self._radio_type_combo is not None:

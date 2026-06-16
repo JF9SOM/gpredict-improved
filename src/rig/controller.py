@@ -1195,6 +1195,7 @@ class HamlibNetController(RigController):
         direct_cat_port: str = "",
         direct_cat_baud: int = 38400,
         ctcss_method: str = "hamlib",
+        ctcss_civ_addr: str = "",
     ) -> None:
         """
         Args:
@@ -1205,8 +1206,10 @@ class HamlibNetController(RigController):
             direct_cat_port:  Serial port for direct CAT (bypasses rigctld w cmd).
                               Empty string disables direct CAT (uses rigctld).
             direct_cat_baud:  Baud rate for direct_cat_port (default 38400)
-            ctcss_method:     CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat").
-                              Used to select the mode-setting strategy in send_mode_only().
+            ctcss_method:     CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat",
+                              "icom_civ").
+            ctcss_civ_addr:   CI-V address for Icom rigs when ctcss_method=="icom_civ"
+                              (e.g. "65" or "0x65"). Default 0x65 (IC-9100).
         """
         super().__init__()
         self._host = host
@@ -1215,6 +1218,7 @@ class HamlibNetController(RigController):
         self._direct_port = direct_cat_port
         self._direct_baud = direct_cat_baud
         self._ctcss_method = ctcss_method
+        self._ctcss_civ_addr = ctcss_civ_addr.strip()
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
@@ -1597,6 +1601,64 @@ class HamlibNetController(RigController):
         except Exception as exc:
             logger.warning("RigNet: direct CAT failed: %s", exc)
 
+    def _ctcss_civ_addr_int(self) -> int:
+        """Return the CI-V rig address as an integer (default 0x65 for IC-9100)."""
+        addr = self._ctcss_civ_addr
+        if addr:
+            if not addr.lower().startswith("0x"):
+                addr = "0x" + addr
+            try:
+                return int(addr, 16)
+            except ValueError:
+                pass
+        return 0x65
+
+    def _apply_ctcss_civ_direct(self, tone_hz: float) -> None:
+        """Set CTCSS on Icom Sub band (TX/UL) via raw CI-V through the serial port.
+
+        Opens direct_cat_port with pyserial — rigctld may be running on the same
+        port; Linux does not enforce TIOCEXCL strictly enough to block this open.
+        Sends the same 4-frame CI-V sequence used by HamlibDirectController:
+          1. Select Sub band
+          2. Set tone frequency (BCD encoded)
+          3. Tone ON / OFF
+          4. Restore Main band
+        Silently ignores all errors (best-effort).
+        """
+        if not self._direct_port:
+            logger.warning("RigNet._apply_ctcss_civ_direct: direct_cat_port not configured")
+            return
+        try:
+            import serial  # pyserial — optional dependency
+
+            civ = self._ctcss_civ_addr_int()
+            ctrl = 0xE0
+            enable = tone_hz > 0
+
+            tone_bcd_raw = int(round(tone_hz * 10))  # e.g. 67.0 Hz → 670
+            bcd_hi = ((tone_bcd_raw // 100) % 10) << 4 | ((tone_bcd_raw // 10) % 10)
+            bcd_lo = (tone_bcd_raw % 10) << 4
+
+            select_sub = bytes([0xFE, 0xFE, civ, ctrl, 0x07, 0xD1, 0xFD])
+            set_tone = bytes([0xFE, 0xFE, civ, ctrl, 0x1B, 0x00, bcd_hi, bcd_lo, 0xFD])
+            tone_onoff = bytes([0xFE, 0xFE, civ, ctrl, 0x16, 0x42, 0x01 if enable else 0x00, 0xFD])
+            select_main = bytes([0xFE, 0xFE, civ, ctrl, 0x07, 0xD0, 0xFD])
+
+            with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
+                for frame in (select_sub, set_tone, tone_onoff, select_main):
+                    s.write(frame)
+                    time.sleep(0.05)
+
+            logger.info(
+                "RigNet: CI-V CTCSS %.1f Hz (enable=%s addr=0x%02X) sent via %s",
+                tone_hz,
+                enable,
+                civ,
+                self._direct_port,
+            )
+        except Exception as exc:
+            logger.error("RigNet._apply_ctcss_civ_direct: %s", exc)
+
     def send_ctcss_cat(
         self,
         tone_hz: float,
@@ -1612,7 +1674,13 @@ class HamlibNetController(RigController):
 
         Each ';'-separated sub-command is wrapped as 'w <part>;' and forwarded
         verbatim to the rig's serial port by rigctld.
+
+        When ctcss_method is "icom_civ", binary CI-V frames are sent directly
+        via pyserial (cat_on_template / cat_off_template are ignored).
         """
+        if self._ctcss_method == "icom_civ":
+            self._apply_ctcss_civ_direct(tone_hz)
+            return
         if tone_hz > 0 and cat_on_template:
             tone_number = CTCSS_TABLE.get(tone_hz)
             if tone_number is None:

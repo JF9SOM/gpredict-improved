@@ -2034,7 +2034,7 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_do_send, daemon=True).start()
 
     # Methods that use custom CAT commands for CTCSS (not handled by Hamlib itself).
-    _CAT_CTCSS_METHODS: frozenset[str] = frozenset({"custom_cat", "ftx1", "ft991"})
+    _CAT_CTCSS_METHODS: frozenset[str] = frozenset({"custom_cat", "ftx1", "ft991", "icom_civ"})
 
     def _send_ctcss_cat_to_rig(self, tone_hz: float | None = None) -> None:
         """Send CTCSS tone to the rig when a transponder is selected or the button is pressed.
@@ -2670,6 +2670,7 @@ class MainWindow(QMainWindow):
                 direct_cat_port=str(settings.get("direct_cat_port", "")),
                 direct_cat_baud=int(settings.get("direct_cat_baud", 38400)),
                 ctcss_method=str(settings.get("ctcss_method", "hamlib")),
+                ctcss_civ_addr=str(settings.get("ctcss_civ_addr", "")),
             )
         return HamlibDirectController(
             model_id=int(settings.get("model_id", 1)),
