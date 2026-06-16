@@ -1162,6 +1162,10 @@ S 1 Mainはrigctld標準プロトコル。全機種共通。
 - NET mode: `S 1 Main` (same as all rigs) — rigctld backend handles satmode internally; no special handling needed
 - `HamlibDirectController._satmode` flag is set automatically when model_id ∈ `_SATMODE_RIG_IDS`
 
+> **動作確認状況（2026-06-16時点）**
+> - **Direct モード（IC-9100実機）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み
+> - **NET モード（IC-9700/IC-9100 + rigctld）**: **未確認・要修正**。ユーザーからモード設定が動作しないという報告あり。NET モードの satmode リグにおけるモード設定（`send_mode_only` の `S 1 Main` 後のタイミング、`HamlibNetController._on_rig_slot_connected` での再送処理など）は別途実機検証が必要。
+
 #### CTCSS tone setting — Direct mode only (IC-9100 / IC-9700 etc.)
 
 **Hamlib `set_func(RIG_FUNC_TONE)` does NOT work** for satmode rigs: the Hamlib icom backend silently ignores the call and generates no CI-V command (confirmed by zero CI-V output in Hamlib debug log).
