@@ -2082,13 +2082,19 @@ class MainWindow(QMainWindow):
             # Doppler cycle.  HamlibNetController requires an active connection;
             # for NET rigs the tone is sent here if already connected, and
             # re-sent in _on_rig_slot_connected if not.
-            from rig.controller import HamlibDirectController
+            from rig.controller import HamlibDirectController, HamlibNetController
 
+            is_net_satmode = isinstance(self._rig_controller, HamlibNetController) and (
+                self._rig_controller.is_satmode or self._rig_controller.is_connected
+            )
             if (
                 not isinstance(self._rig_controller, HamlibDirectController)
+                and not is_net_satmode
                 and not self._rig_controller.is_connected
             ):
                 # NET / SDR: require active connection (Direct handles it via temp connection).
+                # Exception: NET satmode rigs (IC-9100 etc.) can send CI-V via rigctld
+                # even when Doppler tracking is not active.
                 return
             logger.info(
                 "_send_ctcss_cat_to_rig hamlib: rig_type=%s tone_hz=%.1f",
@@ -2670,6 +2676,7 @@ class MainWindow(QMainWindow):
                 direct_cat_port=str(settings.get("direct_cat_port", "")),
                 direct_cat_baud=int(settings.get("direct_cat_baud", 38400)),
                 ctcss_method=str(settings.get("ctcss_method", "hamlib")),
+                civ_addr=str(settings.get("civ_addr", "")),
             )
         return HamlibDirectController(
             model_id=int(settings.get("model_id", 1)),

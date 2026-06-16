@@ -1195,6 +1195,7 @@ class HamlibNetController(RigController):
         direct_cat_port: str = "",
         direct_cat_baud: int = 38400,
         ctcss_method: str = "hamlib",
+        civ_addr: str = "",
     ) -> None:
         """
         Args:
@@ -1207,6 +1208,8 @@ class HamlibNetController(RigController):
             direct_cat_baud:  Baud rate for direct_cat_port (default 38400)
             ctcss_method:     CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat").
                               Used to select the mode-setting strategy in send_mode_only().
+            civ_addr:         CI-V address override for Icom satmode rigs (e.g. "0x65").
+                              Used when _satmode is True for raw CI-V CTCSS commands.
         """
         super().__init__()
         self._host = host
@@ -1215,6 +1218,7 @@ class HamlibNetController(RigController):
         self._direct_port = direct_cat_port
         self._direct_baud = direct_cat_baud
         self._ctcss_method = ctcss_method
+        self._civ_addr = civ_addr.strip()
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
@@ -1566,7 +1570,80 @@ class HamlibNetController(RigController):
             return _RIGCTLD_MODE_TO_SATNOGS.get(rigctld_mode, "FM")
         return "FM"
 
+    def _civ_addr_int(self) -> int:
+        """Return the CI-V rig address as an integer (default 0x65 for IC-9100)."""
+        if self._civ_addr:
+            addr = self._civ_addr
+            if not addr.lower().startswith("0x"):
+                addr = "0x" + addr
+            try:
+                return int(addr, 16)
+            except ValueError:
+                pass
+        return 0x65
+
+    def _apply_ctcss_net_civ(self, tone_hz: float) -> bool:
+        """Set CTCSS on IC-9100 Sub band via rigctld using a dedicated TCP connection.
+
+        Frames without null bytes (select Sub/Main, TONE ON/OFF) are sent via the
+        rigctld 'w' raw command.  The tone-frequency frame (CI-V 1B 00, which
+        contains a null byte) is sent via 'L CTCSS_TONE', letting the Hamlib icom
+        backend construct and send the binary CI-V frame internally.
+
+        Opens its own TCP connection so this method works regardless of whether the
+        Doppler tracking connection is active.
+        """
+        civ = self._civ_addr_int()
+        ctrl = 0xE0
+        enable = tone_hz > 0
+        tone_int = int(round(tone_hz * 10))  # e.g. 67.0 Hz → 670
+
+        def frame(*payload: int) -> bytes:
+            return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
+
+        select_sub = frame(0x07, 0xD1)
+        tone_on_off = frame(0x16, 0x42, 0x01 if enable else 0x00)
+        select_main = frame(0x07, 0xD0)
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self._TIMEOUT)
+            sock.connect((self._host, self._port))
+            sock.settimeout(2.0)
+
+            def _w(raw: bytes) -> None:
+                sock.sendall(b"w " + raw + b"\n")
+                time.sleep(0.05)
+                with contextlib.suppress(OSError):
+                    sock.recv(256)
+
+            def _cmd_text(cmd: str) -> None:
+                sock.sendall((cmd + "\n").encode())
+                time.sleep(0.05)
+                with contextlib.suppress(OSError):
+                    sock.recv(256)
+
+            _w(select_sub)
+            # 'L CTCSS_TONE' lets Hamlib's icom backend send CI-V 1B 00 internally,
+            # avoiding null-byte truncation in rigctld's 'w' command handler.
+            _cmd_text(f"L CTCSS_TONE {tone_int if enable else 0}")
+            _w(tone_on_off)
+            _w(select_main)
+            sock.close()
+            logger.info(
+                "RigNet: CI-V CTCSS %.1f Hz (enable=%s civ=0x%02X) sent via rigctld",
+                tone_hz,
+                enable,
+                civ,
+            )
+            return True
+        except Exception as exc:
+            logger.error("RigNet._apply_ctcss_net_civ: %s", exc)
+            return False
+
     def set_ctcss_tone(self, tone_hz: float) -> bool:
+        if self._satmode:
+            return self._apply_ctcss_net_civ(tone_hz)
         tone_int = int(round(tone_hz * 10))
         resp = self._cmd(f"L CTCSS_TONE {tone_int}")
         return "RPRT 0" in resp
