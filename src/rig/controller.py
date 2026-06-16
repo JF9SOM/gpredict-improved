@@ -786,7 +786,6 @@ class HamlibDirectController(RigController):
                 # to get correct frequencies (display alternates during UL updates but
                 # at most every 5 s, which is acceptable).
                 _H = self._hamlib
-                sub_vfo = int(_H.RIG_VFO_SUB_A)
                 rx_vfo = self._vfo_str_to_const("VFOA")
 
                 # Detect same-band: when DL and UL are in the same frequency band
@@ -865,8 +864,10 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            logger.info("RigDirect satmode UL: set_freq(Sub, %d)", int(vfob_hz))
-                            self._rig.set_freq(sub_vfo, int(vfob_hz))
+                            logger.info(
+                                "RigDirect satmode UL: set_split_freq(MAIN, %d)", int(vfob_hz)
+                            )
+                            self._rig.set_split_freq(int(_H.RIG_VFO_MAIN), int(vfob_hz))
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
 
@@ -1132,14 +1133,11 @@ class HamlibDirectController(RigController):
         try:
             if self._satmode:
                 _H = self._hamlib
-                if _H is not None and hasattr(_H, "RIG_FUNC_SATMODE"):
-                    vfo_curr = int(_H.RIG_VFO_CURR)
-                    self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
+                if _H is not None:
+                    main_vfo = int(_H.RIG_VFO_MAIN)
+                    self._rig.set_split_vfo(main_vfo, 1, main_vfo)
                     self._satmode_active = True
-                    logger.info(
-                        "RigDirect: satmode ON via set_func(RIG_FUNC_SATMODE) "
-                        "(CI-V 16 59 01 fd sent)"
-                    )
+                    logger.info("RigDirect: satmode split init via set_split_vfo(MAIN,1,MAIN)")
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 tx_vfo = self._vfo_str_to_const("VFOB")
