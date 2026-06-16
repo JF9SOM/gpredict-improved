@@ -582,10 +582,11 @@ class HamlibDirectController(RigController):
         try:
             # Hamlib represents tones as integers scaled by 10 (e.g. 88.5 Hz → 885)
             tone_int = int(round(tone_hz * 10))
-            # In satmode the current VFO is Main (RX). CTCSS must be set on the
-            # TX side, which is Sub (RIG_VFO_SUB_A) in satmode and VFO_CURR otherwise.
+            # RIG_VFO_TX is a Hamlib virtual VFO that always resolves to the TX
+            # side without requiring an explicit set_vfo() call (which disrupts
+            # satmode display on IC-9100).  In non-satmode rigs it maps to VFO_CURR.
             if self._satmode and self._satmode_active:
-                tx_vfo = int(self._hamlib.RIG_VFO_SUB_A)
+                tx_vfo = int(self._hamlib.RIG_VFO_TX)
             else:
                 tx_vfo = self._hamlib.RIG_VFO_CURR
             logger.info(
@@ -594,27 +595,12 @@ class HamlibDirectController(RigController):
                 self._satmode_active,
                 tx_vfo,
             )
-            if self._satmode and self._satmode_active:
-                # Satmode: explicitly switch to Sub (TX) VFO so that set_func
-                # and set_ctcss_tone target the correct band, then restore Main.
-                sub_vfo = int(self._hamlib.RIG_VFO_SUB_A)
-                self._rig.set_vfo(sub_vfo)
-                try:
-                    self._rig.set_func(
-                        self._hamlib.RIG_VFO_CURR,
-                        self._hamlib.RIG_FUNC_TONE,
-                        1 if tone_hz > 0 else 0,
-                    )
-                    self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
-                finally:
-                    self._rig.set_vfo(self._hamlib.RIG_VFO_MAIN)
-            else:
-                self._rig.set_func(
-                    self._hamlib.RIG_VFO_CURR,
-                    self._hamlib.RIG_FUNC_TONE,
-                    1 if tone_hz > 0 else 0,
-                )
-                self._rig.set_ctcss_tone(self._hamlib.RIG_VFO_CURR, tone_int)
+            self._rig.set_func(
+                tx_vfo,
+                self._hamlib.RIG_FUNC_TONE,
+                1 if tone_hz > 0 else 0,
+            )
+            self._rig.set_ctcss_tone(tx_vfo, tone_int)
             with self._lock:
                 self._freq_state.ctcss_tone = tone_hz
             return True
