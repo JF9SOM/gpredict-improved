@@ -2022,12 +2022,13 @@ class MainWindow(QMainWindow):
         ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         ctcss_hz = float(self._ctcss_tone_hz or 0.0)
 
-        # Notify NET satmode rig of DL/UL frequencies so it can choose
-        # satmode (cross-band) vs normal split (same-band, e.g. ISS APRS).
+        # Notify NET satmode rig of DL/UL frequencies (satmode vs same-band split)
+        # and current mode (for UL update throttle threshold).
         if isinstance(rig, HamlibNetController):
             dl_hz = float(self._current_transmitter.get("downlink_low") or 0)
             ul_hz = float(self._current_transmitter.get("uplink_low") or dl_hz)
             rig.set_transponder_freqs(dl_hz, ul_hz)
+            rig.set_current_modes(dl_mode, ul_mode)
 
         # Both satmode rig types: disconnect if Doppler is running so the user
         # must reconnect explicitly for the new satellite.

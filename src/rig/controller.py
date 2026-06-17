@@ -1300,8 +1300,10 @@ class HamlibNetController(RigController):
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
         self._satmode: bool = False
         self._is_same_band: bool = False  # True when DL and UL are on the same band (V/V or U/U)
+        self._current_dl_mode: str = ""  # updated by set_current_modes(); used for UL throttle
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
+        self._last_ul_update_time: float = 0.0  # monotonic; used for same-band UL throttle
 
     # -- Connection management --
 
@@ -1330,6 +1332,10 @@ class HamlibNetController(RigController):
             self._is_same_band,
         )
 
+    def set_current_modes(self, dl_mode: str, ul_mode: str) -> None:  # noqa: ARG002
+        """Store current DL mode so same-band UL throttle can pick the right threshold."""
+        self._current_dl_mode = dl_mode
+
     @property
     def is_connected(self) -> bool:
         """True only when connected and the socket is valid."""
@@ -1355,6 +1361,7 @@ class HamlibNetController(RigController):
             # CAT delay after S 1 Main causes a timeout → immediate disconnect loop.
             self._last_dl_hz = None
             self._last_ul_hz = None
+            self._last_ul_update_time = 0.0
             logger.info("RigNet: connected to %s:%d", self._host, self._port)
             # _ and \chk_vfo are optional info-query commands.
             # Sending them with a 2 s timeout over a raw socket leaves stale data in the
@@ -1390,6 +1397,7 @@ class HamlibNetController(RigController):
             self._sock = None
             self._last_dl_hz = None
             self._last_ul_hz = None
+            self._last_ul_update_time = 0.0
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -1575,12 +1583,30 @@ class HamlibNetController(RigController):
             # TX cycle
             if send_tx and vfob_hz is not None:
                 last_ul = self._last_ul_hz
-                if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
+                now = time.monotonic()
+                elapsed = now - self._last_ul_update_time
+                if self._is_same_band:
+                    # Same-band (e.g. ISS APRS V/V): throttle I command to suppress
+                    # display flicker caused by rapid VFOA↔VFOB switching on IC-9100.
+                    # FM capture range (±5 kHz) exceeds ISS max Doppler (±3.5 kHz),
+                    # so coarse updates are sufficient.  Matches Direct mode thresholds.
+                    is_fm = self._current_dl_mode in ("FM", "AFSK", "DIGITALVOICE")
+                    ul_thresh = 2000.0 if is_fm else 20.0
+                    ul_max_s = 60.0 if is_fm else 15.0
+                    send_ul = (
+                        last_ul is None
+                        or abs(vfob_hz - last_ul) >= ul_thresh
+                        or elapsed >= ul_max_s
+                    )
+                else:
+                    send_ul = last_ul is None or abs(vfob_hz - last_ul) >= 1.0
+                if send_ul:
                     logger.info("RigNet: sending I %d", int(vfob_hz))
                     resp = self._cmd_raw(f"I {int(vfob_hz)}")
                     if "RPRT 0" not in resp:
                         raise RigControlError(f"set TX freq failed: {resp!r}")
                     self._last_ul_hz = vfob_hz
+                    self._last_ul_update_time = now
 
         return True
 
