@@ -669,9 +669,24 @@ class HamlibDirectController(RigController):
         def frame(*payload: int) -> bytes:
             return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
 
+        # IC-9100 CI-V mode bytes for command 0x06
+        _civ_mode: dict[str, int] = {
+            "FM": 0x05,
+            "DIGITALVOICE": 0x05,
+            "AFSK": 0x05,
+            "USB": 0x01,
+            "SSB": 0x01,
+            "BPSK": 0x01,
+            "LSB": 0x00,
+            "CW": 0x03,
+            "CW-R": 0x07,
+            "AM": 0x02,
+        }
         enable = tone_hz > 0
         tone_bcd = self._civ_bcd_tone(tone_hz) if enable else b"\x00\x00"
         tone_byte = 0x01 if enable else 0x00
+        dl_civ = _civ_mode.get(self._current_dl_mode, 0x05)
+        ul_civ = _civ_mode.get(self._current_ul_mode, 0x05)
 
         try:
             with self._port_lock:
@@ -683,11 +698,13 @@ class HamlibDirectController(RigController):
                     timeout=0.5,
                 )
                 logger.info(
-                    "RigDirect: CI-V CTCSS %.1fHz enable=%s civ=0x%02X port=%s",
+                    "RigDirect: CI-V CTCSS %.1fHz enable=%s civ=0x%02X port=%s dl=%s ul=%s",
                     tone_hz,
                     enable,
                     civ,
                     self._port,
+                    self._current_dl_mode,
+                    self._current_ul_mode,
                 )
                 try:
                     ser.write(frame(0x16, 0x59, 0x00))  # SATMODE OFF — reset state
@@ -704,54 +721,22 @@ class HamlibDirectController(RigController):
                     ser.read(32)  # Tone freq
                     ser.write(frame(0x16, 0x42, tone_byte))
                     ser.flush()
-                    ser.read(32)  # TONE ON/OFF
+                    ser.read(32)  # TONE ON/OFF on Sub
+                    ser.write(frame(0x06, ul_civ))
+                    ser.flush()
+                    ser.read(32)  # UL mode on Sub
                     ser.write(frame(0x07, 0xD0))
                     ser.flush()
                     ser.read(32)  # Select Main
+                    ser.write(frame(0x16, 0x42, 0x00))
+                    ser.flush()
+                    ser.read(32)  # TONE OFF on Main (prevents bleed-through)
+                    ser.write(frame(0x06, dl_civ))
+                    ser.flush()
+                    ser.read(32)  # DL mode on Main
                     logger.info("RigDirect: CI-V CTCSS applied OK")
                 finally:
                     ser.close()
-                # Re-apply DL/UL modes: IC-9100 SATMODE OFF→ON resets rig to FM.
-                # Hamlib open is safe here because pyserial port is already closed.
-                dl = self._current_dl_mode
-                ul = self._current_ul_mode
-                if dl and HAMLIB_AVAILABLE:
-                    try:
-                        import Hamlib as _H  # noqa: PLC0415
-
-                        _hm: dict[str, int] = {
-                            "FM": _H.RIG_MODE_FM,
-                            "DIGITALVOICE": _H.RIG_MODE_FM,
-                            "USB": _H.RIG_MODE_USB,
-                            "SSB": _H.RIG_MODE_USB,
-                            "LSB": _H.RIG_MODE_LSB,
-                            "CW": _H.RIG_MODE_CW,
-                            "CW-R": _H.RIG_MODE_CWR,
-                            "AM": _H.RIG_MODE_AM,
-                            "AFSK": _H.RIG_MODE_FM,
-                            "BPSK": _H.RIG_MODE_PKTUSB,
-                        }
-                        dl_h = _hm.get(dl, _H.RIG_MODE_FM)
-                        ul_h = _hm.get(ul, _H.RIG_MODE_FM)
-                        _r = _H.Rig(self._model_id)
-                        _r.set_conf("rig_pathname", self._port)
-                        _r.set_conf("serial_speed", str(self._baud_rate))
-                        if self._civ_addr:
-                            _addr = self._civ_addr
-                            if not _addr.lower().startswith("0x"):
-                                _addr = "0x" + _addr
-                            _r.set_conf("civaddr", _addr)
-                        _r.open()
-                        _r.set_mode(dl_h, 0, _H.RIG_VFO_MAIN)
-                        _r.set_mode(ul_h, 0, int(_H.RIG_VFO_SUB_A))
-                        _r.close()
-                        logger.info(
-                            "RigDirect: mode re-applied after SATMODE reset dl=%s ul=%s",
-                            dl,
-                            ul,
-                        )
-                    except Exception as _me:
-                        logger.error("RigDirect._apply_ctcss_civ: mode re-apply: %s", _me)
             return True
         except Exception as exc:
             logger.error("RigDirect._apply_ctcss_civ: %s", exc)
