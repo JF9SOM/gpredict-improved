@@ -1966,8 +1966,7 @@ class MainWindow(QMainWindow):
             self._ctcss_activation_hz = None
             self._radio_control.update_ctcss(None, None)
             self._radio_control.update_doppler(None, None, None, None, None, None)
-        self._send_mode_only_to_rig()
-        self._send_ctcss_cat_to_rig()
+        self._apply_transponder_state_to_rig()
         # Auto-select SDR demod mode from transponder; reset passband tune offset
         if self._current_transmitter:
             satnogs_mode = self._current_transmitter.get("mode") or ""
@@ -1984,6 +1983,57 @@ class MainWindow(QMainWindow):
                 self._sdr_control.set_pipeline(None)
         self._radio_control.refresh_status()
         self._update_rig_label()
+
+    def _apply_transponder_state_to_rig(self) -> None:
+        """Apply mode + CTCSS to the rig when a transponder is selected.
+
+        Satmode rigs (IC-9100 / IC-9700 etc.):
+          Calls rig.apply_transponder_state() in ONE background thread so mode
+          and CTCSS never race each other.
+
+          Direct mode: CI-V handles everything in a single serial session.
+            If Doppler was running, disconnects first (UI thread) so the
+            Hamlib handle is released before pyserial opens the same port.
+          NET mode: send_mode_only (TCP) then _apply_ctcss_civ_direct
+            (pyserial) in the same thread.  Defers if not yet connected.
+
+        Non-satmode rigs (FTX-1F, FT-991A etc.):
+          Delegates to the existing separate _send_mode_only_to_rig() and
+          _send_ctcss_cat_to_rig() so their special CAT CTCSS logic is kept.
+        """
+        from rig.controller import HamlibDirectController, HamlibNetController
+
+        rig = self._rig_controller
+        if rig is None or self._current_transmitter is None:
+            return
+
+        # Non-satmode rigs: keep original two-step approach unchanged
+        if not rig.is_satmode:
+            self._send_mode_only_to_rig()
+            self._send_ctcss_cat_to_rig()
+            return
+
+        # Compute mode and CTCSS from current transponder
+        mode = str(self._current_transmitter.get("mode") or "")
+        if not mode:
+            return
+        invert = bool(self._current_transmitter.get("invert", False))
+        dl_mode = mode
+        ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
+        ctcss_hz = float(self._ctcss_tone_hz or 0.0)
+
+        # NET satmode: defer if rigctld not yet connected
+        if isinstance(rig, HamlibNetController) and not rig.is_connected:
+            return
+
+        # Direct satmode: release the Hamlib port before pyserial CI-V opens it
+        if isinstance(rig, HamlibDirectController) and rig.is_connected:
+            self._disconnect_rig()  # must run on UI thread
+
+        def _do() -> None:
+            rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _send_mode_only_to_rig(self) -> None:
         """Set mode on both VFOs via an independent connection on transponder change.
@@ -3184,7 +3234,7 @@ class MainWindow(QMainWindow):
         """
         from rig.controller import HamlibDirectController, HamlibNetController, SdrRigAdapter
 
-        # Apply mode after satmode activation for slot-1 NET rigs.
+        # Apply transponder state after connect for slot-1 satmode rigs.
         if slot == 1:
             rig = self._rig_controller
             if (
@@ -3197,17 +3247,19 @@ class MainWindow(QMainWindow):
                     invert = bool(self._current_transmitter.get("invert", False))
                     dl_mode = mode
                     ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
+                    ctcss_hz = float(self._ctcss_tone_hz or 0.0)
 
-                    def _do_send_satmode() -> None:
-                        rig.send_mode_only(dl_mode, ul_mode)  # type: ignore[union-attr]
+                    def _do_apply_satmode() -> None:
+                        rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)  # type: ignore[union-attr]
 
-                    threading.Thread(target=_do_send_satmode, daemon=True).start()
+                    threading.Thread(target=_do_apply_satmode, daemon=True).start()
 
-            # For NET rigs, re-send CTCSS now that connection is established
-            # (transponder may have been selected before connect).
-            # Direct rigs use a temp connection at selection time, so no re-send needed.
-            if self._ctcss_tone_hz and not isinstance(rig, HamlibDirectController):
-                self._send_ctcss_cat_to_rig()
+            elif not isinstance(rig, HamlibNetController) or not (
+                rig.is_satmode if isinstance(rig, HamlibNetController) else False
+            ):
+                # Non-satmode NET rigs: re-send CTCSS on connect if needed
+                if self._ctcss_tone_hz and not isinstance(rig, HamlibDirectController):
+                    self._send_ctcss_cat_to_rig()
 
         from sdr import SOAPY_AVAILABLE
 

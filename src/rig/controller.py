@@ -369,6 +369,20 @@ class RigController(ABC):
         """
         self.set_mode(dl_mode)
 
+    def apply_transponder_state(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
+        """Apply mode and CTCSS tone atomically on transponder selection.
+
+        Default implementation calls send_mode_only then set_ctcss_tone
+        sequentially in the calling thread.  Satmode subclasses (IC-9100,
+        IC-9700 etc.) override this to avoid race conditions between the
+        two operations.
+
+        Called from a single background thread by main_window so that mode
+        and CTCSS never interleave with each other or with Doppler updates.
+        """
+        self.send_mode_only(dl_mode, ul_mode)
+        self.set_ctcss_tone(ctcss_hz)
+
     # -- Utilities --
 
     @abstractmethod
@@ -998,6 +1012,32 @@ class HamlibDirectController(RigController):
             if rig is not None:
                 with contextlib.suppress(Exception):
                     rig.close()
+
+    def apply_transponder_state(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
+        """Apply mode and CTCSS atomically for Direct-mode rigs.
+
+        Satmode rigs (IC-9100 / IC-9700 etc.):
+          A single CI-V serial session handles SATMODE OFF→ON, DL/UL mode
+          bytes, and CTCSS tone — no Hamlib call, no race condition.
+
+        Non-satmode rigs:
+          Falls back to the base-class default (send_mode_only via Hamlib,
+          then set_ctcss_tone via Hamlib).  These rigs are unaffected by the
+          satmode CI-V logic.
+        """
+        if self._satmode:
+            # Store modes so _apply_ctcss_civ can embed them in CI-V
+            self._current_dl_mode = dl_mode
+            self._current_ul_mode = ul_mode
+            logger.info(
+                "RigDirect: apply_transponder_state (satmode CI-V) dl=%s ul=%s ctcss=%.1f",
+                dl_mode,
+                ul_mode,
+                ctcss_hz,
+            )
+            self._apply_ctcss_civ(ctcss_hz)
+        else:
+            super().apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
     def send_ctcss_cat(
         self,
@@ -1903,6 +1943,31 @@ class HamlibNetController(RigController):
             logger.info("RigNet: send_mode_only dl=%s ul=%s done", dl_mode, ul_mode)
         except Exception as exc:
             logger.warning("RigNet: send_mode_only failed: %s", exc)
+
+    def apply_transponder_state(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
+        """Apply mode and CTCSS sequentially in the same thread for NET-mode rigs.
+
+        Satmode rigs (IC-9100 / IC-9700 etc.) via rigctld:
+          1. send_mode_only — opens an independent TCP socket to rigctld.
+          2. _apply_ctcss_civ_direct — sends CI-V frames directly via pyserial.
+          Both steps run in the calling thread so they never interleave with
+          each other or with Doppler frequency updates.
+
+        Non-satmode rigs:
+          Falls back to the base-class default (send_mode_only via rigctld,
+          then set_ctcss_tone via rigctld L command).
+        """
+        if self._satmode:
+            logger.info(
+                "RigNet: apply_transponder_state (satmode) dl=%s ul=%s ctcss=%.1f",
+                dl_mode,
+                ul_mode,
+                ctcss_hz,
+            )
+            self.send_mode_only(dl_mode, ul_mode)
+            self._apply_ctcss_civ_direct(ctcss_hz)
+        else:
+            super().apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
     def get_rig_info(self) -> RigInfo | None:
         if not self.is_connected:
