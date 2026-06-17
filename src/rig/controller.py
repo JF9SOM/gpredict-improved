@@ -293,6 +293,11 @@ class RigController(ABC):
         """Whether currently connected."""
         return self.state == RigState.CONNECTED
 
+    @property
+    def is_satmode(self) -> bool:
+        """True when the rig uses satmode (IC-9700/IC-9100 etc.). Overridden in subclasses."""
+        return False
+
     # -- Frequency and mode --
 
     @abstractmethod
@@ -451,10 +456,9 @@ class HamlibDirectController(RigController):
         # Dynamically toggled: same-band pairs (V/V, U/U) use normal split
         # because IC-9100 satmode always assigns Main/Sub to different bands.
         self._satmode_active: bool = False
-        self._current_dl_mode: str = ""  # updated by send_mode_only; drives UL threshold
-        self._current_ul_mode: str = (
-            ""  # updated by send_mode_only; used to re-apply after satmode reset
-        )
+        self._current_dl_mode: str = ""  # updated by apply_transponder_state
+        self._current_ul_mode: str = ""  # updated by apply_transponder_state
+        self._current_ctcss_hz: float = 0.0  # updated by apply_transponder_state
         # Serialises multi-step rig command sequences (VFO switch + CTCSS etc.)
         # so they never interleave with the Doppler cycle's set_vfo_frequencies.
         self._rig_cmd_lock = threading.Lock()
@@ -465,6 +469,11 @@ class HamlibDirectController(RigController):
         self._ctcss_tone_hz: float = 0.0
 
     # -- Connection management --
+
+    @property
+    def is_satmode(self) -> bool:
+        """True when this rig uses satmode (model_id in _SATMODE_RIG_IDS)."""
+        return self._satmode
 
     def connect(self) -> bool:
         """Connect to the serial port."""
