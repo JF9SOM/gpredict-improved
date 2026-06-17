@@ -1931,6 +1931,12 @@ class HamlibNetController(RigController):
                     logger.warning("RigNet.send_mode_only: %r -> %r", cmd, resp)
                 return resp
 
+            # For icom satmode rigs establish Main=RX/Sub=TX before setting modes.
+            # This is required before Connect (when _satmode is not yet True) so
+            # that V Sub / \set_mode Sub targets the Sub band, not VFO-B.
+            if self._satmode or self._ctcss_method == "icom_civ":
+                _send_recv("S 1 Main")
+
             if self._vfo_mode:
                 # Extended rigctld protocol: VFO is specified inline — no active-VFO
                 # switch needed.  This works correctly for IC-9700 satmode where the
@@ -1957,10 +1963,13 @@ class HamlibNetController(RigController):
         """Apply mode and CTCSS sequentially in the same thread for NET-mode rigs.
 
         Satmode rigs (IC-9100 / IC-9700 etc.) via rigctld:
+          Holds _cmd_lock for the entire operation so the Doppler cycle cannot
+          send frequency commands to rigctld while mode and CTCSS are being set.
           1. send_mode_only — opens an independent TCP socket to rigctld.
           2. _apply_ctcss_civ_direct — sends CI-V frames directly via pyserial.
-          Both steps run in the calling thread so they never interleave with
-          each other or with Doppler frequency updates.
+          With _cmd_lock held, rigctld is silent on the serial port during step 2,
+          giving pyserial exclusive serial access (same safety level as Direct mode
+          disconnect).
 
         Non-satmode rigs:
           Falls back to the base-class default (send_mode_only via rigctld,
@@ -1973,8 +1982,9 @@ class HamlibNetController(RigController):
                 ul_mode,
                 ctcss_hz,
             )
-            self.send_mode_only(dl_mode, ul_mode)
-            self._apply_ctcss_civ_direct(ctcss_hz)
+            with self._cmd_lock:
+                self.send_mode_only(dl_mode, ul_mode)
+                self._apply_ctcss_civ_direct(ctcss_hz)
         else:
             super().apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
