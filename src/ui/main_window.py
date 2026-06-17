@@ -2001,7 +2001,7 @@ class MainWindow(QMainWindow):
           Delegates to the existing separate _send_mode_only_to_rig() and
           _send_ctcss_cat_to_rig() so their special CAT CTCSS logic is kept.
         """
-        from rig.controller import HamlibDirectController
+        from rig.controller import HamlibNetController
 
         rig = self._rig_controller
         if rig is None or self._current_transmitter is None:
@@ -2022,8 +2022,16 @@ class MainWindow(QMainWindow):
         ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         ctcss_hz = float(self._ctcss_tone_hz or 0.0)
 
-        # Direct satmode: release the Hamlib port before pyserial CI-V opens it
-        if isinstance(rig, HamlibDirectController) and rig.is_connected:
+        # Notify NET satmode rig of DL/UL frequencies so it can choose
+        # satmode (cross-band) vs normal split (same-band, e.g. ISS APRS).
+        if isinstance(rig, HamlibNetController):
+            dl_hz = float(self._current_transmitter.get("downlink_low") or 0)
+            ul_hz = float(self._current_transmitter.get("uplink_low") or dl_hz)
+            rig.set_transponder_freqs(dl_hz, ul_hz)
+
+        # Both satmode rig types: disconnect if Doppler is running so the user
+        # must reconnect explicitly for the new satellite.
+        if rig.is_connected:
             self._disconnect_rig()  # must run on UI thread
 
         def _do() -> None:

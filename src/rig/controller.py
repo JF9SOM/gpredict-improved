@@ -287,6 +287,15 @@ class RigController(ABC):
         """True when the rig uses satmode (IC-9700/IC-9100 etc.). Overridden in subclasses."""
         return False
 
+    @staticmethod
+    def _freq_band(hz: float) -> str:
+        """Return a coarse band label used for same-band detection."""
+        if hz < 200e6:
+            return "VHF"
+        if hz < 500e6:
+            return "UHF"
+        return "SHF"
+
     # -- Frequency and mode --
 
     @abstractmethod
@@ -1092,15 +1101,6 @@ class HamlibDirectController(RigController):
 
     # -- Internal utilities --
 
-    @staticmethod
-    def _freq_band(hz: float) -> str:
-        """Return a coarse band label used for satmode band-change detection."""
-        if hz < 200e6:
-            return "VHF"
-        if hz < 500e6:
-            return "UHF"
-        return "SHF"
-
     def _satmode_enter(self, dl_hz: float) -> None:
         """Enable satmode with Main on the band of *dl_hz*.
 
@@ -1298,7 +1298,8 @@ class HamlibNetController(RigController):
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
-        self._satmode: bool = False  # set in connect() after querying rig name via _
+        self._satmode: bool = False
+        self._is_same_band: bool = False  # True when DL and UL are on the same band (V/V or U/U)
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
 
@@ -1313,6 +1314,21 @@ class HamlibNetController(RigController):
         Icom satmode rig) — reliable even when rigctld model-name detection fails.
         """
         return self._satmode or self._ctcss_method == "icom_civ"
+
+    def set_transponder_freqs(self, dl_hz: float, ul_hz: float) -> None:
+        """Update same-band flag from transponder DL/UL frequencies.
+
+        Called by the UI when a transponder is selected so that _init_vfo()
+        and send_mode_only() know whether to use satmode (S 1 Main) or normal
+        split (S 1 VFOB) for same-band transponders like ISS APRS (V/V).
+        """
+        self._is_same_band = self._freq_band(dl_hz) == self._freq_band(ul_hz)
+        logger.info(
+            "RigNet: transponder freqs dl=%.3fMHz ul=%.3fMHz same_band=%s",
+            dl_hz / 1e6,
+            ul_hz / 1e6,
+            self._is_same_band,
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -1418,13 +1434,16 @@ class HamlibNetController(RigController):
     def _init_vfo(self) -> None:
         """Enable split (called once at connect time).
 
-        Sends S 1 Main. On the FTX-1F backend this results in Sub=TX (uplink)
-        and Main=RX (downlink) — the opposite of the literal VFO name.
-        No M command is sent here; mode is set exclusively via send_mode_only().
+        Cross-band (default): S 1 Main → satmode (Main=RX, Sub=TX).
+        Same-band (V/V or U/U): S 1 VFOB → normal split (VFOA=RX, VFOB=TX).
         Sent through _cmd() so _cmd_lock serialises it and prevents buffer
         residue from an independent recv loop on the raw socket.
         """
-        resp = self._cmd("S 1 Main")
+        if self._is_same_band:
+            resp = self._cmd("S 1 VFOB")
+            logger.info("RigNet: same-band split init (S 1 VFOB)")
+        else:
+            resp = self._cmd("S 1 Main")
         if "RPRT 0" not in resp:
             logger.warning("RigNet: split setup returned %r", resp)
 
@@ -1864,24 +1883,36 @@ class HamlibNetController(RigController):
                     logger.warning("RigNet.send_mode_only: %r -> %r", cmd, resp)
                 return resp
 
-            # For icom satmode rigs establish Main=RX/Sub=TX before setting modes.
-            # This is required before Connect (when _satmode is not yet True) so
-            # that V Sub / \set_mode Sub targets the Sub band, not VFO-B.
-            if self._satmode or self._ctcss_method == "icom_civ":
-                _send_recv("S 1 Main")
+            # For icom satmode rigs establish split before setting modes.
+            # Same-band (V/V or U/U): S 1 VFOB → normal split (VFOA=RX, VFOB=TX).
+            # Cross-band: S 1 Main → satmode (Main=RX, Sub=TX).
+            is_satmode_rig = self._satmode or self._ctcss_method == "icom_civ"
+            if is_satmode_rig:
+                if self._is_same_band:
+                    # Same-band (V/V or U/U): normal split, VFOB=TX
+                    _send_recv("S 1 VFOB")
+                    ul_vfo_v = "VFOB"
+                    ul_vfo_set = "VFOB"
+                else:
+                    # Cross-band: satmode, Sub=TX
+                    _send_recv("S 1 Main")
+                    ul_vfo_v = "Sub"
+                    ul_vfo_set = "Sub"
+            else:
+                # Non-satmode rigs: use Sub/Main (rigctld split convention)
+                ul_vfo_v = "Sub"
+                ul_vfo_set = "Sub"
 
             if self._vfo_mode:
-                # Extended rigctld protocol: VFO is specified inline — no active-VFO
-                # switch needed.  This works correctly for IC-9700 satmode where the
-                # V command may be rejected while satmode is active.
+                # Extended rigctld protocol: VFO is specified inline.
                 if rigctld_ul:
-                    _send_recv(f"\\set_mode Sub {rigctld_ul} 0")
+                    _send_recv(f"\\set_mode {ul_vfo_set} {rigctld_ul} 0")
                 if rigctld_dl:
                     _send_recv(f"\\set_mode Main {rigctld_dl} 0")
             else:
                 # Legacy rigctld protocol: switch active VFO then set mode.
                 if rigctld_ul:
-                    _send_recv("V Sub")
+                    _send_recv(f"V {ul_vfo_v}")
                     _send_recv(f"M {rigctld_ul} 0")
                 if rigctld_dl:
                     _send_recv("V Main")
