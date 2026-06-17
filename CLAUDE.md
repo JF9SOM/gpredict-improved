@@ -1226,6 +1226,42 @@ BCD encoding: `tone_hz * 10` as 4-digit BCD in 2 bytes (e.g. 74.4 Hz → 0744 �
 - NET mode: `HamlibNetController._apply_ctcss_civ_direct(tone_hz)` — same pyserial approach; on Linux rigctld does not hold an exclusive lock on the serial port, so pyserial can write CI-V frames even while rigctld is running (confirmed on IC-9100). All 4 frames sent in a single `write()` call to prevent rigctld interleaving.
 - `_civ_addr_int()`: parses CI-V address from settings string (default `0x65` for IC-9100)
 
+**Direct mode — Full CI-V sequence in `_apply_ctcss_civ(tone_hz)`**:
+
+```
+FE FE <civ_addr> E0 16 59 00 FD    # SATMODE OFF  (state reset)
+FE FE <civ_addr> E0 16 59 01 FD    # SATMODE ON   (re-enter satmode cleanly)
+FE FE <civ_addr> E0 07 D1 FD       # Select Sub band
+FE FE <civ_addr> E0 1B 00 <bcd> FD # Set tone freq
+FE FE <civ_addr> E0 16 42 01 FD    # Sub TONE ON (01) / OFF (00)
+FE FE <civ_addr> E0 07 D0 FD       # Select Main band
+FE FE <civ_addr> E0 16 42 00 FD    # Main TONE OFF (prevent bleed)
+FE FE <civ_addr> E0 06 <mode> 01 FD # Re-apply Sub mode via CI-V (0x06)
+FE FE <civ_addr> E0 07 D0 FD       # Back to Main
+FE FE <civ_addr> E0 06 <mode> 01 FD # Re-apply Main mode via CI-V (0x06)
+```
+
+**Why the SATMODE OFF→ON reset is needed**: if the IC-9100 is left in satmode from a previous session, sending the 4-frame Sub-select sequence without resetting satmode causes TONE to appear on **both Main and Sub** (diagnosed with test script; confirmed root cause). SATMODE OFF → ON before the Sub sequence puts the rig in a clean state so T appears on Sub only.
+
+**Why mode must be re-applied after SATMODE OFF→ON**: the IC-9100 resets its mode to FM when SATMODE is cycled OFF→ON. After the CTCSS CI-V sequence completes, the current DL/UL modes (stored in `_current_dl_mode` / `_current_ul_mode`) are re-sent via direct CI-V (command `0x06`) — **not** via Hamlib `set_mode`, which had CTCSS bleed-through side effects on IC-9100 Main.
+
+**Why Main TONE OFF is sent explicitly**: SATMODE OFF→ON can bleed the Sub CTCSS state onto Main. Sending `16 42 00` to Main after the Sub sequence prevents Main from accidentally displaying T.
+
+**Why pure CI-V (0x06) is used for mode re-apply (not Hamlib `set_mode`)**: Hamlib `set_mode` on IC-9100 Main produced unwanted CTCSS state side effects. Direct CI-V `0x06` is clean and predictable.
+
+**`_port_lock` — collision avoidance between `_apply_ctcss_civ` and `connect()`/`send_mode_only()`**:
+
+`_apply_ctcss_civ` runs pyserial (~several seconds for the full 10-frame sequence). If the user presses Connect at the same time, `rig.open()` (Hamlib) and the pyserial session race on the same serial port, corrupting the CTCSS state (T on both Main and Sub).
+
+`HamlibDirectController` has a `_port_lock = threading.Lock()` that is acquired:
+- around the entire pyserial session in `_apply_ctcss_civ()`
+- around `rig.open()` in `connect()` (waits for any in-flight CI-V to complete first)
+- around `rig.open()` / `rig.close()` in `send_mode_only()` (prevents mode from racing with CI-V)
+
+This ensures that at most one caller holds the serial port at a time.
+
+**NET mode — `_apply_ctcss_civ_direct` does NOT include SATMODE OFF→ON**: the satmode reset was removed from the NET mode variant because it breaks the tight timing window needed to slip all frames past rigctld's serial access in a single `write()`. For NET mode, the satmode reset is performed once at Rig Settings save time (`reset_satmode_civ()`), not inside the CTCSS function.
+
 **Direct mode — `set_ctcss_tone(tone_hz)`**:
   - satmode + **not connected** → calls `_apply_ctcss_civ()` directly (port is free)
   - satmode + **connected** → returns `True` without sending (port held by Hamlib; see UI flow below)
@@ -1233,11 +1269,11 @@ BCD encoding: `tone_hz * 10` as 4-digit BCD in 2 bytes (e.g. 74.4 Hz → 0744 �
 
 **Direct mode — When CTCSS button is pressed while connected (Doppler running)**: the serial port is held by Hamlib and CI-V cannot be sent directly. `_on_ctcss_send()` in `main_window.py` takes a special path for `HamlibDirectController` + `_satmode=True` + `is_connected=True`:
 1. `_disconnect_rig()` on UI thread (releases port)
-2. Background thread: `set_ctcss_tone(tone_hz)` → `_apply_ctcss_civ()` (port now free)
-3. Background thread: `rig.connect()` to resume Doppler tracking
+2. Background thread: `set_ctcss_tone(tone_hz)` → `_apply_ctcss_civ()` (port now free, `_port_lock` acquired)
+3. Background thread: `rig.connect()` (waits for `_port_lock` to be released before `rig.open()`)
 4. `QMetaObject.invokeMethod(self, "_on_satmode_rig_reconnected", QueuedConnection)` to refresh UI on UI thread
 
-**NET mode — CTCSS is sent as part of `apply_transponder_state()`**: no separate disconnect/reconnect needed. See NET mode transponder selection flow below.
+**NET mode — CTCSS is sent as part of `apply_transponder_state()`**: no separate disconnect/reconnect needed. See NET mode transponder selection flow above.
 
 **pyserial availability**: `main.py` removes `/usr/lib/python3/dist-packages` from `sys.path` for the `/opt/hamlib/4.7` dev build. `serial` (pyserial) must be pre-imported **before** the path surgery so it stays in `sys.modules`:
 ```python
