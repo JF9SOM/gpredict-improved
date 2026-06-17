@@ -682,6 +682,12 @@ class HamlibDirectController(RigController):
                 self._port,
             )
             try:
+                ser.write(frame(0x16, 0x59, 0x00))  # SATMODE OFF — reset state
+                ser.flush()
+                ser.read(32)
+                ser.write(frame(0x16, 0x59, 0x01))  # SATMODE ON — re-enter clean
+                ser.flush()
+                ser.read(32)
                 ser.write(frame(0x07, 0xD1))
                 ser.flush()
                 ser.read(32)  # Select Sub
