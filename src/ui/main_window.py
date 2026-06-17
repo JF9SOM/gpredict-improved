@@ -2607,6 +2607,15 @@ class MainWindow(QMainWindow):
                     settings: dict[str, Any] = json.loads(row["value"])
                     self._rig_controller = self._build_rig_controller(settings)
                     self._ctcss_method = str(settings.get("ctcss_method", "hamlib"))
+                    # icom_civ is a NET-mode-only method; Direct mode rigs use
+                    # HamlibDirectController.set_ctcss_tone() which handles CI-V
+                    # internally via pyserial.  Force "hamlib" so the correct path
+                    # is taken regardless of what was saved in the DB.
+                    if self._ctcss_method == "icom_civ" and isinstance(
+                        self._rig_controller, HamlibDirectController
+                    ):
+                        self._ctcss_method = "hamlib"
+                        logger.info("Rig1: icom_civ CTCSS overridden to hamlib (Direct mode)")
                     # For preset methods, always use the current authoritative template from
                     # CTCSS_PRESET_TEMPLATES rather than the DB value, which may be stale.
                     if self._ctcss_method in CTCSS_PRESET_TEMPLATES:
