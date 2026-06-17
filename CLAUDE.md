@@ -1206,8 +1206,20 @@ return self._satmode or self._ctcss_method == "icom_civ"
 >   - 同バンドFM: DL表示を `set_vfo(VFOA)` で確実に復元（`set_freq(VFOA)` では不可）
 >   - 同バンドDL更新も 2000 Hz / 60 秒で間引き（`_last_dl_update_time` 管理）
 >   - Connect ボタンはバックグラウンドスレッドで実行（二重接続バグ修正済み）
+>   - HF/VHF クロスバンド（AO-7: 29MHz DL / 145MHz UL）: satmode 正常動作確認済み
 > - **NET モード（IC-9100 + rigctld）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み（2026-06-17）
 >   - NET mode `_apply_ctcss_civ_direct`: 5フレーム（Main TONE OFF を先頭に追加）
+>   - HF/VHF クロスバンド（AO-7: 29MHz DL / 145MHz UL）: satmode 正常動作確認済み
+
+**`_freq_band()` のバンド分類（クロスバンド判定に使用）**:
+| 周波数範囲 | 戻り値 | 例 |
+|---|---|---|
+| < 30 MHz | `"HF"` | AO-7 DL 29MHz |
+| 30–300 MHz | `"VHF"` | 145MHz（2m） |
+| 300–3000 MHz | `"UHF"` | 435MHz（70cm） |
+| 3000 MHz 以上 | `"SHF"` | — |
+
+> **注意**: 旧実装は 200MHz 未満をすべて `"VHF"` に分類していたため、HF(29MHz) と VHF(145MHz) が同バンドと誤判定され、satmode が解除されて Main/Sub が入れ替わるバグがあった（AO-7で発覚・修正済み）。
 
 #### CTCSS tone setting — IC-9100 / IC-9700 (Direct mode and NET mode)
 
