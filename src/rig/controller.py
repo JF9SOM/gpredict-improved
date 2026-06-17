@@ -438,6 +438,9 @@ class HamlibDirectController(RigController):
         # because IC-9100 satmode always assigns Main/Sub to different bands.
         self._satmode_active: bool = False
         self._current_dl_mode: str = ""  # updated by send_mode_only; drives UL threshold
+        self._current_ul_mode: str = (
+            ""  # updated by send_mode_only; used to re-apply after satmode reset
+        )
         # Serialises multi-step rig command sequences (VFO switch + CTCSS etc.)
         # so they never interleave with the Doppler cycle's set_vfo_frequencies.
         self._rig_cmd_lock = threading.Lock()
@@ -708,6 +711,47 @@ class HamlibDirectController(RigController):
                     logger.info("RigDirect: CI-V CTCSS applied OK")
                 finally:
                     ser.close()
+                # Re-apply DL/UL modes: IC-9100 SATMODE OFF→ON resets rig to FM.
+                # Hamlib open is safe here because pyserial port is already closed.
+                dl = self._current_dl_mode
+                ul = self._current_ul_mode
+                if dl and HAMLIB_AVAILABLE:
+                    try:
+                        import Hamlib as _H  # noqa: PLC0415
+
+                        _hm: dict[str, int] = {
+                            "FM": _H.RIG_MODE_FM,
+                            "DIGITALVOICE": _H.RIG_MODE_FM,
+                            "USB": _H.RIG_MODE_USB,
+                            "SSB": _H.RIG_MODE_USB,
+                            "LSB": _H.RIG_MODE_LSB,
+                            "CW": _H.RIG_MODE_CW,
+                            "CW-R": _H.RIG_MODE_CWR,
+                            "AM": _H.RIG_MODE_AM,
+                            "AFSK": _H.RIG_MODE_FM,
+                            "BPSK": _H.RIG_MODE_PKTUSB,
+                        }
+                        dl_h = _hm.get(dl, _H.RIG_MODE_FM)
+                        ul_h = _hm.get(ul, _H.RIG_MODE_FM)
+                        _r = _H.Rig(self._model_id)
+                        _r.set_conf("rig_pathname", self._port)
+                        _r.set_conf("serial_speed", str(self._baud_rate))
+                        if self._civ_addr:
+                            _addr = self._civ_addr
+                            if not _addr.lower().startswith("0x"):
+                                _addr = "0x" + _addr
+                            _r.set_conf("civaddr", _addr)
+                        _r.open()
+                        _r.set_mode(dl_h, 0, _H.RIG_VFO_MAIN)
+                        _r.set_mode(ul_h, 0, int(_H.RIG_VFO_SUB_A))
+                        _r.close()
+                        logger.info(
+                            "RigDirect: mode re-applied after SATMODE reset dl=%s ul=%s",
+                            dl,
+                            ul,
+                        )
+                    except Exception as _me:
+                        logger.error("RigDirect._apply_ctcss_civ: mode re-apply: %s", _me)
             return True
         except Exception as exc:
             logger.error("RigDirect._apply_ctcss_civ: %s", exc)
@@ -910,6 +954,7 @@ class HamlibDirectController(RigController):
         generic rigs use RIG_VFO_A and RIG_VFO_B respectively.
         """
         self._current_dl_mode = dl_mode
+        self._current_ul_mode = ul_mode
         logger.info("RigDirect: send_mode_only dl=%s ul=%s", dl_mode, ul_mode)
         if not HAMLIB_AVAILABLE:
             return
