@@ -957,9 +957,10 @@ class HamlibDirectController(RigController):
                 if not addr.lower().startswith("0x"):
                     addr = "0x" + addr
                 rig.set_conf("civaddr", addr)
-            rig.open()
-            rig.set_mode(dl_hamlib, 0, dl_vfo)
-            rig.set_mode(ul_hamlib, 0, ul_vfo)
+            with self._port_lock:
+                rig.open()
+                rig.set_mode(dl_hamlib, 0, dl_vfo)
+                rig.set_mode(ul_hamlib, 0, ul_vfo)
             logger.info("RigDirect: send_mode_only done")
         except Exception as exc:
             logger.error("RigDirect.send_mode_only: %s", exc)
