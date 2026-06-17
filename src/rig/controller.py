@@ -1659,17 +1659,18 @@ class HamlibNetController(RigController):
 
         Opens direct_cat_port with pyserial — rigctld may hold the port but
         pyserial can still write to it on Linux (confirmed on IC-9100).
-        Sends SATMODE OFF→ON first to clear any stale state, then sets CTCSS
-        on Sub band (same sequence as HamlibDirectController._apply_ctcss_civ):
-          1. SATMODE OFF — reset to normal mode
-          2. SATMODE ON  — re-enter satmode cleanly
-          3. Select Sub band
-          4. Set tone frequency (BCD encoded)
-          5. Tone ON / OFF
-          6. Restore Main band
+        All 4 frames are sent in a single write() call so rigctld cannot
+        interleave its own commands between them (OS serial driver transmits
+        the buffer atomically without interruption from other processes):
+          1. Select Sub band
+          2. Set tone frequency (BCD encoded)
+          3. Tone ON / OFF
+          4. Restore Main band
 
-        Frames 1-2 are sent with ACK reads; frames 3-6 are sent atomically in
-        a single write() so rigctld cannot interleave between them.
+        SATMODE OFF→ON is intentionally omitted here — the satmode reset is
+        performed once by reset_satmode_civ() when NET mode is saved in Rig
+        Settings.  Adding it here would break the tight timing window required
+        to slip frames past rigctld's serial access.
         Silently ignores all errors (best-effort).
         """
         if not self._direct_port:
@@ -1693,24 +1694,12 @@ class HamlibNetController(RigController):
             def frame(*payload: int) -> bytes:
                 return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
 
-            satmode_off = frame(0x16, 0x59, 0x00)
-            satmode_on = frame(0x16, 0x59, 0x01)
             select_sub = frame(0x07, 0xD1)
             set_tone = frame(0x1B, 0x00, *tone_bcd)
             tone_onoff = frame(0x16, 0x42, 0x01 if enable else 0x00)
             select_main = frame(0x07, 0xD0)
 
             with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
-                # Reset satmode first so CTCSS state is applied to a clean Sub band.
-                s.write(satmode_off)
-                s.flush()
-                time.sleep(0.15)
-                s.read(32)
-                s.write(satmode_on)
-                s.flush()
-                time.sleep(0.15)
-                s.read(32)
-                # Send CTCSS frames atomically.
                 s.write(select_sub + set_tone + tone_onoff + select_main)
                 time.sleep(0.3)  # allow rig to process all frames before port is released
 
