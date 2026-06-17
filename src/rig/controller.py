@@ -446,6 +446,7 @@ class HamlibDirectController(RigController):
         self._rig: Any = None  # Hamlib.Rig instance or _MockRig
         self._hamlib: Any = None  # Hamlib module, set lazily in connect()
         self._last_dl_hz: float | None = None
+        self._last_dl_update_time: float = 0.0
         self._last_ul_hz: float | None = None
         self._last_ul_update_time: float = 0.0
         self._ptt_active: bool = False
@@ -508,6 +509,7 @@ class HamlibDirectController(RigController):
                 self._rig = _MockRig(self._model_id)
 
             self._last_dl_hz = None
+            self._last_dl_update_time = 0.0
             self._last_ul_hz = None
             self._last_ul_update_time = 0.0
             self._init_split()
@@ -537,6 +539,7 @@ class HamlibDirectController(RigController):
             self._rig = None
             self._hamlib = None
             self._last_dl_hz = None
+            self._last_dl_update_time = 0.0
             self._last_ul_hz = None
             with self._lock:
                 self._state = RigState.DISCONNECTED
@@ -862,16 +865,29 @@ class HamlibDirectController(RigController):
                     if self._satmode_active:
                         self._satmode_exit()
                     tx_vfo = self._vfo_str_to_const("VFOB")
+                    is_fm = self._current_dl_mode in ("FM", "AFSK", "DIGITALVOICE")
+                    now = time.monotonic()
                     if vfoa_hz is not None:
                         last_dl = self._last_dl_hz
-                        if last_dl is None or abs(vfoa_hz - last_dl) >= 1.0:
+                        elapsed_dl = now - self._last_dl_update_time
+                        # FM same-band: Hamlib icom backend prefixes each set_freq(VFOA)
+                        # with a CI-V VFO-select frame (07 00) which causes IC-9100 to
+                        # flicker the main display every call.  FM capture range (±5 kHz)
+                        # covers ISS max Doppler (±3.5 kHz), so coarse DL updates suffice.
+                        _DL_THRESH = 2000.0 if is_fm else 1.0
+                        _DL_MAX_S = 60.0 if is_fm else 0.0
+                        if (
+                            last_dl is None
+                            or abs(vfoa_hz - last_dl) >= _DL_THRESH
+                            or (is_fm and elapsed_dl >= _DL_MAX_S)
+                        ):
+                            logger.info("RigDirect same-band DL: set_freq(VFOA, %d)", int(vfoa_hz))
                             self._rig.set_freq(rx_vfo, int(vfoa_hz))
                             self._last_dl_hz = vfoa_hz
+                            self._last_dl_update_time = now
                     if vfob_hz is not None:
                         last_ul = self._last_ul_hz
-                        now = time.monotonic()
                         elapsed = now - self._last_ul_update_time
-                        is_fm = self._current_dl_mode in ("FM", "AFSK", "DIGITALVOICE")
                         # FM same-band split: VFO-B switch causes display flicker on
                         # IC-9100.  FM/AFSK capture range (±5 kHz) exceeds ISS max
                         # Doppler (±3.5 kHz at 145 MHz), so infrequent UL updates are
@@ -1129,6 +1145,7 @@ class HamlibDirectController(RigController):
         except Exception as exc:
             logger.warning("RigDirect: _satmode_enter failed — %s", exc)
         finally:
+            self._last_dl_update_time = 0.0
             self._last_ul_hz = None
             self._last_ul_update_time = 0.0
 
@@ -1192,6 +1209,7 @@ class HamlibDirectController(RigController):
         finally:
             self._satmode_active = False
             self._last_dl_hz = None
+            self._last_dl_update_time = 0.0
             self._last_ul_hz = None
             self._last_ul_update_time = 0.0
 
@@ -1757,13 +1775,14 @@ class HamlibNetController(RigController):
             def frame(*payload: int) -> bytes:
                 return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
 
+            main_tone_off = frame(0x16, 0x42, 0x00)  # clear any stale Main TONE
             select_sub = frame(0x07, 0xD1)
             set_tone = frame(0x1B, 0x00, *tone_bcd)
             tone_onoff = frame(0x16, 0x42, 0x01 if enable else 0x00)
             select_main = frame(0x07, 0xD0)
 
             with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
-                s.write(select_sub + set_tone + tone_onoff + select_main)
+                s.write(main_tone_off + select_sub + set_tone + tone_onoff + select_main)
                 time.sleep(0.3)  # allow rig to process all frames before port is released
 
             logger.info(
