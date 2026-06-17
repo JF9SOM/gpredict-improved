@@ -1318,8 +1318,13 @@ class HamlibNetController(RigController):
 
     @property
     def is_satmode(self) -> bool:
-        """True when the connected rig uses satmode (e.g. IC-9700)."""
-        return self._satmode
+        """True when the rig uses satmode.
+
+        Returns True if the model name was detected at connect time, or if
+        ctcss_method is "icom_civ" (user-configured indicator that this is an
+        Icom satmode rig) — reliable even when rigctld model-name detection fails.
+        """
+        return self._satmode or self._ctcss_method == "icom_civ"
 
     @property
     def is_connected(self) -> bool:
