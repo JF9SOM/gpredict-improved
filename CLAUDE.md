@@ -1112,13 +1112,28 @@ set_language("ja")
 
 全 Hamlib 対応機共通の VFO 割り当て: Sub=TX(UL), Main=RX(DL)
 
-send_mode_only()の正しい順序:
+**クロスバンド（satmode リグ）の正しい順序:**
+```
+S 1 Main  （satmode確立）
+V Sub  → M {ul_mode} 0  （Sub=TX=アップリンク）
+V Main → M {dl_mode} 0  （Main=RX=ダウンリンク）
+```
+
+**同バンド（satmode リグ・V/V または U/U）の正しい順序:**
+```
+S 1 VFOB  （通常split確立: VFOA=RX, VFOB=TX）
+V VFOB → M {ul_mode} 0  （VFOB=TX=アップリンク）
+V VFOA → M {dl_mode} 0  （VFOA=RX=ダウンリンク）（または V Main 相当）
+```
+
+**非satmode リグ（FTX-1F, FT-991A等）:**
 ```
 V Sub  → M {ul_mode} 0  （Sub=TX=アップリンク）
 V Main → M {dl_mode} 0  （Main=RX=ダウンリンク）
 ```
 
-S 1 Mainはrigctld標準プロトコル。全機種共通。
+`send_mode_only()` は `_is_same_band` フラグで上記3パターンを自動分岐する。
+S 1 Main / S 1 VFOB はモード設定の直前に独立ソケットで送信（`S 1 Main` は接続時の `_init_vfo()` でも送るが、`send_mode_only()` 内でも重複して送ることで順序を保証する）。
 
 ### 動作確認環境
 - リグ: Yaesu FTX-1F
@@ -1159,18 +1174,42 @@ S 1 Mainはrigctld標準プロトコル。全機種共通。
 - Direct mode freq: `set_freq(RIG_VFO_MAIN, dl_hz)` + `set_split_freq(RIG_VFO_MAIN, ul_hz)`
   - **DL must use `RIG_VFO_MAIN` explicitly** (not `RIG_VFO_CURR`): `set_freq(RIG_VFO_SUB_A, ul_hz)` causes the icom backend to internally call `icom_set_vfo(SUB_A)`, leaving CURR=Sub. A subsequent `set_freq(CURR, dl_hz)` then writes DL to Sub, causing the display to alternate between Sub (5 s) and Main (1 s).
 - Direct mode mode: `set_mode(dl, 0, RIG_VFO_MAIN)` + `set_mode(ul, 0, RIG_VFO_SUB)`
-- NET mode: `S 1 Main` (same as all rigs) — rigctld backend handles satmode internally; no special handling needed
 - `HamlibDirectController._satmode` flag is set automatically when model_id ∈ `_SATMODE_RIG_IDS`
 
-> **動作確認状況（2026-06-16時点）**
-> - **Direct モード（IC-9100実機）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み
-> - **NET モード（IC-9700/IC-9100 + rigctld）**: **未確認・要修正**。ユーザーからモード設定が動作しないという報告あり。NET モードの satmode リグにおけるモード設定（`send_mode_only` の `S 1 Main` 後のタイミング、`HamlibNetController._on_rig_slot_connected` での再送処理など）は別途実機検証が必要。
+#### NET mode satmode detection and transponder selection flow (confirmed 2026-06-17)
 
-#### CTCSS tone setting — Direct mode only (IC-9100 / IC-9700 etc.)
+**Satmode detection for NET mode**: `HamlibNetController` does NOT query the rig model via rigctld (`_` command). Instead, `is_satmode` property returns:
+```python
+return self._satmode or self._ctcss_method == "icom_civ"
+```
+- `_satmode` is always `False` in NET mode (no model ID lookup)
+- `ctcss_method == "icom_civ"` is set by user in Rig Settings → this is the definitive indicator
+
+**Why no model name query**: `_fetch_model_name()` (which sent `_` to rigctld) was **removed**. It caused a socket race with the Doppler F/I cycle and was unreliable. If you need to re-add model detection in NET mode, do NOT use `_` command — find another approach.
+
+**Transponder selection flow (NET mode satmode rig)**:
+1. User selects transponder → `_apply_transponder_state_to_rig()` in `main_window.py`
+2. `set_transponder_freqs(dl_hz, ul_hz)` → sets `_is_same_band` flag
+3. `set_current_modes(dl_mode, ul_mode)` → stores DL mode for UL throttle threshold
+4. If rig is connected: `_disconnect_rig()` first (user must re-press Connect for new satellite)
+5. Background thread: `apply_transponder_state(dl_mode, ul_mode, ctcss_hz)`
+   - acquires `_cmd_lock` (pauses Doppler F/I)
+   - `send_mode_only()` via independent socket (VFO branch by `_is_same_band`)
+   - `_apply_ctcss_civ_direct()` via pyserial (port not exclusively locked by rigctld on Linux)
+
+**No re-send after Connect**: mode and CTCSS are sent BEFORE Connect (at transponder selection). No reconnect-triggered re-send. IC-9100 confirmed: satmode entry does NOT reset CTCSS state.
+
+**Auto-disconnect on satellite change**: when `rig.is_satmode == True` and `rig.is_connected == True`, `_apply_transponder_state_to_rig()` calls `_disconnect_rig()` before re-sending mode/CTCSS. User must manually re-press Connect for the new satellite.
+
+> **動作確認状況（2026-06-17時点）**
+> - **Direct モード（IC-9100実機）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み
+> - **NET モード（IC-9100 + rigctld）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み（2026-06-17）
+
+#### CTCSS tone setting — IC-9100 / IC-9700 (Direct mode and NET mode)
 
 **Hamlib `set_func(RIG_FUNC_TONE)` does NOT work** for satmode rigs: the Hamlib icom backend silently ignores the call and generates no CI-V command (confirmed by zero CI-V output in Hamlib debug log).
 
-**The only working approach is raw CI-V via pyserial** (Approach B, confirmed 2026-06-15):
+**The only working approach is raw CI-V via pyserial** (confirmed 2026-06-15):
 
 CI-V sequence to set CTCSS on Sub band (TX):
 ```
@@ -1182,14 +1221,23 @@ FE FE <civ_addr> E0 07 D0 FD          # Select Main band
 
 BCD encoding: `tone_hz * 10` as 4-digit BCD in 2 bytes (e.g. 74.4 Hz → 0744 → `07 44`).
 
-**Implementation (src/rig/controller.py — `HamlibDirectController`)**:
+**Implementation (src/rig/controller.py)**:
+- Direct mode: `HamlibDirectController._apply_ctcss_civ(tone_hz)` — pyserial, port is free when not connected
+- NET mode: `HamlibNetController._apply_ctcss_civ_direct(tone_hz)` — same pyserial approach; on Linux rigctld does not hold an exclusive lock on the serial port, so pyserial can write CI-V frames even while rigctld is running (confirmed on IC-9100). All 4 frames sent in a single `write()` call to prevent rigctld interleaving.
 - `_civ_addr_int()`: parses CI-V address from settings string (default `0x65` for IC-9100)
-- `_civ_bcd_tone(tone_hz)`: BCD encoder
-- `_apply_ctcss_civ(tone_hz)`: sends the 4-frame sequence above via `pyserial.Serial`
-- `set_ctcss_tone(tone_hz)`: entry point
+
+**Direct mode — `set_ctcss_tone(tone_hz)`**:
   - satmode + **not connected** → calls `_apply_ctcss_civ()` directly (port is free)
   - satmode + **connected** → returns `True` without sending (port held by Hamlib; see UI flow below)
   - non-satmode → standard Hamlib `set_ctcss_tone` / `set_func` path (FTX-1F, FT-991A etc.)
+
+**Direct mode — When CTCSS button is pressed while connected (Doppler running)**: the serial port is held by Hamlib and CI-V cannot be sent directly. `_on_ctcss_send()` in `main_window.py` takes a special path for `HamlibDirectController` + `_satmode=True` + `is_connected=True`:
+1. `_disconnect_rig()` on UI thread (releases port)
+2. Background thread: `set_ctcss_tone(tone_hz)` → `_apply_ctcss_civ()` (port now free)
+3. Background thread: `rig.connect()` to resume Doppler tracking
+4. `QMetaObject.invokeMethod(self, "_on_satmode_rig_reconnected", QueuedConnection)` to refresh UI on UI thread
+
+**NET mode — CTCSS is sent as part of `apply_transponder_state()`**: no separate disconnect/reconnect needed. See NET mode transponder selection flow below.
 
 **pyserial availability**: `main.py` removes `/usr/lib/python3/dist-packages` from `sys.path` for the `/opt/hamlib/4.7` dev build. `serial` (pyserial) must be pre-imported **before** the path surgery so it stays in `sys.modules`:
 ```python
@@ -1198,16 +1246,6 @@ with contextlib.suppress(Exception):
 if _HAMLIB_SYS in sys.path:
     sys.path.remove(_HAMLIB_SYS)
 ```
-
-**When transponder is selected (not connected)**: `_send_ctcss_cat_to_rig()` in `main_window.py` calls `set_ctcss_tone()` → `_apply_ctcss_civ()`. The "T" indicator appears on the rig immediately and persists through subsequent `connect()` (confirmed: satmode entry does not reset CTCSS).
-
-**When CTCSS button is pressed while connected (Doppler running)**: the serial port is held by Hamlib and CI-V cannot be sent directly. `_on_ctcss_send()` in `main_window.py` takes a special path for `HamlibDirectController` + `_satmode=True` + `is_connected=True`:
-1. `_disconnect_rig()` on UI thread (releases port)
-2. Background thread: `set_ctcss_tone(tone_hz)` → `_apply_ctcss_civ()` (port now free)
-3. Background thread: `rig.connect()` to resume Doppler tracking
-4. `QMetaObject.invokeMethod(self, "_on_satmode_rig_reconnected", QueuedConnection)` to refresh UI on UI thread
-
-This path handles **all tones** (67.0 / 74.4 / 88.5 / 141.3 Hz etc.) because `tone_hz` is passed through as a parameter.
 
 **FT-991A / FTX-1F are completely unaffected**: they use `_CAT_CTCSS_METHODS` (checked first in `_on_ctcss_send`) and never reach the satmode CI-V path.
 
@@ -1253,13 +1291,37 @@ ISS APRS (145.825 MHz UL/DL 同一) や AO-91 (435 MHz UL/435 MHz DL 同一) な
 
 **同バンド時の CTCSS**: `HamlibDirectController.set_ctcss_tone()` は `self._satmode == True` であれば `_satmode_active` の状態（cross-band / same-band）に関わらず常に `_apply_ctcss_civ()` を呼ぶ。したがって同バンド衛星でも CI-V 経由でトーンが正しく設定され、動作する（実機確認済み）。
 
+#### Same-band duplex (V/V, U/U) — NET mode
+
+NET mode の同バンド対応は Direct mode と同じロジックで `_is_same_band` フラグによる分岐。
+
+`set_transponder_freqs(dl_hz, ul_hz)` で `_is_same_band` を設定（Connect 前のトランスポンダー選択時）:
+```python
+self._is_same_band = self._freq_band(dl_hz) == self._freq_band(ul_hz)
+```
+
+| 条件 | split init (`_init_vfo`) | send_mode_only VFO |
+|---|---|---|
+| **クロスバンド** (V/U, U/V) | `S 1 Main`（rigctld satmode） | Sub/Main |
+| **同バンド** (V/V, U/U) | `S 1 VFOB`（通常 split） | VFOB/Main (VFOA相当) |
+
+**UL 更新頻度（同バンド）**: IC-9100 は `I` コマンド（VFOB 更新）時にディスプレイが一瞬ちらつく。
+Direct mode と同じ閾値を NET mode にも適用（`_last_ul_update_time` + `_current_dl_mode` で管理）:
+- FM / AFSK / DIGITALVOICE: 2000 Hz 以上の変化、または前回更新から 60 秒経過
+- SSB / CW など非 FM: 20 Hz / 15 秒
+
+残る 2フラッシュ（約1分ごとのUL更新時）は IC-9100 ハードウェアの動作（VFOB 更新直後に一瞬 VFOB 表示 → VFOA 表示に戻る）であり、ソフトウェアバグではない。
+
 ### NET mode (rigctld) vs Direct mode (Hamlib built-in)
 - FTX-1F: both NET and Direct work; NET preferred (more stable)
 - FT-991A: both NET and Direct work
   - Direct: `set_mode(RIG_VFO_B)` fails → uses `os.open()` raw serial writes for SV swap
   - NET: uses independent socket for mode/CTCSS commands to avoid Doppler cycle conflict
-- IC-9700 (and other satmode rigs): both NET and Direct work after v0.1.6 satmode fix
-- Detection: use `ctcss_method` setting value (`"ft991"`) — never use `w ID;` (causes 10 s timeout)
+- IC-9700 / IC-9100 (satmode rigs): both NET and Direct work (confirmed 2026-06-17, cross-band and same-band)
+  - NET satmode detection: `ctcss_method == "icom_civ"` (user setting) — model name query removed
+  - NET mode + CTCSS: pyserial CI-V direct (rigctld does not hold exclusive serial port lock on Linux)
+  - NET mode + same-band: `S 1 VFOB` instead of `S 1 Main`; UL throttled to reduce display flicker
+- Detection: use `ctcss_method` setting value (`"ft991"`, `"icom_civ"`, `"hamlib"`) — **never** use `w ID;` or rigctld `_` command (causes 10 s timeout and socket race)
 
 ---
 
