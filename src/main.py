@@ -94,23 +94,17 @@ from web.rig_state import RigWebState
 
 
 def _setup_logging() -> None:
-    """Configure logging: always write to stderr; in frozen bundles also write to a log file."""
+    """Configure logging: always write to stderr and a log file."""
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    from platformdirs import user_log_dir
 
-    if getattr(sys, "frozen", False):
-        # In a PyInstaller bundle stderr is discarded; write to a log file instead
-        # so the user can inspect it from the macOS/Windows Console or a text editor.
-        from platformdirs import user_log_dir
-
-        log_dir = user_log_dir("GPredict-Improved", "GPredict-Improved")
-        os.makedirs(log_dir, exist_ok=True)
-        log_path = os.path.join(log_dir, "gpredict-improved.log")
-        file_handler = logging.FileHandler(log_path, encoding="utf-8")
-        file_handler.setFormatter(logging.Formatter(fmt))
-        handlers.append(file_handler)
-        # Print log location to stderr (visible when launched from Terminal)
-        print(f"[GPredict-Improved] Log file: {log_path}", file=sys.stderr)
+    log_dir = user_log_dir("GPredict-Improved", "GPredict-Improved")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "gpredict-improved.log")
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(fmt))
+    handlers: list[logging.Handler] = [logging.StreamHandler(), file_handler]
+    print(f"[GPredict-Improved] Log file: {log_path}", file=sys.stderr)
 
     logging.basicConfig(level=logging.INFO, format=fmt, handlers=handlers)
 
