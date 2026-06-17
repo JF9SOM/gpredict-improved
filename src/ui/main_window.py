@@ -2565,6 +2565,28 @@ class MainWindow(QMainWindow):
         dialog = RigSettingsDialog(self._conn, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._load_rig_settings()
+            self._maybe_reset_satmode_on_net_switch()
+
+    def _maybe_reset_satmode_on_net_switch(self) -> None:
+        """Send CI-V SATMODE OFF→ON when Rig 1 is a NET-mode satmode rig.
+
+        Clears stale rig state left by a previous Direct-mode session so that
+        rigctld starts with a clean satmode state (correct mode, frequency, and
+        CTCSS assignment).  Runs in a background thread; no-op if direct_cat_port
+        is not configured or if the controller is not a satmode HamlibNetController.
+        """
+        from rig.controller import HamlibNetController
+
+        rig = self._rig_controller
+        if not isinstance(rig, HamlibNetController):
+            return
+        if not rig.is_satmode:
+            return
+
+        def _reset() -> None:
+            rig.reset_satmode_civ()
+
+        threading.Thread(target=_reset, daemon=True).start()
 
     def _load_rig_settings(self) -> None:
         """Load Rig 1 and Rig 2 settings from the DB and instantiate controllers.
