@@ -1187,10 +1187,10 @@ class HamlibDirectController(RigController):
         try:
             self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
             self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
-            self._satmode_active = False
         except Exception as exc:
             logger.warning("RigDirect: _satmode_exit failed — %s", exc)
         finally:
+            self._satmode_active = False
             self._last_dl_hz = None
             self._last_ul_hz = None
             self._last_ul_update_time = 0.0

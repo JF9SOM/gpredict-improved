@@ -8,6 +8,7 @@ connect/disconnect buttons and status rows.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from PySide6.QtCore import Signal
@@ -51,6 +52,7 @@ class RadioControlWidget(QWidget):
     south_init_changed: Signal = Signal(bool)
     ctcss_send_requested: Signal = Signal(float)
     ctcss_activate_requested: Signal = Signal()  # activation-tone button pressed
+    _rig1_connect_done: Signal = Signal(bool)  # internal: True = connected successfully
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -61,6 +63,7 @@ class RadioControlWidget(QWidget):
         self._current_ctcss_hz: float | None = None
         self._ctcss_activation_hz: float | None = None
         self._setup_ui()
+        self._rig1_connect_done.connect(self._finish_rig1_connect)
 
     # ------------------------------------------------------------------ #
     # UI construction
@@ -553,10 +556,28 @@ class RadioControlWidget(QWidget):
         if self._rig1.is_connected:
             self._rig1.disconnect()
             self.rig_disconnected.emit()
-        else:
-            self._rig1.connect()
-            if self._rig1.is_connected:
-                self.rig_connected.emit()
+            self._update_rig1_status()
+            return
+        # Disable button immediately to prevent queued double-clicks during connect.
+        # Direct-mode rigs (IC-9100 etc.) can block for several seconds on _port_lock
+        # while a concurrent CI-V sequence holds the serial port.
+        self._connect_rig1_btn.setEnabled(False)
+        self._rig1_status_label.setText(_("Connecting..."))
+        self._rig1_status_label.setStyleSheet("color: orange;")
+
+        rig = self._rig1
+
+        def _do() -> None:
+            rig.connect()
+            self._rig1_connect_done.emit(rig.is_connected)
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _finish_rig1_connect(self, success: bool) -> None:
+        """Called on the UI thread when the background connect() finishes."""
+        self._connect_rig1_btn.setEnabled(True)
+        if success:
+            self.rig_connected.emit()
         self._update_rig1_status()
 
     def _on_connect_rig2(self) -> None:
