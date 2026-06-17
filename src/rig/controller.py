@@ -441,6 +441,9 @@ class HamlibDirectController(RigController):
         # Serialises multi-step rig command sequences (VFO switch + CTCSS etc.)
         # so they never interleave with the Doppler cycle's set_vfo_frequencies.
         self._rig_cmd_lock = threading.Lock()
+        # Prevents _apply_ctcss_civ (pyserial) and connect() (Hamlib rig.open())
+        # from opening the serial port simultaneously.
+        self._port_lock = threading.Lock()
         # Last CTCSS tone set for satmode rigs (Hz). Re-applied in _satmode_enter.
         self._ctcss_tone_hz: float = 0.0
 
@@ -474,7 +477,8 @@ class HamlibDirectController(RigController):
                         addr = "0x" + addr
                     rig.set_conf("civaddr", addr)
                     logger.info("RigDirect: CI-V address set to %s", addr)
-                rig.open()
+                with self._port_lock:
+                    rig.open()
                 self._rig = rig
             else:
                 self._rig = _MockRig(self._model_id)
@@ -667,42 +671,43 @@ class HamlibDirectController(RigController):
         tone_byte = 0x01 if enable else 0x00
 
         try:
-            ser = serial.Serial(
-                self._port,
-                self._baud_rate,
-                bytesize=self._data_bits,
-                stopbits=self._stop_bits,
-                timeout=0.5,
-            )
-            logger.info(
-                "RigDirect: CI-V CTCSS %.1fHz enable=%s civ=0x%02X port=%s",
-                tone_hz,
-                enable,
-                civ,
-                self._port,
-            )
-            try:
-                ser.write(frame(0x16, 0x59, 0x00))  # SATMODE OFF — reset state
-                ser.flush()
-                ser.read(32)
-                ser.write(frame(0x16, 0x59, 0x01))  # SATMODE ON — re-enter clean
-                ser.flush()
-                ser.read(32)
-                ser.write(frame(0x07, 0xD1))
-                ser.flush()
-                ser.read(32)  # Select Sub
-                ser.write(frame(0x1B, 0x00, *tone_bcd))
-                ser.flush()
-                ser.read(32)  # Tone freq
-                ser.write(frame(0x16, 0x42, tone_byte))
-                ser.flush()
-                ser.read(32)  # TONE ON/OFF
-                ser.write(frame(0x07, 0xD0))
-                ser.flush()
-                ser.read(32)  # Select Main
-                logger.info("RigDirect: CI-V CTCSS applied OK")
-            finally:
-                ser.close()
+            with self._port_lock:
+                ser = serial.Serial(
+                    self._port,
+                    self._baud_rate,
+                    bytesize=self._data_bits,
+                    stopbits=self._stop_bits,
+                    timeout=0.5,
+                )
+                logger.info(
+                    "RigDirect: CI-V CTCSS %.1fHz enable=%s civ=0x%02X port=%s",
+                    tone_hz,
+                    enable,
+                    civ,
+                    self._port,
+                )
+                try:
+                    ser.write(frame(0x16, 0x59, 0x00))  # SATMODE OFF — reset state
+                    ser.flush()
+                    ser.read(32)
+                    ser.write(frame(0x16, 0x59, 0x01))  # SATMODE ON — re-enter clean
+                    ser.flush()
+                    ser.read(32)
+                    ser.write(frame(0x07, 0xD1))
+                    ser.flush()
+                    ser.read(32)  # Select Sub
+                    ser.write(frame(0x1B, 0x00, *tone_bcd))
+                    ser.flush()
+                    ser.read(32)  # Tone freq
+                    ser.write(frame(0x16, 0x42, tone_byte))
+                    ser.flush()
+                    ser.read(32)  # TONE ON/OFF
+                    ser.write(frame(0x07, 0xD0))
+                    ser.flush()
+                    ser.read(32)  # Select Main
+                    logger.info("RigDirect: CI-V CTCSS applied OK")
+                finally:
+                    ser.close()
             return True
         except Exception as exc:
             logger.error("RigDirect._apply_ctcss_civ: %s", exc)
