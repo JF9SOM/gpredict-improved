@@ -290,9 +290,11 @@ class RigController(ABC):
     @staticmethod
     def _freq_band(hz: float) -> str:
         """Return a coarse band label used for same-band detection."""
-        if hz < 200e6:
+        if hz < 30e6:
+            return "HF"
+        if hz < 300e6:
             return "VHF"
-        if hz < 500e6:
+        if hz < 3000e6:
             return "UHF"
         return "SHF"
 
