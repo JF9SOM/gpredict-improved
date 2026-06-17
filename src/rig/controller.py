@@ -909,19 +909,13 @@ class HamlibDirectController(RigController):
                             self._rig.set_freq(tx_vfo, int(vfob_hz))
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
-                            # Restore VFOA as current VFO so IC-9100 displays DL
-                            # (Main) frequency after the UL write.  set_freq(VFOB)
-                            # leaves Hamlib's internal CURR pointing at VFOB, which
-                            # causes the rig to show UL constantly until the next
-                            # DL update (up to 60 s away in FM throttle mode).
-                            if vfoa_hz is not None:
-                                logger.info(
-                                    "RigDirect same-band DL restore: set_freq(VFOA, %d)",
-                                    int(vfoa_hz),
-                                )
-                                self._rig.set_freq(rx_vfo, int(vfoa_hz))
-                                self._last_dl_hz = vfoa_hz
-                                self._last_dl_update_time = now
+                            # Restore VFO-A as the displayed VFO so IC-9100 shows
+                            # DL (Main) after the UL write.  set_freq(VFOB) leaves
+                            # the icom backend's internal CURR on VFO-B; set_vfo()
+                            # sends CI-V 07 00 explicitly to switch the display back
+                            # to VFO-A without re-writing the DL frequency.
+                            logger.info("RigDirect same-band: set_vfo(VFOA) to restore DL display")
+                            self._rig.set_vfo(rx_vfo)
                 else:
                     # Cross-band: use satmode (IC-9100/9700 firmware routing).
                     # Always use RIG_VFO_MAIN for DL and RIG_VFO_SUB_A for UL
