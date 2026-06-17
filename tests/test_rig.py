@@ -452,15 +452,14 @@ class TestHamlibNetController:
         ctrl._sock.recv.return_value = b"USB\nRPRT 0\n"  # type: ignore[union-attr]
         assert ctrl.get_mode() == "SSB"
 
-    def test_get_rig_info_returns_cached_model_name(self) -> None:
-        """get_rig_info returns the cached model name without performing socket I/O."""
+    def test_get_rig_info_returns_host_port(self) -> None:
+        """get_rig_info returns host:port as model_name (no socket I/O)."""
         ctrl = self._make_connected_ctrl()
-        ctrl._cached_model_name = "IC-9700"
         ctrl._sock.reset_mock()  # type: ignore[union-attr]
         info = ctrl.get_rig_info()
         assert info is not None
         assert "localhost" in info.port
-        assert info.model_name == "IC-9700"
+        assert info.model_name == "localhost:4532"
         ctrl._sock.sendall.assert_not_called()  # type: ignore[union-attr]
 
     def test_disconnect_closes_socket(self) -> None:
@@ -727,15 +726,6 @@ class TestHamlibNetController:
         assert result is True
         sent = b"".join(call.args[0] for call in mock_sock.sendall.call_args_list)
         assert b"S 1 Main\n" in sent
-
-    def test_fetch_model_name_timeout_keeps_connection(self) -> None:
-        """_ がタイムアウトしても接続を維持し host:port を返す。"""
-        ctrl = self._make_connected_ctrl()
-        ctrl._sock.recv.side_effect = TimeoutError("timed out")  # type: ignore[union-attr]
-        name = ctrl._fetch_model_name()
-        assert name == "localhost:4532"
-        assert ctrl._sock is not None
-        assert ctrl.state == RigState.CONNECTED
 
     def test_init_vfo_timeout_disconnects(self) -> None:
         """S 1 Main がタイムアウトすると _cmd() がソケットを閉じて DISCONNECTED になる。

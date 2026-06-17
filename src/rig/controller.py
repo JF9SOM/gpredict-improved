@@ -175,17 +175,6 @@ _SATMODE_RIG_IDS: frozenset[int] = frozenset(
 )
 
 # NET mode: rigctld reports the connected rig name via the _ command.
-# HamlibNetController queries this at connect time to auto-detect satmode rigs
-# without requiring any user configuration.
-_SATMODE_RIG_NAMES: frozenset[str] = frozenset(
-    [
-        "IC-9700",
-        "IC-9100",
-        "IC-910",
-        "IC-821H",
-    ]
-)
-
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -1309,7 +1298,6 @@ class HamlibNetController(RigController):
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
-        self._cached_model_name: str = ""  # fetched once on connect and cached
         self._satmode: bool = False  # set in connect() after querying rig name via _
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
@@ -1365,16 +1353,6 @@ class HamlibNetController(RigController):
                     self._state = RigState.ERROR
                 logger.error("RigNet: S 1 Main timed out or failed — aborting connect")
                 return False
-            # Query rig name via the _ command (after S 1 Main, so satmode is already
-            # active on the rig).  _fetch_model_name() uses a raw socket operation that
-            # does not go through _cmd_lock, so it is safe to call here without holding
-            # any lock.  The result is used to auto-detect satmode rigs: for these rigs
-            # send_mode_only() must be deferred until after connect() so that satmode is
-            # active before the V Sub / M commands are issued.
-            self._cached_model_name = self._fetch_model_name()
-            self._satmode = self._cached_model_name in _SATMODE_RIG_NAMES
-            if self._satmode:
-                logger.info("RigNet: satmode rig detected (%s)", self._cached_model_name)
             return True
         except OSError as exc:
             with self._lock:
@@ -1436,56 +1414,6 @@ class HamlibNetController(RigController):
         """Send a command to rigctld and return the response (thread-safe)."""
         with self._cmd_lock:
             return self._cmd_raw(command)
-
-    def _fetch_model_name(self) -> str:
-        """Fetch the model name once at connect time using the _ command.
-
-        rigctld responds to _ with a multi-line block, e.g.:
-            Model name:\tIC-9700
-            Mfg name:\tIcom
-            ...
-            RPRT 0
-
-        We extract the value after "Model name:" so the result matches the
-        strings in _SATMODE_RIG_NAMES ("IC-9700" etc.).  Falls back to
-        "host:port" if the command is unsupported or times out.
-        """
-        if self._sock is None:
-            return f"{self._host}:{self._port}"
-        prev_timeout = self._sock.gettimeout()
-        try:
-            self._sock.settimeout(2.0)
-            self._sock.sendall(b"_\n")
-            data = b""
-            while True:
-                chunk = self._sock.recv(4096)
-                if not chunk:
-                    break
-                data += chunk
-                if b"RPRT" in data:
-                    break
-            resp = data.decode(errors="replace")
-            for line in resp.splitlines():
-                line = line.strip()
-                if line.lower().startswith("model name"):
-                    # "Model name:\tIC-9700" → "IC-9700"
-                    parts = line.split(":", 1)
-                    if len(parts) == 2:
-                        name = parts[1].strip()
-                        logger.info("RigNet: rigctld rig model = %r", name)
-                        return name
-            # Fallback: return first non-RPRT line (old single-line rigctld behaviour)
-            lines = [
-                ln.strip() for ln in resp.splitlines() if ln.strip() and not ln.startswith("RPRT")
-            ]
-            return lines[0] if lines else f"{self._host}:{self._port}"
-        except OSError as exc:
-            logger.warning("RigNet: _ (get_info) failed (ignored): %s", exc)
-            return f"{self._host}:{self._port}"
-        finally:
-            with contextlib.suppress(OSError):
-                if self._sock is not None:
-                    self._sock.settimeout(prev_timeout)
 
     def _init_vfo(self) -> None:
         """Enable split (called once at connect time).
@@ -1980,7 +1908,7 @@ class HamlibNetController(RigController):
           Falls back to the base-class default (send_mode_only via rigctld,
           then set_ctcss_tone via rigctld L command).
         """
-        if self._satmode:
+        if self.is_satmode:
             logger.info(
                 "RigNet: apply_transponder_state (satmode) dl=%s ul=%s ctcss=%.1f",
                 dl_mode,
@@ -1998,7 +1926,7 @@ class HamlibNetController(RigController):
             return None
         return RigInfo(
             model_id=0,
-            model_name=self._cached_model_name or f"{self._host}:{self._port}",
+            model_name=f"{self._host}:{self._port}",
             port=f"{self._host}:{self._port}",
             baud_rate=0,
             state=self.state,
