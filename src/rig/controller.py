@@ -1201,7 +1201,8 @@ class HamlibDirectController(RigController):
 
         FTX-1F (model 1051):
           Raw CAT commands (MD / CN / CT) via os.open() — no VFO switching,
-          no Hamlib call, no 39-second hang.
+          no Hamlib call.  (The long freeze seen during development was caused
+          by an incorrect baud rate setting, not a fundamental GIL issue.)
 
         FT-991 / FT-991A (models 1035 / 1036):
           Raw CAT via pyserial — SV swap for UL mode, CN/CT for CTCSS (no swap).

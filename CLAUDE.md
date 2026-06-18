@@ -1160,7 +1160,7 @@ S 1 Main / S 1 VFOB はモード設定の直前に独立ソケットで送信（
   `CN P1=1:SUB, P2=0:CTCSS, P3=tone index 000-049`
 
 #### Direct モード（`_FTX1_MODEL_IDS = frozenset({1051})`）
-- Hamlib の `set_vfo(VFOB)` が Python GIL を保持したまま 39 秒ハングする問題を回避するため、モード・CTCSS 設定を Hamlib 経由で行わない
+- ボーレート誤設定時に Hamlib がシリアル応答待ちでタイムアウトし（最大数十秒）、Python GIL を保持したまま UI がフリーズする問題を回避するため、モード・CTCSS 設定を Hamlib 経由で行わない（ボーレートが正しければ Hamlib でも動作するが、raw CAT の方が `set_vfo(VFOB)` を呼ばない分シンプル）
 - トランスポンダー選択時に `_apply_mode_and_ctcss_cat_ftx1(dl_mode, ul_mode, ctcss_hz)` をバックグラウンドスレッドで呼び出す
 - FTX-1F の `MD` コマンドは P1 で VFO を直接指定できる（P1=1=SUB, P1=0=MAIN）。SV スワップ不要
   ```
