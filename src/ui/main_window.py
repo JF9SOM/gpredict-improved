@@ -2113,9 +2113,11 @@ class MainWindow(QMainWindow):
             tone_hz = float(self._ctcss_tone_hz or 0.0)
 
         if self._ctcss_method in self._CAT_CTCSS_METHODS:
-            # CAT methods require an active connection to the serial port.
-            if not self._rig_controller.is_connected:
-                return
+            # Send via direct serial port (direct_port mandatory for ftx1/ft991/icom_civ).
+            # No connection guard: _send_cat_direct() works regardless of Doppler state
+            # because _cmd_lock in _send_cat_direct() serialises against in-flight F/I
+            # commands.  This mirrors the IC-9100 approach of setting CTCSS at
+            # transponder-selection time so Connect() needs no re-send.
             rig = self._rig_controller
             cat_on = self._ctcss_cat_on
             cat_off = self._ctcss_cat_off
@@ -3237,19 +3239,10 @@ class MainWindow(QMainWindow):
         VFO modes on these rigs).  Only slot 1 (primary rig) participates in mode
         tracking.
         """
-        from rig.controller import HamlibDirectController, HamlibNetController, SdrRigAdapter
+        # CTCSS is sent at transponder-selection time for all rigs (IC-9100 style).
+        # No re-send needed here.
 
-        # Non-satmode NET rigs: re-send CTCSS on connect if needed.
-        # Satmode rigs (IC-9700/IC-9100) send mode+CTCSS at transponder selection
-        # time (before Connect) so no re-send is needed here.
-        if slot == 1:
-            rig = self._rig_controller
-            if (
-                not isinstance(rig, (HamlibNetController, HamlibDirectController))
-                or (isinstance(rig, HamlibNetController) and not rig.is_satmode)
-            ) and self._ctcss_tone_hz:
-                self._send_ctcss_cat_to_rig()
-
+        from rig.controller import SdrRigAdapter
         from sdr import SOAPY_AVAILABLE
 
         if not SOAPY_AVAILABLE:
