@@ -1035,8 +1035,23 @@ class HamlibDirectController(RigController):
                 rig.set_conf("civaddr", addr)
             with self._port_lock:
                 rig.open()
-                rig.set_mode(dl_hamlib, 0, dl_vfo)
-                rig.set_mode(ul_hamlib, 0, ul_vfo)
+                if _use_satmode_vfo:
+                    # Icom satmode rigs support set_mode(mode, 0, VFO_MAIN/SUB_A)
+                    # directly — no VFO switch needed.
+                    rig.set_mode(dl_hamlib, 0, dl_vfo)
+                    rig.set_mode(ul_hamlib, 0, ul_vfo)
+                else:
+                    # Non-satmode rigs (FTX-1F, FT-991A etc.): set_mode with an
+                    # explicit VFO_B argument hangs (~39 s Hamlib timeout) because
+                    # the backend does not support per-VFO mode setting without
+                    # switching the active VFO first.  Mirror the rigctld sequence:
+                    #   V VFOB → set_mode(UL) → V VFOA → set_mode(DL)
+                    vfo_b = int(_H.RIG_VFO_B)
+                    vfo_a = int(_H.RIG_VFO_A)
+                    rig.set_vfo(vfo_b)
+                    rig.set_mode(ul_hamlib, 0)
+                    rig.set_vfo(vfo_a)
+                    rig.set_mode(dl_hamlib, 0)
             logger.info("RigDirect: send_mode_only done")
         except Exception as exc:
             logger.error("RigDirect.send_mode_only: %s", exc)
