@@ -1618,11 +1618,14 @@ class HamlibNetController(RigController):
                 last_ul = self._last_ul_hz
                 now = time.monotonic()
                 elapsed = now - self._last_ul_update_time
-                if self._is_same_band:
-                    # Same-band (e.g. ISS APRS V/V): throttle I command to suppress
-                    # display flicker caused by rapid VFOA↔VFOB switching on IC-9100.
+                is_satmode_rig = self._satmode or self._ctcss_method == "icom_civ"
+                if is_satmode_rig and self._is_same_band:
+                    # Satmode rigs (IC-9100 etc.) same-band: throttle I command to
+                    # suppress display flicker caused by rapid VFOA↔VFOB switching.
                     # FM capture range (±5 kHz) exceeds ISS max Doppler (±3.5 kHz),
-                    # so coarse updates are sufficient.  Matches Direct mode thresholds.
+                    # so coarse updates are sufficient.
+                    # Non-satmode rigs (FTX-1F, FT-991A) do not flicker and always
+                    # use the standard 1 Hz threshold below.
                     is_fm = self._current_dl_mode in ("FM", "AFSK", "DIGITALVOICE")
                     ul_thresh = 2000.0 if is_fm else 20.0
                     ul_max_s = 60.0 if is_fm else 15.0
