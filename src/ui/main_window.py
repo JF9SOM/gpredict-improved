@@ -2037,20 +2037,32 @@ class MainWindow(QMainWindow):
             threading.Thread(target=_do_satmode, daemon=True).start()
         else:
             # Non-satmode rigs (FTX-1F, FT-991A):
-            # FTX-1F: disconnect first so V commands in send_mode_only cannot
-            #   race with the Doppler F/I cycle on the main socket.
+            # FTX-1F Direct mode: raw CAT path — no Hamlib calls, no VFO
+            #   switching, no disconnect needed.  apply_transponder_state()
+            #   writes MD/CN/CT commands via os.open() and returns immediately.
             # FT-991A: independent socket; keep main connection alive.
-            if rig.is_connected and self._ctcss_method != "ft991":
-                self._disconnect_rig()  # must run on UI thread
+            # Other non-satmode Direct rigs: disconnect first so V commands in
+            #   send_mode_only cannot race with the Doppler F/I cycle.
+            from rig.controller import _FTX1_MODEL_IDS, HamlibDirectController
 
-            cat_on = self._ctcss_cat_on
-            cat_off = self._ctcss_cat_off
+            if isinstance(rig, HamlibDirectController) and rig._model_id in _FTX1_MODEL_IDS:
+                # FTX-1F Direct: raw CAT, no disconnect required
+                def _do_ftx1_direct() -> None:
+                    rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
-            def _do_nonsatmode() -> None:
-                rig.send_mode_only(dl_mode, ul_mode)
-                rig.send_ctcss_cat(ctcss_hz, cat_on, cat_off)
+                threading.Thread(target=_do_ftx1_direct, daemon=True).start()
+            else:
+                if rig.is_connected and self._ctcss_method != "ft991":
+                    self._disconnect_rig()  # must run on UI thread
 
-            threading.Thread(target=_do_nonsatmode, daemon=True).start()
+                cat_on = self._ctcss_cat_on
+                cat_off = self._ctcss_cat_off
+
+                def _do_nonsatmode() -> None:
+                    rig.send_mode_only(dl_mode, ul_mode)
+                    rig.send_ctcss_cat(ctcss_hz, cat_on, cat_off)
+
+                threading.Thread(target=_do_nonsatmode, daemon=True).start()
 
     def _send_mode_only_to_rig(self) -> None:
         """Set mode on both VFOs via an independent connection on transponder change.

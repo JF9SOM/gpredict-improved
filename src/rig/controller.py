@@ -175,6 +175,26 @@ _SATMODE_RIG_IDS: frozenset[int] = frozenset(
 )
 
 # NET mode: rigctld reports the connected rig name via the _ command.
+
+# ---------------------------------------------------------------------------
+# FTX-1F model identifiers (Direct mode raw CAT path)
+# ---------------------------------------------------------------------------
+_FTX1_MODEL_IDS: frozenset[int] = frozenset({1051})  # FTX-1F (Hamlib model 1051)
+
+# FTX-1F CAT mode codes: MD P1 P2; where P1=0=MAIN, P1=1=SUB
+_FTX1_MODE_CODES: dict[str, str] = {
+    "FM": "4",
+    "DIGITALVOICE": "4",
+    "AFSK": "4",
+    "USB": "2",
+    "SSB": "2",
+    "BPSK": "2",
+    "LSB": "1",
+    "CW": "3",  # CW-U
+    "CW-R": "7",  # CW-L
+    "AM": "5",
+}
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -1060,6 +1080,57 @@ class HamlibDirectController(RigController):
                 with contextlib.suppress(Exception):
                     rig.close()
 
+    def _apply_mode_and_ctcss_cat_ftx1(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
+        """Set mode and CTCSS on FTX-1F via raw CAT commands (no Hamlib calls).
+
+        Uses MD commands (no VFO switching required) followed by existing
+        CN/CT CTCSS commands.  All writes go through os.open() on the serial
+        port so the rig does not need to be connected via Hamlib.
+
+        Sequence:
+          MD1{ul_code};   — SUB side (TX/UL) mode
+          MD0{dl_code};   — MAIN side (RX/DL) mode
+          CN10{tone:03d}; — CTCSS tone number on SUB (if tone > 0)
+          CT11;           — CTCSS ENC ON on SUB (if tone > 0)
+          CT10;           — CTCSS OFF on SUB (if tone <= 0)
+        """
+        ul_code = _FTX1_MODE_CODES.get(ul_mode, "4")
+        dl_code = _FTX1_MODE_CODES.get(dl_mode, "4")
+
+        commands: list[bytes] = [
+            f"MD1{ul_code};".encode(),
+            f"MD0{dl_code};".encode(),
+        ]
+
+        if ctcss_hz > 0:
+            tone_number = CTCSS_TABLE.get(ctcss_hz)
+            if tone_number is not None:
+                commands.append(f"CN10{tone_number:03d};".encode())
+                commands.append(b"CT11;")
+            else:
+                logger.warning(
+                    "RigDirect.ftx1: %.1f Hz not in CTCSS_TABLE, skipping CTCSS", ctcss_hz
+                )
+        else:
+            commands.append(b"CT10;")
+
+        logger.info(
+            "RigDirect: FTX-1 CAT mode+CTCSS dl=%s ul=%s ctcss=%.1f port=%s",
+            dl_mode,
+            ul_mode,
+            ctcss_hz,
+            self._port,
+        )
+        for raw in commands:
+            try:
+                fd = os.open(self._port, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+                try:
+                    os.write(fd, raw)
+                finally:
+                    os.close(fd)
+            except OSError as exc:
+                logger.error("RigDirect.ftx1 write(%r): %s", raw, exc)
+
     def apply_transponder_state(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
         """Apply mode and CTCSS atomically for Direct-mode rigs.
 
@@ -1067,10 +1138,13 @@ class HamlibDirectController(RigController):
           A single CI-V serial session handles SATMODE OFF→ON, DL/UL mode
           bytes, and CTCSS tone — no Hamlib call, no race condition.
 
-        Non-satmode rigs:
+        FTX-1F (model 1051):
+          Raw CAT commands (MD / CN / CT) via os.open() — no VFO switching,
+          no Hamlib call, no 39-second hang.
+
+        Non-satmode rigs (other):
           Falls back to the base-class default (send_mode_only via Hamlib,
-          then set_ctcss_tone via Hamlib).  These rigs are unaffected by the
-          satmode CI-V logic.
+          then set_ctcss_tone via Hamlib).  These rigs are unaffected.
         """
         if self._satmode:
             # Store modes so _apply_ctcss_civ can embed them in CI-V
@@ -1083,6 +1157,8 @@ class HamlibDirectController(RigController):
                 ctcss_hz,
             )
             self._apply_ctcss_civ(ctcss_hz)
+        elif self._model_id in _FTX1_MODEL_IDS:
+            self._apply_mode_and_ctcss_cat_ftx1(dl_mode, ul_mode, ctcss_hz)
         else:
             super().apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
