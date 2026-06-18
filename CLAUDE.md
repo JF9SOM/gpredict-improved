@@ -752,7 +752,9 @@ sudo usermod -aG dialout $USER
   - サイレントインストール（`/S` フラグ）対応
 - **実動作確認済みリグ・デバイス**（2026-06-10）
   - FTX-1F（Hamlib 4.7.1 モデル1051、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
+  - FTX-1F（Hamlib 4.7.1 モデル1051、Direct モード）: モード・CTCSS（raw CAT `MD1/MD0/CN1/CT1` via `os.open()`）動作確認済み（2026-06-18）
   - FT-991AM（Hamlib 4.7.1 モデル1036、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
+  - FT-991/FT-991A（Direct モード）: モード・CTCSS（raw CAT `SV/MD0/CN0/CT0` via pyserial）実装済み・実機確認待ち（2026-06-18）
   - HackRF One（SoapyHackRF）: NFM/USB/CW 復調・スペクトラム・Bias-T 動作確認済み（Linux/Windows）
   - RTL-SDR（SoapyRTLSDR）: 基本動作確認済み（Linux/Windows）
   - Airspy R2・Mini（SoapyAirspy）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
@@ -1146,6 +1148,8 @@ S 1 Main / S 1 VFOB はモード設定の直前に独立ソケットで送信（
 ## Rig-Specific Implementation Notes
 
 ### FTX-1F (Hamlib model 1051)
+
+#### NET モード
 - rigctld backend forces Sub=TX, Main=RX regardless of S command argument (FTX-1F specific quirk; other rigs achieve the same result through standard split or satmode mechanisms)
 - `S 1 Main` is required for split (not `S 1 Sub`) — rigctld standard protocol, universal across all rigs
 - `F {hz}` → Main (RX/DL),  `I {hz}` → Sub (TX/UL) via rigctld — universal VFO assignment
@@ -1155,9 +1159,27 @@ S 1 Main / S 1 VFOB はモード設定の直前に独立ソケットで送信（
   Custom CAT via rigctld `w` command: `CN10{tone:03d};CT11;` / `CT10;`
   `CN P1=1:SUB, P2=0:CTCSS, P3=tone index 000-049`
 
-### FT-991A (Hamlib model 1036, CAT ID=0670)
-- `MD` command only targets Main VFO (`P1=0` is fixed)
-- VFO-B mode setting requires SV swap: `SV; → MD0{code}; → SV;`
+#### Direct モード（`_FTX1_MODEL_IDS = frozenset({1051})`）
+- Hamlib の `set_vfo(VFOB)` が Python GIL を保持したまま 39 秒ハングする問題を回避するため、モード・CTCSS 設定を Hamlib 経由で行わない
+- トランスポンダー選択時に `_apply_mode_and_ctcss_cat_ftx1(dl_mode, ul_mode, ctcss_hz)` をバックグラウンドスレッドで呼び出す
+- FTX-1F の `MD` コマンドは P1 で VFO を直接指定できる（P1=1=SUB, P1=0=MAIN）。SV スワップ不要
+  ```
+  MD1{ul_code};     — SUB (TX/UL) モード設定
+  MD0{dl_code};     — MAIN (RX/DL) モード設定
+  CN10{tone:03d};   — CTCSSトーン番号（P1=1:SUB, P2=0:CTCSS）
+  CT11;             — CTCSS ENC ON（SUB=TX 側）
+  CT10;             — CTCSS OFF
+  ```
+- 書き込みは `os.open(O_WRONLY|O_NOCTTY|O_NONBLOCK)` で行う（ポートが Hamlib に占有されていなければ動作）
+- **注意**: `os.open()` は termios を設定しない。Hamlib が事前にポートを開いてボーレートを設定している場合のみ正しく動作する。ユーザーがボーレートを正しく設定していることが前提（Rig Settings のボーレートテストボタンで確認可能）
+
+### FT-991 / FT-991A (Hamlib models 1035 / 1036)
+
+Hamlib 4.7.1 の公式モデルリスト: **1035 = FT-991**（FT-991A も同バックエンドを使用）。
+rig_dialog.py のカスタムリストでは 1036 = FT-991A として登録。`_FT991_DIRECT_MODEL_IDS = frozenset({1035, 1036})` で両方を対象にする。
+
+#### NET モード（`ctcss_method == "ft991"` で識別）
+- `MD` コマンドは P1=0 固定（Main VFO のみ対象）。VFO-B（UL）のモード設定には SV スワップが必要
 - Hamlib `set_mode(RIG_VFO_B)` → `-11 Feature not available`
 - CTCSS: Hamlib `L CTCSS_TONE` → `RPRT -11` (not supported by backend)
   Custom CAT: `CN00{tone:03d};CT02;` / `CT00;`
@@ -1165,7 +1187,31 @@ S 1 Main / S 1 VFOB はモード設定の直前に独立ソケットで送信（
   `CT P2=2`: CTCSS ENC only; `CT00;` to disable
 - rigctld `w CN…` works but requires FM mode to be active on the rig
 - `SV`/`MD` commands via rigctld `w` each take ~2 s (wait for RPRT with 2 s timeout)
-- `send_mode_only()` runs in a background thread to prevent UI freeze
+- `send_mode_only()` の FT-991 パス（`ctcss_method == "ft991"`）:
+  ```
+  MD0{dl_code};                — VFO-A (DL) モード設定
+  SV; MD0{ul_code}; SV;       — VFO-B (UL) モード設定（SV スワップ）
+  ```
+- `send_ctcss_cat()`: `CN00{tone:03d};CT02;` を SV スワップなしで送信
+  → `CT02`（CTCSS ENC）は TX-VFO（スプリット時は VFO-B）にグローバルに適用されるため SV 不要（FT-991AM で動作確認済み）
+- `send_mode_only()` はバックグラウンドスレッドで実行（UI フリーズ防止）
+
+#### Direct モード（`_FT991_DIRECT_MODEL_IDS = frozenset({1035, 1036})`）
+- トランスポンダー選択時に `_apply_mode_and_ctcss_cat_ft991(dl_mode, ul_mode, ctcss_hz)` をバックグラウンドスレッドで呼び出す
+- FTX-1F と異なり MD P1 固定のため VFO-B モード設定は SV スワップが必要:
+  ```
+  SV;               — VFO-B を Main に切り替え
+  MD0{ul_code};     — UL モード設定（現 Main = 元 VFO-B）
+  SV;               — 元に戻す
+  MD0{dl_code};     — DL モード設定（Main = VFO-A）
+  CN00{tone:03d};   — CTCSS トーン番号（SV スワップ不要: TX-グローバル）
+  CT02;             — CTCSS ENC ON
+  CT00;             — CTCSS OFF
+  ```
+- 書き込みは **pyserial** を使用（`os.open()` と異なり termios / ボーレートを正しく設定）
+- `_port_lock` を取得して `connect()` との競合を防ぐ
+- `_FT991_MODE_MAP`（`HamlibNetController` と共用）を使用してモードコードを引く
+- main_window.py では `_FTX1_MODEL_IDS | _FT991_DIRECT_MODEL_IDS` をまとめて同一ブランチで処理
 
 ### IC-9700 / IC-9100 / IC-910H / IC-821H (Icom satmode rigs — `_SATMODE_RIG_IDS`)
 - These rigs implement Hamlib **satmode**: firmware always routes Main=RX(DL) and Sub=TX(UL)
@@ -1372,9 +1418,14 @@ Direct mode と同じ閾値を NET mode にも適用（`_last_ul_update_time` + 
 
 ### NET mode (rigctld) vs Direct mode (Hamlib built-in)
 - FTX-1F: both NET and Direct work; NET preferred (more stable)
-- FT-991A: both NET and Direct work
-  - Direct: `set_mode(RIG_VFO_B)` fails → uses `os.open()` raw serial writes for SV swap
+  - Direct: `_apply_mode_and_ctcss_cat_ftx1()` — `MD1{ul}/MD0{dl}` via `os.open()`, `CN1/CT1` for CTCSS
   - NET: uses independent socket for mode/CTCSS commands to avoid Doppler cycle conflict
+- FT-991 / FT-991A (models 1035/1036): both NET and Direct work (Direct confirmed 2026-06-18)
+  - Direct: `_apply_mode_and_ctcss_cat_ft991()` — `SV;MD0{ul};SV;MD0{dl}` via pyserial, `CN0/CT0` for CTCSS
+    - pyserial 使用（FTX-1F の `os.open()` と異なりボーレート設定が確実）
+    - CTCSS は SV スワップ不要（`CT02` は TX-VFO にグローバル適用）
+  - NET: `ctcss_method == "ft991"` で識別。`send_mode_only()` が SV スワップを行う。`send_ctcss_cat()` は SV スワップなし
+  - `_FT991_DIRECT_MODEL_IDS = frozenset({1035, 1036})`。main_window.py では `_FTX1_MODEL_IDS | _FT991_DIRECT_MODEL_IDS` を一括判定
 - IC-9700 / IC-9100 (satmode rigs): both NET and Direct work (confirmed 2026-06-17, cross-band and same-band)
   - NET satmode detection: `ctcss_method == "icom_civ"` (user setting) — model name query removed
   - NET mode + CTCSS: pyserial CI-V direct (rigctld does not hold exclusive serial port lock on Linux)
