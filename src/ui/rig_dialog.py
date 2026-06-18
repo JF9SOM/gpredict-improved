@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sdr.device import SdrDeviceInfo
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -315,6 +315,16 @@ def _scan_serial_ports() -> list[str]:
 # ---------------------------------------------------------------------------
 # _RigPanel — reusable settings form for one rig
 # ---------------------------------------------------------------------------
+
+
+class _BaudTestNotifier(QObject):
+    """Single-use signal carrier for baud-rate test results.
+
+    Defined at module level so PySide6's meta-object system registers the
+    Signal once, avoiding the instability of per-call dynamic QObject classes.
+    """
+
+    done = Signal(bool)
 
 
 class _RigPanel(QWidget):
@@ -639,14 +649,9 @@ class _RigPanel(QWidget):
         btn.setEnabled(False)
         btn.setStyleSheet("")
 
-        # Helper QObject marshals result back to the Qt main thread via Signal.
-        from PySide6.QtCore import QObject
-        from PySide6.QtCore import Signal as _Signal
-
-        class _Notifier(QObject):
-            done = _Signal(bool)
-
-        notifier = _Notifier()
+        # Keep notifier on self so it isn't garbage-collected before the
+        # background thread fires the signal.
+        self._baud_notifier = _BaudTestNotifier()
 
         def _apply(ok: bool) -> None:
             btn.setEnabled(True)
@@ -657,7 +662,7 @@ class _RigPanel(QWidget):
                 btn.setText("✗ Failed")
                 btn.setStyleSheet("background-color: #c0392b; color: white; font-weight: bold;")
 
-        notifier.done.connect(_apply)
+        self._baud_notifier.done.connect(_apply)
 
         def _test() -> None:
             ok = False
@@ -680,7 +685,7 @@ class _RigPanel(QWidget):
                         ok = len(response) > 0
             except Exception:
                 ok = False
-            notifier.done.emit(ok)
+            self._baud_notifier.done.emit(ok)
 
         threading.Thread(target=_test, daemon=True).start()
 
