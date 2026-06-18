@@ -973,8 +973,8 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            logger.info("RigDirect satmode UL: set_freq(SUB_A, %d)", int(vfob_hz))
-                            self._rig.set_freq(int(_H.RIG_VFO_SUB_A), int(vfob_hz))
+                            logger.info("RigDirect satmode UL: CI-V Sub freq %d Hz", int(vfob_hz))
+                            self._set_sub_freq_raw(vfob_hz)
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
 
@@ -1315,6 +1315,52 @@ class HamlibDirectController(RigController):
             self._last_dl_update_time = 0.0
             self._last_ul_hz = None
             self._last_ul_update_time = 0.0
+
+    @staticmethod
+    def _civ_bcd_freq(freq_hz: float) -> bytes:
+        """Encode frequency in Hz as 5-byte little-endian BCD for CI-V command 00.
+
+        435.612 MHz -> 435612000 -> '0435612000' -> pairs from right -> 00 00 26 15 34
+        """
+        s = f"{int(round(freq_hz)):010d}"
+        result = bytearray(5)
+        for i in range(5):
+            hi = int(s[8 - i * 2])
+            lo = int(s[9 - i * 2])
+            result[i] = (hi << 4) | lo
+        return bytes(result)
+
+    def _set_sub_freq_raw(self, ul_hz: float) -> None:
+        """Set Sub band (TX/UL) frequency via CI-V send_raw — one frame at a time.
+
+        Hamlib's ic9700_set_vfo rejects RIG_VFO_SUB_A when satmode is active,
+        so we bypass Hamlib and write the CI-V frequency command directly.
+        Three separate send_raw() calls (not concatenated) to avoid buffer overflow.
+        """
+        if self._rig is None:
+            return
+        civ = self._civ_addr_int()
+        ctrl = 0xE0
+
+        def frame(*payload: int) -> bytes:
+            return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
+
+        freq_bcd = self._civ_bcd_freq(ul_hz)
+        try:
+            import time as _time
+
+            self._rig.send_raw(frame(0x07, 0xD1))  # Select Sub band
+            _time.sleep(0.05)
+            self._rig.send_raw(frame(0x00, *freq_bcd))  # Set frequency
+            _time.sleep(0.05)
+            self._rig.send_raw(frame(0x07, 0xD0))  # Select Main band
+            logger.info(
+                "RigDirect: send_raw Sub freq %.3f MHz civ=0x%02X applied",
+                ul_hz / 1e6,
+                civ,
+            )
+        except Exception as exc:
+            logger.error("RigDirect._set_sub_freq_raw: %s", exc)
 
     def _apply_ctcss_civ_via_send_raw(self, tone_hz: float) -> None:
         """Apply CTCSS via rig.send_raw() while Hamlib already holds the port.
