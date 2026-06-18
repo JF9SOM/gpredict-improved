@@ -1215,12 +1215,38 @@ rig_dialog.py のカスタムリストでは 1036 = FT-991A として登録。`_
 
 ### IC-9700 / IC-9100 / IC-910H / IC-821H (Icom satmode rigs — `_SATMODE_RIG_IDS`)
 - These rigs implement Hamlib **satmode**: firmware always routes Main=RX(DL) and Sub=TX(UL)
-- Direct mode split init: `set_split_vfo(RIG_VFO_MAIN, 1, RIG_VFO_MAIN)` — NOT VFOA/VFOB
-  (The Hamlib icom backend triggers satmode only when `tx_vfo == RIG_VFO_MAIN`)
-- Direct mode freq: `set_freq(RIG_VFO_MAIN, dl_hz)` + `set_split_freq(RIG_VFO_MAIN, ul_hz)`
-  - **DL must use `RIG_VFO_MAIN` explicitly** (not `RIG_VFO_CURR`): `set_freq(RIG_VFO_SUB_A, ul_hz)` causes the icom backend to internally call `icom_set_vfo(SUB_A)`, leaving CURR=Sub. A subsequent `set_freq(CURR, dl_hz)` then writes DL to Sub, causing the display to alternate between Sub (5 s) and Main (1 s).
+- Direct mode split init: `set_func(RIG_FUNC_SATMODE, 1)` — sends CI-V `16 59 01` to enable satmode
+- Direct mode freq (cross-band): `set_freq(RIG_VFO_MAIN, dl_hz)` + UL via satmode-OFF toggle (see below)
 - Direct mode mode: `set_mode(dl, 0, RIG_VFO_MAIN)` + `set_mode(ul, 0, RIG_VFO_SUB)`
 - `HamlibDirectController._satmode` flag is set automatically when model_id ∈ `_SATMODE_RIG_IDS`
+
+#### Cross-band UL frequency write — satmode-OFF toggle (confirmed 2026-06-19)
+
+**Root cause**: `set_func(RIG_FUNC_SATMODE, 1)` sets `rig->state.cache.satmode = True` inside Hamlib.
+`ic9700_set_vfo` explicitly rejects `RIG_VFO_SUB_A` when `cache.satmode=True`:
+```
+ic9700_set_vfo: Invalid VFO SubA in satellite mode  → -RIG_EINVAL
+```
+Therefore `set_freq(RIG_VFO_SUB_A, ul_hz)` always silently fails after `_init_split()`.
+
+**Why `set_split_freq(RIG_VFO_MAIN, ul_hz)` also fails**: without `set_split_vfo(MAIN,1,MAIN)` in
+`_init_split` it writes a wrong frequency. With `set_split_vfo`, Hamlib internally leaves
+`CURR=Sub` after each call, causing the IC-9100 display to alternate Main/Sub every 5 s.
+
+**Why `rig.send_raw()` crashes**: calling `send_raw()` while Hamlib holds the serial port causes a
+segfault in the IC-9100 backend. Even splitting into separate per-frame calls does not help.
+
+**Correct approach — write UL while satmode is temporarily OFF**:
+`ic9700_set_vfo` only rejects `SUB_A` when `cache.satmode=True`. Briefly disabling satmode
+(`set_func(SATMODE, 0)`) clears the flag, allowing `set_freq(SUB_A, ul_hz)` to succeed.
+
+**Implementation (`_satmode_enter` + periodic toggle)**:
+- **Connect time (first tick)**: `_satmode_enter(dl_hz, ul_hz)` writes both DL and UL in one
+  atomic sequence: `SATMODE OFF → set_freq(CURR, dl_hz) → set_freq(SUB_A, ul_hz) → SATMODE ON`
+- **Periodic UL update** (threshold/time-based): same three-step toggle inline in
+  `_set_vfo_frequencies_locked()`: `SATMODE OFF → set_freq(SUB_A, ul_hz) → SATMODE ON`
+- `_last_ul_hz` / `_last_ul_update_time` are updated immediately after a successful write so the
+  next Doppler tick does not immediately re-trigger the write.
 
 #### NET mode satmode detection and transponder selection flow (confirmed 2026-06-17)
 
@@ -1247,8 +1273,9 @@ return self._satmode or self._ctcss_method == "icom_civ"
 
 **Auto-disconnect on satellite change**: when `rig.is_satmode == True` and `rig.is_connected == True`, `_apply_transponder_state_to_rig()` calls `_disconnect_rig()` before re-sending mode/CTCSS. User must manually re-press Connect for the new satellite.
 
-> **動作確認状況（2026-06-17時点）**
+> **動作確認状況（2026-06-19時点）**
 > - **Direct モード（IC-9100実機）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み
+>   - クロスバンドUL: satmode-OFF toggle方式（`_satmode_enter` + 周期トグル）で正常書き込み確認済み（2026-06-19）
 >   - 同バンドFM: DL表示を `set_vfo(VFOA)` で確実に復元（`set_freq(VFOA)` では不可）
 >   - 同バンドDL更新も 2000 Hz / 60 秒で間引き（`_last_dl_update_time` 管理）
 >   - Connect ボタンはバックグラウンドスレッドで実行（二重接続バグ修正済み）
@@ -1368,7 +1395,7 @@ ISS APRS (145.825 MHz UL/DL 同一) や AO-91 (435 MHz UL/435 MHz DL 同一) な
 
 | 条件 | VFO割り当て | 周波数更新方式 |
 |---|---|---|
-| **クロスバンド** (V/U, U/V) | satmode (Main=RX, Sub=TX) | `set_freq(RIG_VFO_MAIN, dl)` + `set_freq(RIG_VFO_SUB_A, ul)` |
+| **クロスバンド** (V/U, U/V) | satmode (Main=RX, Sub=TX) | `set_freq(RIG_VFO_MAIN, dl)` + satmode-OFF toggle で `set_freq(RIG_VFO_SUB_A, ul)` |
 | **同バンド** (V/V, U/U) | 通常split (VFO-A=RX, VFO-B=TX) | `set_freq(RIG_VFO_A, dl)` + `set_freq(RIG_VFO_B, ul)` + `set_vfo(VFOA)` |
 
 **同バンド時の処理フロー** (`_set_vfo_frequencies_locked`):
