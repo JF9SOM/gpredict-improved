@@ -951,7 +951,9 @@ class HamlibDirectController(RigController):
                     if vfoa_hz is not None:
                         last_dl = self._last_dl_hz
                         if last_dl is None or self._freq_band(vfoa_hz) != self._freq_band(last_dl):
-                            self._satmode_enter(vfoa_hz)
+                            # Pass UL so it is written inside _satmode_enter while
+                            # satmode is temporarily OFF (cache.satmode=False → SUB_A allowed).
+                            self._satmode_enter(vfoa_hz, vfob_hz)
                         elif abs(vfoa_hz - last_dl) >= 1.0:
                             logger.info("RigDirect satmode DL: set_freq(MAIN, %d)", int(vfoa_hz))
                             self._rig.set_freq(main_vfo, int(vfoa_hz))
@@ -962,6 +964,9 @@ class HamlibDirectController(RigController):
                             "RigDirect satmode: vfob_hz is None — no uplink defined, UL skipped"
                         )
                     else:
+                        # Read _last_ul_hz AFTER the DL block above: if _satmode_enter
+                        # just wrote UL, _last_ul_hz is already updated and the threshold
+                        # check below will correctly suppress an immediate re-write.
                         last_ul = self._last_ul_hz
                         now = time.monotonic()
                         elapsed = now - self._last_ul_update_time
@@ -973,10 +978,25 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            logger.info("RigDirect satmode UL: set_freq(SUB_A, %d)", int(vfob_hz))
-                            self._rig.set_freq(int(_H.RIG_VFO_SUB_A), int(vfob_hz))
-                            self._last_ul_hz = vfob_hz
-                            self._last_ul_update_time = now
+                            # Periodic UL update: briefly toggle satmode OFF so that
+                            # ic9700_set_vfo allows RIG_VFO_SUB_A (rejected while
+                            # cache.satmode=True).
+                            vfo_curr = int(_H.RIG_VFO_CURR)
+                            sub_vfo = int(_H.RIG_VFO_SUB_A)
+                            logger.info(
+                                "RigDirect satmode UL: set_freq(SUB_A) via toggle %d Hz",
+                                int(vfob_hz),
+                            )
+                            try:
+                                self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
+                                self._rig.set_freq(sub_vfo, int(vfob_hz))
+                                self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
+                                self._last_ul_hz = vfob_hz
+                                self._last_ul_update_time = now
+                            except Exception as exc:
+                                logger.warning("RigDirect satmode UL toggle: %s", exc)
+                                with contextlib.suppress(Exception):
+                                    self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
 
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
@@ -1284,11 +1304,17 @@ class HamlibDirectController(RigController):
 
     # -- Internal utilities --
 
-    def _satmode_enter(self, dl_hz: float) -> None:
+    def _satmode_enter(self, dl_hz: float, ul_hz: float | None = None) -> None:
         """Enable satmode with Main on the band of *dl_hz*.
 
-        Sequences: satmode OFF → set_freq(CURR, dl_hz) [band switch] → satmode ON.
-        Resets last-frequency state so the next tick re-sends both DL and UL.
+        Sequences: satmode OFF → set_freq(CURR, dl_hz) [band switch]
+                               → set_freq(SUB_A, ul_hz) [UL while cache.satmode=False]
+                               → satmode ON.
+
+        ic9700_set_vfo only rejects RIG_VFO_SUB_A when cache.satmode=True.
+        Writing UL here, while satmode is temporarily OFF, avoids that rejection.
+        If ul_hz is provided and successfully written, _last_ul_hz is updated so
+        the caller's UL block does not immediately re-trigger.
         """
         if self._rig is None or self._hamlib is None:
             return
@@ -1296,25 +1322,35 @@ class HamlibDirectController(RigController):
         if not hasattr(_H, "RIG_FUNC_SATMODE"):
             return
         vfo_curr = int(_H.RIG_VFO_CURR)
+        sub_vfo = int(_H.RIG_VFO_SUB_A)
         logger.info(
             "RigDirect: entering satmode, Main → %s (%.3f MHz)",
             self._freq_band(dl_hz),
             dl_hz / 1e6,
         )
+        ul_written = False
         try:
             self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
             self._rig.set_freq(vfo_curr, int(dl_hz))
+            if ul_hz is not None:
+                self._rig.set_freq(sub_vfo, int(ul_hz))  # SUB_A allowed: cache.satmode=False
+                ul_written = True
+                logger.info(
+                    "RigDirect: satmode UL init set_freq(SUB_A, %d) while satmode=OFF", int(ul_hz)
+                )
             self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
             self._satmode_active = True
-            # Record the DL frequency so the next tick does NOT re-trigger
-            # _satmode_enter (last_dl is None would loop infinitely).
             self._last_dl_hz = dl_hz
+            if ul_written:
+                self._last_ul_hz = ul_hz
+                self._last_ul_update_time = time.monotonic()
         except Exception as exc:
             logger.warning("RigDirect: _satmode_enter failed — %s", exc)
         finally:
             self._last_dl_update_time = 0.0
-            self._last_ul_hz = None
-            self._last_ul_update_time = 0.0
+            if not ul_written:
+                self._last_ul_hz = None
+                self._last_ul_update_time = 0.0
 
     def _apply_ctcss_civ_via_send_raw(self, tone_hz: float) -> None:
         """Apply CTCSS via rig.send_raw() while Hamlib already holds the port.
