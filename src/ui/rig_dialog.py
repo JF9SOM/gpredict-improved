@@ -534,7 +534,7 @@ class _RigPanel(QWidget):
         self._direct_cat_baud_combo = QComboBox()
         for b in ["4800", "9600", "19200", "38400", "57600", "115200"]:
             self._direct_cat_baud_combo.addItem(b)
-        self._direct_cat_baud_combo.setCurrentText("38400")
+        self._direct_cat_baud_combo.setCurrentText("9600")
         self._cat_baud_test_btn = QPushButton(_("Test"))
         self._cat_baud_test_btn.setMaximumWidth(80)
         self._cat_baud_test_btn.clicked.connect(self._on_cat_baud_test)
@@ -741,7 +741,6 @@ class _RigPanel(QWidget):
             self._direct_cat_port_edit.setPlaceholderText(
                 _("e.g. /dev/ttyUSB0  (required — rigctld w cmd does not work for Icom CI-V)")
             )
-            self._direct_cat_baud_combo.setCurrentText("9600")
         else:  # "hamlib"
             self._ctcss_cat_on_edit.setText("")
             self._ctcss_cat_off_edit.setText("")
