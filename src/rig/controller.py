@@ -1680,6 +1680,10 @@ class HamlibNetController(RigController):
 
         Used when _direct_port is configured and rigctld's w command is unreliable
         for the connected rig (e.g. FT-991 CTCSS commands).
+        Acquires _cmd_lock so that in-flight F/I Doppler commands (which hold the
+        lock while awaiting rigctld's RPRT response) finish before we write to the
+        serial port directly.  Without this, the direct write races with rigctld's
+        recv() and the FTX-1F returns a garbled response, causing a 10-second timeout.
         Silently ignores all errors (best-effort).
         """
         if not self._direct_port:
@@ -1687,7 +1691,10 @@ class HamlibNetController(RigController):
         try:
             import serial  # pyserial — optional dependency
 
-            with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
+            with (
+                self._cmd_lock,
+                serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s,
+            ):
                 s.write(cmd.encode())
                 time.sleep(0.1)
         except Exception as exc:
