@@ -218,6 +218,34 @@ def _load_hamlib_models() -> list[tuple[int, str, str]]:
     return sorted(models, key=lambda x: (x[1].lower(), x[2].lower()))
 
 
+def _baud_test_type(model_id: int, all_models: list[tuple[int, str, str]]) -> str | None:
+    """Return the baud-rate test method for a given Hamlib model ID.
+
+    Returns:
+        ``"if"``  — send ``IF;`` (Yaesu / Kenwood / Elecraft CAT protocol)
+        ``"civ"`` — send CI-V frequency query (Icom)
+        ``None``  — no known test; hide the Test button
+    """
+    mfg = ""
+    for mid, m, _name in all_models:
+        if mid == model_id:
+            mfg = m.lower()
+            break
+
+    if mfg in ("yaesu",):
+        return "if"
+    if mfg in ("kenwood", "elecraft"):
+        return "if"
+    if mfg == "icom":
+        return "civ"
+    # Fallback: guess by model-ID range for rigs not in all_models
+    if 1000 <= model_id < 3000:
+        return "if"
+    if 3000 <= model_id < 4000:
+        return "civ"
+    return None
+
+
 _icom_civ_cache: dict[int, str] = {}
 
 
@@ -502,6 +530,7 @@ class _RigPanel(QWidget):
         self._cat_baud_test_btn.clicked.connect(self._on_cat_baud_test)
         cat_baud_layout.addWidget(self._direct_cat_baud_combo)
         cat_baud_layout.addWidget(self._cat_baud_test_btn)
+        self._direct_cat_baud_row = cat_baud_row
         ctcss_form.addRow(_("Direct CAT Baud:"), cat_baud_row)
         form.addWidget(ctcss_group)
         ctcss_group.setEnabled(False)  # disabled by default; enabled when NET mode is selected
@@ -562,22 +591,42 @@ class _RigPanel(QWidget):
                 self._direct_cat_port_edit.setEditText(current)
 
     def _on_baud_test(self) -> None:
-        """Test the Hamlib Direct baud rate by sending IF; and checking for a response."""
+        """Test the Hamlib Direct baud rate using the appropriate command for the rig."""
         port = self._port_combo.currentText()
         baud = int(self._baud_combo.currentText())
-        self._run_baud_test(port, baud, self._baud_test_btn)
+        model_id: int = self._model_combo.currentData() or 0
+        test_type = _baud_test_type(model_id, self._all_models) or "if"
+        # For CI-V, use address from the CI-V Address field (or 0x00 as broadcast fallback).
+        civ_addr = int(self._civ_addr_edit.text().strip() or "0", 16)
+        self._run_baud_test(port, baud, self._baud_test_btn, test_type, civ_addr)
 
     def _on_cat_baud_test(self) -> None:
-        """Test the Direct CAT baud rate (CTCSS/mode port) with IF; query."""
+        """Test the Direct CAT baud rate (CTCSS/mode port)."""
         port = self._direct_cat_port_edit.currentText()
         baud = int(self._direct_cat_baud_combo.currentText())
-        self._run_baud_test(port, baud, self._cat_baud_test_btn)
+        method = self._ctcss_method_combo.currentData()
+        if method == "icom_civ":
+            civ_addr = int(self._ctcss_civ_addr_edit.text().strip() or "0", 16)
+            self._run_baud_test(port, baud, self._cat_baud_test_btn, "civ", civ_addr)
+        else:
+            self._run_baud_test(port, baud, self._cat_baud_test_btn, "if", 0)
 
-    def _run_baud_test(self, port: str, baud: int, btn: QPushButton) -> None:
-        """Open *port* at *baud*, send IF; and wait 300 ms for any response.
+    def _run_baud_test(
+        self,
+        port: str,
+        baud: int,
+        btn: QPushButton,
+        test_type: str = "if",
+        civ_addr: int = 0,
+    ) -> None:
+        """Open *port* at *baud* and verify the rig responds.
+
+        test_type ``"if"``  — send ``IF;`` (Yaesu / Kenwood CAT)
+        test_type ``"civ"`` — send CI-V frequency read to *civ_addr*
+                              (0x00 = broadcast, responds regardless of address)
 
         Updates *btn* to green "✓ OK" on success or red "✗ Failed" on timeout.
-        A third intermediate state "Testing…" prevents double-clicks.
+        "Testing…" state while in-flight prevents double-clicks.
         """
         import threading
 
@@ -590,7 +639,7 @@ class _RigPanel(QWidget):
         btn.setEnabled(False)
         btn.setStyleSheet("")
 
-        # Use a helper QObject to safely marshal results back to the UI thread.
+        # Helper QObject marshals result back to the Qt main thread via Signal.
         from PySide6.QtCore import QObject
         from PySide6.QtCore import Signal as _Signal
 
@@ -615,11 +664,20 @@ class _RigPanel(QWidget):
             try:
                 import serial  # pyserial
 
-                with serial.Serial(port, baud, timeout=0.3) as ser:
+                with serial.Serial(port, baud, timeout=0.4) as ser:
                     ser.reset_input_buffer()
-                    ser.write(b"IF;")
-                    response = ser.read(50)
-                    ok = len(response) > 0
+                    if test_type == "civ":
+                        # CI-V read frequency command; civ_addr=0x00 acts as broadcast
+                        addr = civ_addr & 0xFF
+                        frame = bytes([0xFE, 0xFE, addr, 0xE0, 0x03, 0xFD])
+                        ser.write(frame)
+                        # Expect FE FE prefix in response
+                        response = ser.read(20)
+                        ok = response[:2] == b"\xfe\xfe"
+                    else:
+                        ser.write(b"IF;")
+                        response = ser.read(50)
+                        ok = len(response) > 0
             except Exception:
                 ok = False
             notifier.done.emit(ok)
@@ -638,7 +696,7 @@ class _RigPanel(QWidget):
         self._ctcss_form.setRowVisible(self._ctcss_cat_on_edit, not is_civ)
         self._ctcss_form.setRowVisible(self._ctcss_cat_off_edit, not is_civ)
         self._ctcss_form.setRowVisible(self._direct_cat_port_row, show_port)
-        self._ctcss_form.setRowVisible(self._direct_cat_baud_combo, show_port)
+        self._ctcss_form.setRowVisible(self._direct_cat_baud_row, show_port)
 
         if not is_civ:
             # Restore the standard placeholder for CAT-based methods
@@ -686,7 +744,7 @@ class _RigPanel(QWidget):
             self._ctcss_cat_off_edit.setEnabled(False)
 
     def _on_model_changed(self, _index: int) -> None:
-        """Enable CI-V Address field only for Icom rigs; show model default as placeholder."""
+        """Enable CI-V Address field only for Icom rigs; show/hide baud Test button."""
         model_id: int = self._model_combo.currentData() or 0
         is_icom = any(
             mid == model_id and mfg.lower() == "icom" for mid, mfg, _name in self._all_models
@@ -704,6 +762,14 @@ class _RigPanel(QWidget):
                 )
         else:
             self._civ_addr_edit.setPlaceholderText(_("N/A"))
+
+        # Show Test button only for rigs with a known CAT/CI-V test command.
+        test_type = _baud_test_type(model_id, self._all_models)
+        self._baud_test_btn.setVisible(test_type is not None)
+        # Reset button appearance when the model changes.
+        self._baud_test_btn.setText(_("Test"))
+        self._baud_test_btn.setStyleSheet("")
+        self._baud_test_btn.setEnabled(True)
 
     def _on_model_search(self, text: str) -> None:
         """Filter the Hamlib model list as the user types."""
