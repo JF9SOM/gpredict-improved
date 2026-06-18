@@ -1987,19 +1987,21 @@ class MainWindow(QMainWindow):
     def _apply_transponder_state_to_rig(self) -> None:
         """Apply mode + CTCSS to the rig when a transponder is selected.
 
-        Satmode rigs (IC-9100 / IC-9700 etc.):
-          Calls rig.apply_transponder_state() in ONE background thread so mode
-          and CTCSS never race each other.
+        All rig types use ONE background thread so mode and CTCSS are always
+        sent sequentially and never race each other.
 
+        Satmode rigs (IC-9100 / IC-9700 etc.):
           Direct mode: CI-V handles everything in a single serial session.
-            If Doppler was running, disconnects first (UI thread) so the
-            Hamlib handle is released before pyserial opens the same port.
+            Disconnects first (UI thread) so the Hamlib handle is released
+            before pyserial opens the same port.
           NET mode: send_mode_only (TCP) then _apply_ctcss_civ_direct
-            (pyserial) in the same thread.  Defers if not yet connected.
+            (pyserial) in the same thread.
 
         Non-satmode rigs (FTX-1F, FT-991A etc.):
-          Delegates to the existing separate _send_mode_only_to_rig() and
-          _send_ctcss_cat_to_rig() so their special CAT CTCSS logic is kept.
+          FTX-1F: disconnects first (V commands cannot interleave with
+            Doppler F/I), then send_mode_only → send_ctcss_cat sequentially.
+          FT-991A: keeps the main connection alive (independent socket);
+            send_mode_only → send_ctcss_cat sequentially.
         """
         from rig.controller import HamlibNetController
 
@@ -2007,13 +2009,6 @@ class MainWindow(QMainWindow):
         if rig is None or self._current_transmitter is None:
             return
 
-        # Non-satmode rigs: keep original two-step approach unchanged
-        if not rig.is_satmode:
-            self._send_mode_only_to_rig()
-            self._send_ctcss_cat_to_rig()
-            return
-
-        # Compute mode and CTCSS from current transponder
         mode = str(self._current_transmitter.get("mode") or "")
         if not mode:
             return
@@ -2022,23 +2017,40 @@ class MainWindow(QMainWindow):
         ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         ctcss_hz = float(self._ctcss_tone_hz or 0.0)
 
-        # Notify NET satmode rig of DL/UL frequencies (satmode vs same-band split)
-        # and current mode (for UL update throttle threshold).
+        # Notify NET rig of DL/UL frequencies (same-band detection) and
+        # current mode (UL update throttle threshold).
         if isinstance(rig, HamlibNetController):
             dl_hz = float(self._current_transmitter.get("downlink_low") or 0)
             ul_hz = float(self._current_transmitter.get("uplink_low") or dl_hz)
             rig.set_transponder_freqs(dl_hz, ul_hz)
             rig.set_current_modes(dl_mode, ul_mode)
 
-        # Both satmode rig types: disconnect if Doppler is running so the user
-        # must reconnect explicitly for the new satellite.
-        if rig.is_connected:
-            self._disconnect_rig()  # must run on UI thread
+        if rig.is_satmode:
+            # Satmode rigs: always disconnect so the user must reconnect
+            # explicitly for the new satellite.
+            if rig.is_connected:
+                self._disconnect_rig()  # must run on UI thread
 
-        def _do() -> None:
-            rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
+            def _do_satmode() -> None:
+                rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
-        threading.Thread(target=_do, daemon=True).start()
+            threading.Thread(target=_do_satmode, daemon=True).start()
+        else:
+            # Non-satmode rigs (FTX-1F, FT-991A):
+            # FTX-1F: disconnect first so V commands in send_mode_only cannot
+            #   race with the Doppler F/I cycle on the main socket.
+            # FT-991A: independent socket; keep main connection alive.
+            if rig.is_connected and self._ctcss_method != "ft991":
+                self._disconnect_rig()  # must run on UI thread
+
+            cat_on = self._ctcss_cat_on
+            cat_off = self._ctcss_cat_off
+
+            def _do_nonsatmode() -> None:
+                rig.send_mode_only(dl_mode, ul_mode)
+                rig.send_ctcss_cat(ctcss_hz, cat_on, cat_off)
+
+            threading.Thread(target=_do_nonsatmode, daemon=True).start()
 
     def _send_mode_only_to_rig(self) -> None:
         """Set mode on both VFOs via an independent connection on transponder change.
