@@ -1846,16 +1846,7 @@ class HamlibNetController(RigController):
         parts = [p.strip() for p in template.split(";") if p.strip()]
         if not parts:
             return
-        logger.info(
-            "RigNet.send_ctcss_cat: tone_hz=%s cmd=%r direct=%r",
-            tone_hz,
-            template,
-            bool(self._direct_port),
-        )
-        if self._direct_port:
-            for part in parts:
-                self._send_cat_direct(f"{part};")
-            return
+        logger.info("RigNet.send_ctcss_cat: tone_hz=%s cmd=%r", tone_hz, template)
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self._TIMEOUT)
