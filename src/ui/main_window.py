@@ -319,14 +319,6 @@ class MainWindow(QMainWindow):
         # Override for CTCSS label: set when a button is pressed, reset on transponder change.
         # None -> show the transmitter's ctcss_tone; float -> persist the last-sent tone.
         self._current_ctcss_tone: float | None = None
-        # Debounce timer for transponder-state apply (mode/CTCSS to rig).
-        # Rapid transponder switches fire multiple apply_transponder_state() calls
-        # in racing background threads; delaying 1 s lets the UI settle so only the
-        # last selection actually reaches the rig.
-        self._xpdr_debounce_timer: QTimer = QTimer(self)
-        self._xpdr_debounce_timer.setSingleShot(True)
-        self._xpdr_debounce_timer.setInterval(1000)
-        self._xpdr_debounce_timer.timeout.connect(self._apply_transponder_state_to_rig)
         # Resolved CTCSS tone for the current transmitter (SatNOGS or CTCSS_DB fallback).
         self._ctcss_tone_hz: float | None = None
         # Activation tone for the current satellite (from CTCSS_DB; None if not applicable).
@@ -1974,9 +1966,7 @@ class MainWindow(QMainWindow):
             self._ctcss_activation_hz = None
             self._radio_control.update_ctcss(None, None)
             self._radio_control.update_doppler(None, None, None, None, None, None)
-        # Debounce: restart the 1-second timer so rapid transponder clicks only
-        # fire one apply_transponder_state() call — the one for the final selection.
-        self._xpdr_debounce_timer.start()
+        self._apply_transponder_state_to_rig()
         # Auto-select SDR demod mode from transponder; reset passband tune offset
         if self._current_transmitter:
             satnogs_mode = self._current_transmitter.get("mode") or ""

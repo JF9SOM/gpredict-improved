@@ -537,12 +537,6 @@ class HamlibDirectController(RigController):
             self._last_dl_update_time = 0.0
             self._last_ul_hz = None
             self._last_ul_update_time = 0.0
-            # Reset mode cache so the UL throttle uses correct thresholds after
-            # reconnect — stale mode from a previous transponder selection would
-            # otherwise keep the non-FM (20 Hz / 15 s) threshold active even when
-            # the user has an FM satellite selected.
-            self._current_dl_mode = ""
-            self._current_ul_mode = ""
             self._init_split()
 
             with self._lock:
@@ -1321,12 +1315,6 @@ class HamlibDirectController(RigController):
             self._last_dl_update_time = 0.0
             self._last_ul_hz = None
             self._last_ul_update_time = 0.0
-            # Invalidate mode cache so the next apply_transponder_state result
-            # (which runs in a background thread and may arrive slightly after
-            # satmode entry) is guaranteed to win — prevents stale USB/LSB mode
-            # from keeping the 20 Hz / 15 s UL throttle active on FM satellites.
-            self._current_dl_mode = ""
-            self._current_ul_mode = ""
 
     def _apply_ctcss_civ_via_send_raw(self, tone_hz: float) -> None:
         """Apply CTCSS via rig.send_raw() while Hamlib already holds the port.
