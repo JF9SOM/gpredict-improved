@@ -2043,14 +2043,19 @@ class MainWindow(QMainWindow):
             # FT-991A: independent socket; keep main connection alive.
             # Other non-satmode Direct rigs: disconnect first so V commands in
             #   send_mode_only cannot race with the Doppler F/I cycle.
-            from rig.controller import _FTX1_MODEL_IDS, HamlibDirectController
+            from rig.controller import (
+                _FT991_DIRECT_MODEL_IDS,
+                _FTX1_MODEL_IDS,
+                HamlibDirectController,
+            )
 
-            if isinstance(rig, HamlibDirectController) and rig._model_id in _FTX1_MODEL_IDS:
-                # FTX-1F Direct: raw CAT, no disconnect required
-                def _do_ftx1_direct() -> None:
+            _raw_cat_ids = _FTX1_MODEL_IDS | _FT991_DIRECT_MODEL_IDS
+            if isinstance(rig, HamlibDirectController) and rig._model_id in _raw_cat_ids:
+                # FTX-1F / FT-991 Direct: raw CAT path, no disconnect required
+                def _do_direct_cat() -> None:
                     rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
-                threading.Thread(target=_do_ftx1_direct, daemon=True).start()
+                threading.Thread(target=_do_direct_cat, daemon=True).start()
             else:
                 if rig.is_connected and self._ctcss_method != "ft991":
                     self._disconnect_rig()  # must run on UI thread

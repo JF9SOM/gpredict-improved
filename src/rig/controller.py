@@ -181,6 +181,9 @@ _SATMODE_RIG_IDS: frozenset[int] = frozenset(
 # ---------------------------------------------------------------------------
 _FTX1_MODEL_IDS: frozenset[int] = frozenset({1051})  # FTX-1F (Hamlib model 1051)
 
+# FT-991 (1035) and FT-991A (1036 in rig_dialog custom list) Direct mode raw CAT path.
+_FT991_DIRECT_MODEL_IDS: frozenset[int] = frozenset({1035, 1036})
+
 # FTX-1F CAT mode codes: MD P1 P2; where P1=0=MAIN, P1=1=SUB
 _FTX1_MODE_CODES: dict[str, str] = {
     "FM": "4",
@@ -1131,6 +1134,64 @@ class HamlibDirectController(RigController):
             except OSError as exc:
                 logger.error("RigDirect.ftx1 write(%r): %s", raw, exc)
 
+    def _apply_mode_and_ctcss_cat_ft991(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
+        """Set mode and CTCSS on FT-991/FT-991A via raw CAT commands (no Hamlib calls).
+
+        FT-991/FT-991A MD command only targets Main VFO (P1=0 fixed).
+        VFO-B (UL/TX) mode requires SV swap:
+          SV;            — swap VFO-B to Main
+          MD0{ul_code};  — set UL mode on (now Main = original VFO-B)
+          SV;            — swap back, VFO-A is Main again
+          MD0{dl_code};  — set DL mode on Main (VFO-A)
+
+        CTCSS (TX-global, no SV swap needed):
+          CN00{tone:03d}; — CTCSS tone index (P1=0 fixed, P2=0=CTCSS)
+          CT02;           — CTCSS ENC ON
+          CT00;           — CTCSS OFF (when ctcss_hz <= 0)
+
+        Uses pyserial (not os.open) so that termios / baud rate are configured
+        correctly.  Acquires _port_lock to prevent race with rig.open() in
+        connect().
+        """
+        dl_code = _FT991_MODE_MAP.get(dl_mode, "4")
+        ul_code = _FT991_MODE_MAP.get(ul_mode, "4")
+
+        commands: list[bytes] = [
+            b"SV;",
+            f"MD0{ul_code};".encode(),
+            b"SV;",
+            f"MD0{dl_code};".encode(),
+        ]
+
+        if ctcss_hz > 0:
+            tone_number = CTCSS_TABLE.get(ctcss_hz)
+            if tone_number is not None:
+                commands.append(f"CN00{tone_number:03d};".encode())
+                commands.append(b"CT02;")
+            else:
+                logger.warning(
+                    "RigDirect.ft991: %.1f Hz not in CTCSS_TABLE, skipping CTCSS", ctcss_hz
+                )
+        else:
+            commands.append(b"CT00;")
+
+        logger.info(
+            "RigDirect: FT-991 CAT mode+CTCSS dl=%s ul=%s ctcss=%.1f port=%s",
+            dl_mode,
+            ul_mode,
+            ctcss_hz,
+            self._port,
+        )
+        try:
+            import serial  # pyserial — optional dependency
+
+            with self._port_lock, serial.Serial(self._port, self._baud, timeout=2) as ser:
+                for raw in commands:
+                    ser.write(raw)
+                    time.sleep(0.05)  # brief inter-command gap for FT-991 processing
+        except Exception as exc:
+            logger.error("RigDirect.ft991 CAT: %s", exc)
+
     def apply_transponder_state(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
         """Apply mode and CTCSS atomically for Direct-mode rigs.
 
@@ -1141,6 +1202,9 @@ class HamlibDirectController(RigController):
         FTX-1F (model 1051):
           Raw CAT commands (MD / CN / CT) via os.open() — no VFO switching,
           no Hamlib call, no 39-second hang.
+
+        FT-991 / FT-991A (models 1035 / 1036):
+          Raw CAT via pyserial — SV swap for UL mode, CN/CT for CTCSS (no swap).
 
         Non-satmode rigs (other):
           Falls back to the base-class default (send_mode_only via Hamlib,
@@ -1159,6 +1223,8 @@ class HamlibDirectController(RigController):
             self._apply_ctcss_civ(ctcss_hz)
         elif self._model_id in _FTX1_MODEL_IDS:
             self._apply_mode_and_ctcss_cat_ftx1(dl_mode, ul_mode, ctcss_hz)
+        elif self._model_id in _FT991_DIRECT_MODEL_IDS:
+            self._apply_mode_and_ctcss_cat_ft991(dl_mode, ul_mode, ctcss_hz)
         else:
             super().apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
