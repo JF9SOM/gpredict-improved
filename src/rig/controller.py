@@ -1185,7 +1185,7 @@ class HamlibDirectController(RigController):
         try:
             import serial  # pyserial — optional dependency
 
-            with self._port_lock, serial.Serial(self._port, self._baud, timeout=2) as ser:
+            with self._port_lock, serial.Serial(self._port, self._baud_rate, timeout=2) as ser:
                 for raw in commands:
                     ser.write(raw)
                     time.sleep(0.05)  # brief inter-command gap for FT-991 processing
