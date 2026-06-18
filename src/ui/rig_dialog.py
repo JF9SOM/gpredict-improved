@@ -375,11 +375,19 @@ class _RigPanel(QWidget):
         port_layout.addWidget(self._scan_btn)
         direct_form.addRow(_("COM Port:"), port_row)
 
+        baud_row = QWidget()
+        baud_layout = QHBoxLayout(baud_row)
+        baud_layout.setContentsMargins(0, 0, 0, 0)
         self._baud_combo = QComboBox()
         for b in ["4800", "9600", "19200", "38400", "57600", "115200"]:
             self._baud_combo.addItem(b)
         self._baud_combo.setCurrentText("9600")
-        direct_form.addRow(_("Baud Rate:"), self._baud_combo)
+        self._baud_test_btn = QPushButton(_("Test"))
+        self._baud_test_btn.setMaximumWidth(80)
+        self._baud_test_btn.clicked.connect(self._on_baud_test)
+        baud_layout.addWidget(self._baud_combo)
+        baud_layout.addWidget(self._baud_test_btn)
+        direct_form.addRow(_("Baud Rate:"), baud_row)
 
         self._model_search = QLineEdit()
         self._model_search.setPlaceholderText(_("Search by manufacturer or model name..."))
@@ -482,11 +490,19 @@ class _RigPanel(QWidget):
         cat_port_layout.addWidget(self._direct_cat_scan_btn)
         self._direct_cat_port_row = cat_port_row
         ctcss_form.addRow(_("Direct CAT Port:"), cat_port_row)
+        cat_baud_row = QWidget()
+        cat_baud_layout = QHBoxLayout(cat_baud_row)
+        cat_baud_layout.setContentsMargins(0, 0, 0, 0)
         self._direct_cat_baud_combo = QComboBox()
         for b in ["4800", "9600", "19200", "38400", "57600", "115200"]:
             self._direct_cat_baud_combo.addItem(b)
         self._direct_cat_baud_combo.setCurrentText("38400")
-        ctcss_form.addRow(_("Direct CAT Baud:"), self._direct_cat_baud_combo)
+        self._cat_baud_test_btn = QPushButton(_("Test"))
+        self._cat_baud_test_btn.setMaximumWidth(80)
+        self._cat_baud_test_btn.clicked.connect(self._on_cat_baud_test)
+        cat_baud_layout.addWidget(self._direct_cat_baud_combo)
+        cat_baud_layout.addWidget(self._cat_baud_test_btn)
+        ctcss_form.addRow(_("Direct CAT Baud:"), cat_baud_row)
         form.addWidget(ctcss_group)
         ctcss_group.setEnabled(False)  # disabled by default; enabled when NET mode is selected
 
@@ -544,6 +560,71 @@ class _RigPanel(QWidget):
                 self._direct_cat_port_edit.setCurrentIndex(idx)
             else:
                 self._direct_cat_port_edit.setEditText(current)
+
+    def _on_baud_test(self) -> None:
+        """Test the Hamlib Direct baud rate by sending IF; and checking for a response."""
+        port = self._port_combo.currentText()
+        baud = int(self._baud_combo.currentText())
+        self._run_baud_test(port, baud, self._baud_test_btn)
+
+    def _on_cat_baud_test(self) -> None:
+        """Test the Direct CAT baud rate (CTCSS/mode port) with IF; query."""
+        port = self._direct_cat_port_edit.currentText()
+        baud = int(self._direct_cat_baud_combo.currentText())
+        self._run_baud_test(port, baud, self._cat_baud_test_btn)
+
+    def _run_baud_test(self, port: str, baud: int, btn: QPushButton) -> None:
+        """Open *port* at *baud*, send IF; and wait 300 ms for any response.
+
+        Updates *btn* to green "✓ OK" on success or red "✗ Failed" on timeout.
+        A third intermediate state "Testing…" prevents double-clicks.
+        """
+        import threading
+
+        if not port:
+            btn.setText(_("No port"))
+            btn.setStyleSheet("color: orange;")
+            return
+
+        btn.setText(_("Testing…"))
+        btn.setEnabled(False)
+        btn.setStyleSheet("")
+
+        # Use a helper QObject to safely marshal results back to the UI thread.
+        from PySide6.QtCore import QObject
+        from PySide6.QtCore import Signal as _Signal
+
+        class _Notifier(QObject):
+            done = _Signal(bool)
+
+        notifier = _Notifier()
+
+        def _apply(ok: bool) -> None:
+            btn.setEnabled(True)
+            if ok:
+                btn.setText("✓ OK")
+                btn.setStyleSheet("background-color: #27ae60; color: white; font-weight: bold;")
+            else:
+                btn.setText("✗ Failed")
+                btn.setStyleSheet("background-color: #c0392b; color: white; font-weight: bold;")
+
+        notifier.done.connect(_apply)
+
+        def _test() -> None:
+            ok = False
+            try:
+                import serial  # pyserial
+
+                with serial.Serial(port, baud, timeout=0.3) as ser:
+                    ser.reset_input_buffer()
+                    ser.write(b"IF;")
+                    response = ser.read(50)
+                    ok = len(response) > 0
+            except Exception:
+                ok = False
+            notifier.done.emit(ok)
+
+        threading.Thread(target=_test, daemon=True).start()
 
     def _on_ctcss_method_changed(self) -> None:
         """Show/hide CAT/CI-V fields based on the selected CTCSS method."""
