@@ -1469,12 +1469,18 @@ class HamlibNetController(RigController):
     def _init_vfo(self) -> None:
         """Enable split (called once at connect time).
 
-        Cross-band (default): S 1 Main → satmode (Main=RX, Sub=TX).
-        Same-band (V/V or U/U): S 1 VFOB → normal split (VFOA=RX, VFOB=TX).
+        Satmode rigs (IC-9100 etc.) + same-band: S 1 VFOB → normal split
+          (VFOA=RX, VFOB=TX).  Satmode rigs require this instead of S 1 Main
+          because S 1 Main activates hardware satmode, which requires different
+          bands on Main and Sub.
+        All other cases: S 1 Main.  Non-satmode rigs (FTX-1F, FT-991A etc.)
+          always use S 1 Main — their rigctld backend forces Sub=TX regardless
+          of the VFO argument, so S 1 VFOB would produce undefined behaviour.
         Sent through _cmd() so _cmd_lock serialises it and prevents buffer
         residue from an independent recv loop on the raw socket.
         """
-        if self._is_same_band:
+        is_satmode_rig = self._satmode or self._ctcss_method == "icom_civ"
+        if is_satmode_rig and self._is_same_band:
             resp = self._cmd("S 1 VFOB")
             logger.info("RigNet: same-band split init (S 1 VFOB)")
         else:
