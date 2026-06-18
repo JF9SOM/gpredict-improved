@@ -694,19 +694,6 @@ class HamlibDirectController(RigController):
         low = val % 100
         return bytes([(high // 10) << 4 | (high % 10), (low // 10) << 4 | (low % 10)])
 
-    @staticmethod
-    def _civ_bcd_freq(freq_hz: float) -> bytes:
-        """Encode frequency in Hz as 5-byte little-endian BCD for IC-9100 CI-V command 00.
-
-        IC-9100 uses packed BCD, little-endian (LSB pair first).
-        Example: 145,934,428 Hz -> b'\\x28\\x44\\x93\\x45\\x01'
-        """
-        s = f"{int(round(freq_hz)):010d}"
-        result = bytearray(5)
-        for i in range(5):
-            result[i] = (int(s[8 - i * 2]) << 4) | int(s[9 - i * 2])
-        return bytes(result)
-
     def _apply_ctcss_civ(self, tone_hz: float) -> bool:
         """Send CI-V commands to set CTCSS on IC-9100 Sub band via pyserial.
 
@@ -877,9 +864,9 @@ class HamlibDirectController(RigController):
         try:
             if self._satmode:
                 # IC-9100/9700 satmode: satmode routes Main=RX(DL) and Sub=TX(UL).
-                # UL writes use _set_sub_freq_raw() (CI-V send_raw) instead of
-                # set_freq(RIG_VFO_SUB_A): ic9700_set_vfo rejects RIG_VFO_SUB_A when
-                # Hamlib cache.satmode=true, returning "Invalid VFO SubA in satellite mode".
+                # RIG_VFO_SUB_A (0x00200000) bypasses vfo_fixup so ic9700_set_vfo
+                # sends CI-V 07 d1 (Sub Band select) rather than 07 01 (VFO-B of
+                # current band) — the latter was the root cause of Sub stuck at 7 MHz.
                 #
                 # IC-9100 hardware constraint: satmode ALWAYS assigns Main and Sub to
                 # DIFFERENT bands.  Same-band satmode (V/V FM, ISS APRS etc.) is not
@@ -986,7 +973,8 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            self._set_sub_freq_raw(vfob_hz)
+                            logger.info("RigDirect satmode UL: set_freq(SUB_A, %d)", int(vfob_hz))
+                            self._rig.set_freq(int(_H.RIG_VFO_SUB_A), int(vfob_hz))
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
 
@@ -1295,36 +1283,6 @@ class HamlibDirectController(RigController):
         )
 
     # -- Internal utilities --
-
-    def _set_sub_freq_raw(self, ul_hz: float) -> None:
-        """Write Sub-band frequency via CI-V send_raw, bypassing Hamlib VFO routing.
-
-        ic9700_set_vfo explicitly rejects RIG_VFO_SUB_A when Hamlib cache.satmode
-        is true (set by _init_split → set_func(SATMODE, 1)), returning -RIG_EINVAL
-        "Invalid VFO SubA in satellite mode".  send_raw bypasses this check and
-        delivers CI-V 07 D1 (Sub select) + 00 <bcd> (set freq) directly.
-        """
-        if self._rig is None:
-            return
-        civ = self._civ_addr_int()
-        ctrl = 0xE0
-        freq_bcd = self._civ_bcd_freq(ul_hz)
-        try:
-            # Send all three frames in one send_raw call to avoid interleaving
-            # with the next Hamlib DL write.  At 9600 baud, 26 bytes ≈ 27 ms.
-            frames = (
-                bytes([0xFE, 0xFE, civ, ctrl, 0x07, 0xD1, 0xFD])  # Sub select
-                + bytes([0xFE, 0xFE, civ, ctrl, 0x00, *freq_bcd, 0xFD])  # Set freq
-                + bytes([0xFE, 0xFE, civ, ctrl, 0x07, 0xD0, 0xFD])  # Main select
-            )
-            self._rig.send_raw(frames)
-            logger.info(
-                "RigDirect satmode UL: send_raw CI-V Sub freq %d Hz (civ=0x%02X)",
-                int(ul_hz),
-                civ,
-            )
-        except Exception as exc:
-            logger.warning("RigDirect._set_sub_freq_raw: %s", exc)
 
     def _satmode_enter(self, dl_hz: float) -> None:
         """Enable satmode with Main on the band of *dl_hz*.
