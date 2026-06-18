@@ -973,10 +973,8 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            logger.info(
-                                "RigDirect satmode UL: set_split_freq(MAIN, %d)", int(vfob_hz)
-                            )
-                            self._rig.set_split_freq(main_vfo, int(vfob_hz))
+                            logger.info("RigDirect satmode UL: set_freq(SUB_A, %d)", int(vfob_hz))
+                            self._rig.set_freq(int(_H.RIG_VFO_SUB_A), int(vfob_hz))
                             self._last_ul_hz = vfob_hz
                             self._last_ul_update_time = now
 
