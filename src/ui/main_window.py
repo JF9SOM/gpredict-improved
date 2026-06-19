@@ -397,6 +397,7 @@ class MainWindow(QMainWindow):
             logger.warning("Community transmitter load failed at startup: %s", exc)
         self._load_satellites()
         self._load_rig_settings()
+        self._start_satmode_warmup()
         self._load_rotator_settings()
         self._reload_autotrack_lists()
         self._apply_world_map()
@@ -2765,6 +2766,20 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to load Rig 2 settings: %s", exc)
 
         self._update_rig_label()
+
+    def _start_satmode_warmup(self) -> None:
+        """Run satmode_warmup() in the background for any Direct-mode satmode rig.
+
+        Called once at startup, right after _load_rig_settings().  The warmup
+        sends SATMODE ON to the IC-9100/IC-9700 so the dual-band hardware is
+        fully initialized before the user presses Connect.
+        """
+        for rig in (self._rig_controller, self._rig2_controller):
+            if isinstance(rig, HamlibDirectController) and rig.is_satmode:
+                threading.Thread(
+                    target=rig.satmode_warmup, daemon=True, name="satmode-warmup"
+                ).start()
+                logger.info("Startup: satmode warmup thread started for %s", rig)
 
     def _build_rig_controller(self, settings: dict[str, Any]) -> RigController:
         """Instantiate a RigController from a settings dictionary.

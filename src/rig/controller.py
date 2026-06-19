@@ -1437,6 +1437,11 @@ class HamlibDirectController(RigController):
                 if _H is not None and hasattr(_H, "RIG_FUNC_SATMODE"):
                     vfo_curr = int(_H.RIG_VFO_CURR)
                     self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
+                    # IC-9100/IC-9700 need ~1 s after SATMODE ON for the dual-band
+                    # routing hardware to fully initialize.  Without this delay the
+                    # immediately-following _satmode_enter (SATMODE OFF → set_freq
+                    # SUB_A → SATMODE ON) silently fails to write the UL frequency.
+                    time.sleep(1.0)
                     self._satmode_active = True
                     logger.info("RigDirect: satmode ON via set_func(RIG_FUNC_SATMODE)")
             else:
@@ -1446,6 +1451,44 @@ class HamlibDirectController(RigController):
                 logger.info("RigDirect: split enabled (RX=VFOA, TX=VFOB)")
         except Exception as exc:
             logger.warning("RigDirect: _init_split failed — %s", exc)
+
+    def satmode_warmup(self) -> None:
+        """Pre-initialize satmode hardware before the user presses Connect.
+
+        Opens a temporary Hamlib connection, sends SATMODE ON, waits 1.5 s for
+        the IC-9100/IC-9700 dual-band routing hardware to initialize, then
+        closes immediately.  Called from a background thread at app startup so
+        the delay is invisible to the user.
+
+        If the port is busy (another process holds it) the method silently
+        returns — the 1-second sleep inside _init_split acts as fallback.
+        """
+        if not self._satmode:
+            return
+        _H = self._hamlib
+        if _H is None or not hasattr(_H, "RIG_FUNC_SATMODE"):
+            return
+        tmp_rig = None
+        try:
+            tmp_rig = _H.Rig(self._model_id)
+            tmp_rig.set_conf("rig_pathname", self._port)
+            tmp_rig.set_conf("serial_speed", str(self._baud_rate))
+            if self._civ_addr:
+                addr = self._civ_addr.strip()
+                if not addr.startswith("0x") and not addr.startswith("0X"):
+                    addr = f"0x{int(addr, 16):02X}"
+                tmp_rig.set_conf("civaddr", addr)
+            tmp_rig.open()
+            tmp_rig.set_func(int(_H.RIG_VFO_CURR), _H.RIG_FUNC_SATMODE, 1)
+            logger.info("RigDirect: satmode warmup — SATMODE ON sent, waiting 1.5 s")
+            time.sleep(1.5)
+            tmp_rig.close()
+            logger.info("RigDirect: satmode warmup complete")
+        except Exception as exc:
+            logger.debug("RigDirect: satmode warmup skipped — %s", exc)
+            with contextlib.suppress(Exception):
+                if tmp_rig is not None:
+                    tmp_rig.close()
 
     def _vfo_str_to_const(self, vfo: str) -> int:
         """Convert a VFO string to the corresponding Hamlib constant (or 0 in mock mode)."""
