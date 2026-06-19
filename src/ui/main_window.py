@@ -2880,7 +2880,9 @@ class MainWindow(QMainWindow):
             def _satmode_civ_reconnect() -> None:
                 # Port is now free; set_ctcss_tone() will call _apply_ctcss_civ().
                 try:
-                    rig.set_ctcss_tone(tone_hz)
+                    ok = rig.set_ctcss_tone(tone_hz)
+                    if not ok:
+                        self._rig_error.emit("CTCSS Error: no ACK from rig after 3 attempts")
                 except Exception as exc:
                     self._rig_error.emit(f"set_ctcss_tone (satmode CI-V): {exc}")
                 # Reconnect Doppler tracking.

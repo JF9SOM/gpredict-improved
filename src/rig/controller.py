@@ -1241,7 +1241,8 @@ class HamlibDirectController(RigController):
                 ul_mode,
                 ctcss_hz,
             )
-            self._apply_ctcss_civ(ctcss_hz)
+            if not self._apply_ctcss_civ(ctcss_hz):
+                raise RigControlError("CTCSS Error: no ACK from rig after 3 attempts")
         elif self._model_id in _FTX1_MODEL_IDS:
             self._apply_mode_and_ctcss_cat_ftx1(dl_mode, ul_mode, ctcss_hz)
         elif self._model_id in _FT991_DIRECT_MODEL_IDS:
