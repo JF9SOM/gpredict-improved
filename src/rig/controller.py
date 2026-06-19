@@ -989,6 +989,9 @@ class HamlibDirectController(RigController):
                             )
                             try:
                                 self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
+                                time.sleep(
+                                    0.2
+                                )  # Allow rig to fully process satmode OFF before next CI-V
                                 self._rig.set_freq(sub_vfo, int(vfob_hz))
                                 self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
                                 self._last_ul_hz = vfob_hz
@@ -1331,6 +1334,7 @@ class HamlibDirectController(RigController):
         ul_written = False
         try:
             self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
+            time.sleep(0.2)  # Allow rig to fully process satmode OFF before next CI-V
             self._rig.set_freq(vfo_curr, int(dl_hz))
             if ul_hz is not None:
                 self._rig.set_freq(sub_vfo, int(ul_hz))  # SUB_A allowed: cache.satmode=False
