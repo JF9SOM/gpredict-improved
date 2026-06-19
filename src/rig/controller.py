@@ -755,34 +755,22 @@ class HamlibDirectController(RigController):
                     self._current_dl_mode,
                     self._current_ul_mode,
                 )
+
+                def send(f: bytes) -> None:
+                    ser.write(f)
+                    ser.flush()
+                    ser.read_until(b"\xfd")  # Wait for CI-V ACK (ends with 0xFD)
+
                 try:
-                    ser.write(frame(0x16, 0x59, 0x00))  # SATMODE OFF — reset state
-                    ser.flush()
-                    ser.read(32)
-                    ser.write(frame(0x16, 0x59, 0x01))  # SATMODE ON — re-enter clean
-                    ser.flush()
-                    ser.read(32)
-                    ser.write(frame(0x07, 0xD1))
-                    ser.flush()
-                    ser.read(32)  # Select Sub
-                    ser.write(frame(0x1B, 0x00, *tone_bcd))
-                    ser.flush()
-                    ser.read(32)  # Tone freq
-                    ser.write(frame(0x16, 0x42, tone_byte))
-                    ser.flush()
-                    ser.read(32)  # TONE ON/OFF on Sub
-                    ser.write(frame(0x06, ul_civ))
-                    ser.flush()
-                    ser.read(32)  # UL mode on Sub
-                    ser.write(frame(0x07, 0xD0))
-                    ser.flush()
-                    ser.read(32)  # Select Main
-                    ser.write(frame(0x16, 0x42, 0x00))
-                    ser.flush()
-                    ser.read(32)  # TONE OFF on Main (prevents bleed-through)
-                    ser.write(frame(0x06, dl_civ))
-                    ser.flush()
-                    ser.read(32)  # DL mode on Main
+                    send(frame(0x16, 0x59, 0x00))  # SATMODE OFF — reset state
+                    send(frame(0x16, 0x59, 0x01))  # SATMODE ON — re-enter clean
+                    send(frame(0x07, 0xD1))  # Select Sub
+                    send(frame(0x1B, 0x00, *tone_bcd))  # Tone freq
+                    send(frame(0x16, 0x42, tone_byte))  # TONE ON/OFF on Sub
+                    send(frame(0x06, ul_civ))  # UL mode on Sub
+                    send(frame(0x07, 0xD0))  # Select Main
+                    send(frame(0x16, 0x42, 0x00))  # TONE OFF on Main (prevents bleed-through)
+                    send(frame(0x06, dl_civ))  # DL mode on Main
                     logger.info("RigDirect: CI-V CTCSS applied OK")
                 finally:
                     ser.close()
