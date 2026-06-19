@@ -50,6 +50,7 @@ dependencies = [
     "shapely>=2.0",             # 世界地図 Natural Earth ポリゴン解析
     "beautifulsoup4>=4.12",     # AMSAT運用状況スクレイピング
     "certifi>=2024.2",          # CA bundle used by httpx in PyInstaller bundles
+    "pyserial>=3.5",            # CI-V serial communication for Icom satmode rigs
 ]
 
 [project.optional-dependencies]
