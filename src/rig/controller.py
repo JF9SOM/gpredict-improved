@@ -757,9 +757,18 @@ class HamlibDirectController(RigController):
                 )
 
                 def send(f: bytes) -> None:
-                    ser.write(f)
-                    ser.flush()
-                    ser.read_until(b"\xfd")  # Wait for CI-V ACK (ends with 0xFD)
+                    for attempt in range(3):
+                        ser.write(f)
+                        ser.flush()
+                        resp = ser.read_until(b"\xfd")
+                        if resp.endswith(b"\xfd"):
+                            return
+                        logger.warning(
+                            "RigDirect: CI-V no ACK (attempt %d/3): %s",
+                            attempt + 1,
+                            f.hex(),
+                        )
+                    raise RigControlError(f"CI-V no ACK after 3 attempts: {f.hex()}")
 
                 try:
                     send(frame(0x16, 0x59, 0x00))  # SATMODE OFF — reset state
