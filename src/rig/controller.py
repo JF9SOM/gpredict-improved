@@ -989,10 +989,6 @@ class HamlibDirectController(RigController):
                                 time.sleep(
                                     0.2
                                 )  # Allow rig to fully process satmode OFF before next CI-V
-                                # Force cache.satmode=0: DL writes can trigger VFO-change
-                                # cache expiry which resets cache.satmode to True even
-                                # after set_func(SATMODE, 0).
-                                self._rig.state.cache.satmode = 0
                                 self._rig.set_freq(sub_vfo, int(vfob_hz))
                                 self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
                                 self._last_ul_hz = vfob_hz
@@ -1339,11 +1335,7 @@ class HamlibDirectController(RigController):
             time.sleep(0.2)  # Allow rig to fully process satmode OFF before next CI-V
             self._rig.set_freq(vfo_curr, int(dl_hz))
             if ul_hz is not None:
-                # set_freq(CURR) may internally reset cache.satmode to True via
-                # a VFO-change cache expiry.  Force it back to 0 so that
-                # ic9700_set_vfo does not reject RIG_VFO_SUB_A.
-                self._rig.state.cache.satmode = 0
-                self._rig.set_freq(sub_vfo, int(ul_hz))
+                self._rig.set_freq(sub_vfo, int(ul_hz))  # SUB_A allowed: cache.satmode=False
                 ul_written = True
                 logger.info(
                     "RigDirect: satmode UL init set_freq(SUB_A, %d) while satmode=OFF", int(ul_hz)
