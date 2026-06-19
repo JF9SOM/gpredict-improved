@@ -5,6 +5,17 @@
 
 ---
 
+## 最重要ルール：実装前に必ずユーザーの了承を得ること
+
+**いかなるコード変更・実装も、ユーザーが明示的に承認してから行うこと。**
+
+- 「どうすればいいか」「何を直せばいいか」がわかっても、勝手に実装しない
+- 実装方針を提案し、ユーザーが「OK」「やってください」等の承認を与えてから実装する
+- ユーザーが依頼した内容のみを実装する。関連して気になる箇所があっても、了承なく追加・修正しない
+- バグを発見しても、依頼されていない修正は勝手に行わない
+
+---
+
 ## プロジェクト概要
 
 **名称**: GPredict-Improved  
@@ -1247,6 +1258,24 @@ segfault in the IC-9100 backend. Even splitting into separate per-frame calls do
   `_set_vfo_frequencies_locked()`: `SATMODE OFF → set_freq(SUB_A, ul_hz) → SATMODE ON`
 - `_last_ul_hz` / `_last_ul_update_time` are updated immediately after a successful write so the
   next Doppler tick does not immediately re-trigger the write.
+
+#### CI-V タイミング問題（2026-06-19 確認・要継続監視）
+
+**問題**: `set_func(SATMODE, 0)`（SATMODE OFF）を送った直後に `set_freq(SUB_A)` を送ると、
+リグがSATMODE OFFを完全に処理する前に次のCI-Vコマンドが届き、**リグが無応答のままコマンドを無視する**。
+Hamlibはエラーを返さない（送信成功 ≠ リグでの処理成功）ため、ログにエラーが出ないまま
+UL周波数が書き込まれない症状になる。IC-9700・IC-9100・macOS・Linuxいずれでも発生しうる。
+
+**現在の対処**（`src/rig/controller.py`）:
+- `_satmode_enter` および周期的ULトグルの `set_func(SATMODE, 0)` 直後に `time.sleep(0.2)` を挿入
+- `_apply_ctcss_civ`（pyserial）は `read(32)` → `read_until(b'\xfd')` に変更し、
+  各CI-Vフレームのリグ応答（ACK）を確認してから次を送る。ACK未返答時は最大3回リトライ。
+
+**注意事項**:
+- 200ms の遅延値はIC-9100での実測に基づく暫定値。IC-9700など別機種では異なる可能性がある
+- 症状（UL書き込まれない・CTCSS不安定）が再発した場合は遅延値を増やすことを検討する
+- pyserial CI-Vのタイムアウト値（`serial.Serial(timeout=0.5)`）も調整対象になりうる
+- **将来の再調整が必要になる可能性がある**
 
 #### NET mode satmode detection and transponder selection flow (confirmed 2026-06-17)
 
