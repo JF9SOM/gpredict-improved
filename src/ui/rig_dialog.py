@@ -442,6 +442,9 @@ class _RigPanel(QWidget):
         self._civ_addr_edit.setPlaceholderText(
             _("e.g. 65  (hex as shown on rig menu, blank = default)")
         )
+        self._civ_addr_edit.setStyleSheet(
+            "QLineEdit::placeholder { color: #6B9EC4; font-style: italic; }"
+        )
         self._civ_addr_edit.setMaximumWidth(160)
         direct_form.addRow(_("CI-V Address (Icom):"), self._civ_addr_edit)
 
@@ -504,6 +507,9 @@ class _RigPanel(QWidget):
         self._ctcss_method_combo.currentIndexChanged.connect(self._on_ctcss_method_changed)
         ctcss_form.addRow(_("CTCSS Method:"), self._ctcss_method_combo)
         self._ctcss_civ_addr_edit = QLineEdit()
+        self._ctcss_civ_addr_edit.setStyleSheet(
+            "QLineEdit::placeholder { color: #6B9EC4; font-style: italic; }"
+        )
         self._ctcss_civ_addr_edit.setMaximumWidth(200)
         ctcss_form.addRow(_("CI-V Address (Icom):"), self._ctcss_civ_addr_edit)
         self._ctcss_cat_on_edit = QLineEdit()
