@@ -477,6 +477,7 @@ class _RigPanel(QWidget):
         self._ctcss_form = QFormLayout(ctcss_group)
         ctcss_form = self._ctcss_form
         self._icom_satmode_cb = QCheckBox(_("Icom SAT mode rig (IC-9100/9700/910H/821H)"))
+        self._icom_satmode_cb.toggled.connect(self._on_icom_satmode_toggled)
         ctcss_form.addRow("", self._icom_satmode_cb)
         self._ctcss_method_combo = QComboBox()
         self._ctcss_method_combo.addItem(_("Hamlib standard"), "hamlib")
@@ -662,6 +663,22 @@ class _RigPanel(QWidget):
             self._baud_notifier.done.emit(ok)
 
         threading.Thread(target=_test, daemon=True).start()
+
+    def _on_icom_satmode_toggled(self, checked: bool) -> None:
+        """Lock CTCSS method to Hamlib standard when Icom SAT mode is selected."""
+        if checked:
+            # Force Hamlib standard and grey out everything below the checkbox
+            for i in range(self._ctcss_method_combo.count()):
+                if self._ctcss_method_combo.itemData(i) == "hamlib":
+                    self._ctcss_method_combo.setCurrentIndex(i)
+                    break
+        self._ctcss_method_combo.setEnabled(not checked)
+        self._ctcss_cat_on_edit.setEnabled(False)
+        self._ctcss_cat_off_edit.setEnabled(False)
+        self._ctcss_form.setRowVisible(self._direct_cat_port_row, False)
+        self._ctcss_form.setRowVisible(self._direct_cat_baud_row, False)
+        if not checked:
+            self._on_ctcss_method_changed()
 
     def _on_ctcss_method_changed(self) -> None:
         """Show/hide CAT fields based on the selected CTCSS method."""
