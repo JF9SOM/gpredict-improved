@@ -625,8 +625,6 @@ class _RigPanel(QWidget):
         self._ctcss_method_combo.setEnabled(not checked)
         self._ctcss_cat_on_edit.setEnabled(False)
         self._ctcss_cat_off_edit.setEnabled(False)
-        self._ctcss_form.setRowVisible(self._direct_cat_port_row, False)
-        self._ctcss_form.setRowVisible(self._direct_cat_baud_row, False)
         if not checked:
             self._on_ctcss_method_changed()
 
