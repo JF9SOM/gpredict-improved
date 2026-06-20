@@ -181,8 +181,15 @@ sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf 
 brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy
 ```
 
-> Other SoapySDR-compatible devices (SDRplay, LimeSDR, etc.) may work on Linux/macOS
+> Other SoapySDR-compatible devices (LimeSDR, etc.) may work on Linux/macOS
 > if the corresponding module is installed, but are not bundled on Windows.
+
+> **SDRplay (RSP1, RSP2, RSPdx, etc.)** — SDRplay devices are not bundled in the installer
+> because SoapySDRPlay3 depends on the proprietary SDRplay API library, which cannot be
+> redistributed. To use an SDRplay device:
+> 1. Install the **SDRplay API** from [sdrplay.com/downloads](https://www.sdrplay.com/downloads/)
+> 2. Install **SoapySDRPlay3** from [github.com/pothosware/SoapySDRPlay3](https://github.com/pothosware/SoapySDRPlay3)
+> 3. Restart this software — your device will be detected automatically via SoapySDR.
 
 ---
 

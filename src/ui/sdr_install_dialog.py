@@ -156,6 +156,24 @@ class SdrInstallDialog(QDialog):
         log_v.addWidget(self._log)
         layout.addWidget(log_grp)
 
+        # -- SDRplay note --
+        sdrplay_grp = QGroupBox(_("Note for SDRplay Users"))
+        sdrplay_v = QVBoxLayout(sdrplay_grp)
+        sdrplay_note = QLabel(
+            _(
+                "SDRplay devices (RSP1, RSP2, RSPdx, etc.) are not bundled in the installer "
+                "because SoapySDRPlay3 depends on the proprietary SDRplay API library "
+                "(sdrplay_api.dll / libsdrplay_api.so), which cannot be redistributed.\n\n"
+                "To use an SDRplay device:\n"
+                "  1. Download and install the SDRplay API from https://www.sdrplay.com/downloads/\n"
+                "  2. Install SoapySDRPlay3 from https://github.com/pothosware/SoapySDRPlay3\n"
+                "  3. Restart this software — your device will be detected automatically."
+            )
+        )
+        sdrplay_note.setWordWrap(True)
+        sdrplay_v.addWidget(sdrplay_note)
+        layout.addWidget(sdrplay_grp)
+
         # -- Rescan + close --
         btn_row = QHBoxLayout()
         self._rescan_btn = QPushButton(_("🔍 Rescan Devices"))
