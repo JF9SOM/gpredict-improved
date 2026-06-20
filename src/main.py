@@ -81,6 +81,13 @@ if sys.platform == "linux":
         if _HAMLIB_SITE not in sys.path:
             sys.path.insert(0, _HAMLIB_SITE)
 
+# On Linux the AppImage does not bundle IBus/fcitx Qt IM plugins, so those
+# input methods intercept keystrokes before Qt widgets receive them.  Falling
+# back to XIM (the basic X11 input protocol) requires no extra plugins and
+# restores normal keyboard input.  Skip if the user has already set the var.
+if sys.platform.startswith("linux") and "QT_IM_MODULE" not in os.environ:
+    os.environ["QT_IM_MODULE"] = "xim"
+
 from PySide6.QtWidgets import QApplication
 
 from core.engine import PassPredictor, SatelliteEngine
