@@ -2258,17 +2258,49 @@ class HamlibNetController(RigController):
         except Exception as exc:
             logger.warning("RigNet: send_mode_only failed: %s", exc)
 
+    def _send_split_init_independent(self) -> None:
+        """Send satmode/split init via a fresh TCP socket (mirrors Direct-mode set_func(SATMODE,1)).
+
+        Called at transponder selection time so that CTCSS is always set AFTER
+        satmode is established — the same order as HamlibDirectController's
+        _apply_mode_and_ctcss_hamlib().  If connect() later re-sends S 1 Main,
+        the rig is already in satmode and will not reset the CTCSS state.
+        """
+        cmd = "S 1 VFOB" if self._is_same_band else "S 1 Main"
+        logger.info("RigNet: pre-connect split init (%s) via independent socket", cmd)
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self._TIMEOUT)
+            sock.connect((self._host, self._port))
+            sock.settimeout(2.0)
+            sock.sendall((cmd + "\n").encode())
+            buf = b""
+            with contextlib.suppress(OSError):
+                while b"RPRT" not in buf:
+                    chunk = sock.recv(256)
+                    if not chunk:
+                        break
+                    buf += chunk
+            sock.close()
+            logger.info(
+                "RigNet: pre-connect split init done -> %r",
+                buf.decode(errors="replace").strip(),
+            )
+        except Exception as exc:
+            logger.error("RigNet: pre-connect split init failed: %s", exc)
+
     def apply_transponder_state(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
         """Apply mode and CTCSS sequentially in the same thread for NET-mode rigs.
 
         Satmode rigs (IC-9100 / IC-9700 etc.) via rigctld:
           Holds _cmd_lock for the entire operation so the Doppler cycle cannot
           send frequency commands to rigctld while mode and CTCSS are being set.
-          1. send_mode_only — opens an independent TCP socket to rigctld.
-          2. _apply_ctcss_civ_direct — sends CI-V frames directly via pyserial.
-          With _cmd_lock held, rigctld is silent on the serial port during step 2,
-          giving pyserial exclusive serial access (same safety level as Direct mode
-          disconnect).
+          1. _send_split_init_independent — S 1 Main (or S 1 VFOB) to establish
+             satmode BEFORE mode/CTCSS, matching Direct-mode order.
+          2. send_mode_only — sets DL/UL modes via rigctld.
+          3. _apply_ctcss_civ_direct — sets CTCSS encoder via rigctld commands.
+          This order ensures the T mark appears immediately at transponder
+          selection, same as Direct mode.
 
         Non-satmode rigs:
           Falls back to the base-class default (send_mode_only via rigctld,
@@ -2282,6 +2314,7 @@ class HamlibNetController(RigController):
                 ctcss_hz,
             )
             with self._cmd_lock:
+                self._send_split_init_independent()
                 self.send_mode_only(dl_mode, ul_mode)
                 self._apply_ctcss_civ_direct(ctcss_hz)
         else:
