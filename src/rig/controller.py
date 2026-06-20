@@ -638,16 +638,13 @@ class HamlibDirectController(RigController):
             return "FM"
 
     def set_ctcss_tone(self, tone_hz: float) -> bool:
-        """Set CTCSS tone for satmode rigs via raw CI-V bytes (pyserial).
+        """Set CTCSS tone for satmode rigs via Hamlib (cross-platform).
 
-        Hamlib set_func(RIG_FUNC_TONE) does not generate a CI-V command for
-        IC-9100 (confirmed by absence of Hamlib debug output).  Direct CI-V
-        via pyserial is the only reliable path for satmode rigs.
-
-        When the rig is NOT connected (before Doppler), the serial port is free
-        and pyserial sends CI-V directly.  When the rig IS connected (Doppler
-        running), the port is held by Hamlib; _satmode_enter re-applies CTCSS
-        after satmode is activated so no extra action is needed here.
+        When the rig is NOT connected (before Doppler), opens a fresh Hamlib
+        rig session to send VFO-Sub CTCSS commands.  When the rig IS connected
+        (Doppler running), the port is held by Hamlib; _satmode_enter
+        re-applies CTCSS after satmode is activated so no extra action is
+        needed here.
 
         For non-satmode rigs, the standard Hamlib set_ctcss_tone / set_func
         path is used (works for FTX-1F, FT-991A etc.).
@@ -664,8 +661,10 @@ class HamlibDirectController(RigController):
 
         if self._satmode:
             if not self.is_connected:
-                # Port is free: send CI-V directly.
-                return self._apply_ctcss_civ(tone_hz)
+                # Port is free: apply via Hamlib (cross-platform).
+                return self._apply_mode_and_ctcss_hamlib(
+                    self._current_dl_mode, self._current_ul_mode, tone_hz
+                )
             # Port held by Hamlib; _satmode_enter will apply CTCSS after connect.
             logger.info("RigDirect.set_ctcss_tone: connected — deferred to _satmode_enter")
             return True
@@ -1063,11 +1062,10 @@ class HamlibDirectController(RigController):
             # first mode-set call after connect.
             _use_satmode_vfo = self._satmode and self._satmode_active
             dl_vfo = _H.RIG_VFO_MAIN if _use_satmode_vfo else _H.RIG_VFO_A
-            # RIG_VFO_SUB (0x02000000) is remapped to VFOB by vfo_fixup →
-            # ic9700_set_vfo sends CI-V 07 01 (VFO-B of Main band) instead of
-            # 07 d1 (Sub Band select).  Use RIG_VFO_SUB_A (0x00200000) which
-            # bypasses vfo_fixup → CI-V 07 d1 → correct Sub Band mode setting.
-            ul_vfo = int(_H.RIG_VFO_SUB_A) if _use_satmode_vfo else _H.RIG_VFO_B
+            # RIG_VFO_SUB (ic9700_set_vfo: CI-V 07 D1 = Sub Band select) is the
+            # correct VFO for satmode UL mode setting.  RIG_VFO_SUB_A is invalid
+            # in satmode and ic9700_set_vfo rejects it with EINVAL.
+            ul_vfo = int(_H.RIG_VFO_SUB) if _use_satmode_vfo else _H.RIG_VFO_B
             rig = _H.Rig(self._model_id)
             rig.set_conf("rig_pathname", self._port)
             rig.set_conf("serial_speed", str(self._baud_rate))
@@ -1098,6 +1096,96 @@ class HamlibDirectController(RigController):
             logger.info("RigDirect: send_mode_only done")
         except Exception as exc:
             logger.error("RigDirect.send_mode_only: %s", exc)
+        finally:
+            if rig is not None:
+                with contextlib.suppress(Exception):
+                    rig.close()
+
+    def _apply_mode_and_ctcss_hamlib(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> bool:
+        """Set mode and CTCSS on satmode rigs via Hamlib (cross-platform).
+
+        Opens a fresh Hamlib session (satmode=1 is already set in the rig
+        hardware from a prior connect() or satmode_warmup()).  The second
+        rig.open() reads satmode=1 from the rig → cache->satmode=1 is
+        established, which allows set_mode(VFO_MAIN/SUB) and correct CI-V
+        routing.
+
+        Sequence:
+          open()
+          set_mode(dl_hamlib, 0, VFO_MAIN)
+          set_mode(ul_hamlib, 0, VFO_SUB)
+          set_vfo(VFO_SUB)
+          set_ctcss_tone(VFO_SUB, deci_hz)  [tone=0 to clear]
+          set_func(FUNC_TONE, 1/0)           [on Sub]
+          set_vfo(VFO_MAIN)
+          set_func(FUNC_TONE, 0)             [clear any bleed on Main]
+          close()
+
+        Returns True on success, False on error.
+        """
+        if self._hamlib is None:
+            return False
+        _H = self._hamlib
+
+        hamlib_mode: dict[str, int] = {
+            "FM": _H.RIG_MODE_FM,
+            "DIGITALVOICE": _H.RIG_MODE_FM,
+            "AFSK": _H.RIG_MODE_FM,
+            "USB": _H.RIG_MODE_USB,
+            "SSB": _H.RIG_MODE_USB,
+            "BPSK": _H.RIG_MODE_PKTUSB,
+            "LSB": _H.RIG_MODE_LSB,
+            "CW": _H.RIG_MODE_CW,
+            "CW-R": _H.RIG_MODE_CWR,
+            "AM": _H.RIG_MODE_AM,
+        }
+        dl_hamlib = hamlib_mode.get(dl_mode, _H.RIG_MODE_FM)
+        ul_hamlib = hamlib_mode.get(ul_mode, _H.RIG_MODE_FM)
+        vfo_main = int(_H.RIG_VFO_MAIN)
+        vfo_sub = int(_H.RIG_VFO_SUB)
+        func_tone = _H.RIG_FUNC_TONE
+        enable = ctcss_hz > 0
+        tone_deci = int(round(abs(ctcss_hz) * 10)) if enable else 0
+
+        rig = None
+        try:
+            rig = _H.Rig(self._model_id)
+            rig.set_conf("rig_pathname", self._port)
+            rig.set_conf("serial_speed", str(self._baud_rate))
+            if self._civ_addr:
+                addr = self._civ_addr
+                if not addr.lower().startswith("0x"):
+                    addr = "0x" + addr
+                rig.set_conf("civaddr", addr)
+            with self._port_lock:
+                rig.open()
+                time.sleep(0.2)
+                # Mode: Main (DL) and Sub (UL)
+                rig.set_mode(dl_hamlib, 0, vfo_main)
+                time.sleep(0.1)
+                rig.set_mode(ul_hamlib, 0, vfo_sub)
+                time.sleep(0.1)
+                # CTCSS on Sub (TX/UL)
+                rig.set_vfo(vfo_sub)
+                time.sleep(0.1)
+                rig.set_ctcss_tone(vfo_sub, tone_deci)
+                time.sleep(0.1)
+                rig.set_func(func_tone, 1 if enable else 0)
+                time.sleep(0.1)
+                # Restore Main and clear any bleed-through
+                rig.set_vfo(vfo_main)
+                time.sleep(0.1)
+                rig.set_func(func_tone, 0)
+            logger.info(
+                "RigDirect._apply_mode_and_ctcss_hamlib: dl=%s ul=%s ctcss=%.1fHz OK",
+                dl_mode,
+                ul_mode,
+                ctcss_hz,
+            )
+            return True
+        except Exception as exc:
+            logger.error("RigDirect._apply_mode_and_ctcss_hamlib: %s", exc)
+            return False
         finally:
             if rig is not None:
                 with contextlib.suppress(Exception):
@@ -1232,17 +1320,16 @@ class HamlibDirectController(RigController):
           then set_ctcss_tone via Hamlib).  These rigs are unaffected.
         """
         if self._satmode:
-            # Store modes so _apply_ctcss_civ can embed them in CI-V
             self._current_dl_mode = dl_mode
             self._current_ul_mode = ul_mode
             logger.info(
-                "RigDirect: apply_transponder_state (satmode CI-V) dl=%s ul=%s ctcss=%.1f",
+                "RigDirect: apply_transponder_state (satmode Hamlib) dl=%s ul=%s ctcss=%.1f",
                 dl_mode,
                 ul_mode,
                 ctcss_hz,
             )
-            if not self._apply_ctcss_civ(ctcss_hz):
-                raise RigControlError("CTCSS Error: no ACK from rig after 3 attempts")
+            if not self._apply_mode_and_ctcss_hamlib(dl_mode, ul_mode, ctcss_hz):
+                raise RigControlError("Mode/CTCSS Error: Hamlib apply failed for satmode rig")
         elif self._model_id in _FTX1_MODEL_IDS:
             self._apply_mode_and_ctcss_cat_ftx1(dl_mode, ul_mode, ctcss_hz)
         elif self._model_id in _FT991_DIRECT_MODEL_IDS:
@@ -1943,62 +2030,47 @@ class HamlibNetController(RigController):
             logger.warning("RigNet.reset_satmode_civ: %s", exc)
 
     def _apply_ctcss_civ_direct(self, tone_hz: float) -> None:
-        """Set CTCSS on Icom Sub band (TX/UL) via raw CI-V through the serial port.
+        """Set CTCSS on Icom Sub band (TX/UL) via rigctld commands.
 
-        Opens direct_cat_port with pyserial — rigctld may hold the port but
-        pyserial can still write to it on Linux (confirmed on IC-9100).
-        All 4 frames are sent in a single write() call so rigctld cannot
-        interleave its own commands between them (OS serial driver transmits
-        the buffer atomically without interruption from other processes):
-          1. Select Sub band
-          2. Set tone frequency (BCD encoded)
-          3. Tone ON / OFF
-          4. Restore Main band
+        Sends rigctld commands over an independent TCP socket (same pattern
+        as send_mode_only).  No pyserial required — works on Linux, macOS,
+        and Windows regardless of port locking.
 
-        SATMODE OFF→ON is intentionally omitted here — the satmode reset is
-        performed once by reset_satmode_civ() when NET mode is saved in Rig
-        Settings.  Adding it here would break the tight timing window required
-        to slip frames past rigctld's serial access.
-        Silently ignores all errors (best-effort).
+        Sequence (via rigctld extended commands):
+          V Sub             — select Sub VFO
+          L CTCSS_TONE <deci_hz>  — set tone frequency (deci-Hz integer)
+          U TONE 1          — enable CTCSS encoder (0 to disable)
+          V Main            — restore Main VFO
+          U TONE 0          — clear CTCSS on Main (prevent bleed-through)
         """
-        if not self._direct_port:
-            logger.warning("RigNet._apply_ctcss_civ_direct: direct_cat_port not configured")
-            return
+        enable = tone_hz > 0
+        tone_deci = int(round(abs(tone_hz) * 10)) if enable else 0
+        logger.info(
+            "RigNet._apply_ctcss_civ_direct: %.1f Hz enable=%s via rigctld", tone_hz, enable
+        )
         try:
-            import serial  # pyserial — optional dependency
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self._TIMEOUT)
+            sock.connect((self._host, self._port))
+            sock.settimeout(2.0)
 
-            civ = self._ctcss_civ_addr_int()
-            ctrl = 0xE0
-            enable = tone_hz > 0
+            def _cmd_drain(cmd: str) -> None:
+                sock.sendall((cmd + "\n").encode())
+                buf = b""
+                with contextlib.suppress(OSError):
+                    while b"RPRT" not in buf:
+                        chunk = sock.recv(256)
+                        if not chunk:
+                            break
+                        buf += chunk
 
-            # BCD encoding: tone_hz * 10 as 4-digit BCD in 2 bytes.
-            # e.g. 67.0 Hz → 670 → high=6, low=70 → 0x06 0x70
-            #      141.3 Hz → 1413 → high=14, low=13 → 0x14 0x13
-            val = int(round(tone_hz * 10))
-            high = val // 100
-            low = val % 100
-            tone_bcd = bytes([(high // 10) << 4 | (high % 10), (low // 10) << 4 | (low % 10)])
-
-            def frame(*payload: int) -> bytes:
-                return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
-
-            main_tone_off = frame(0x16, 0x42, 0x00)  # clear any stale Main TONE
-            select_sub = frame(0x07, 0xD1)
-            set_tone = frame(0x1B, 0x00, *tone_bcd)
-            tone_onoff = frame(0x16, 0x42, 0x01 if enable else 0x00)
-            select_main = frame(0x07, 0xD0)
-
-            with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
-                s.write(main_tone_off + select_sub + set_tone + tone_onoff + select_main)
-                time.sleep(0.3)  # allow rig to process all frames before port is released
-
-            logger.info(
-                "RigNet: CI-V CTCSS %.1f Hz (enable=%s addr=0x%02X) sent via %s",
-                tone_hz,
-                enable,
-                civ,
-                self._direct_port,
-            )
+            _cmd_drain("V Sub")
+            _cmd_drain(f"L CTCSS_TONE {tone_deci}")
+            _cmd_drain(f"U TONE {'1' if enable else '0'}")
+            _cmd_drain("V Main")
+            _cmd_drain("U TONE 0")
+            sock.close()
+            logger.info("RigNet._apply_ctcss_civ_direct: done (%.1f Hz enable=%s)", tone_hz, enable)
         except Exception as exc:
             logger.error("RigNet._apply_ctcss_civ_direct: %s", exc)
 
