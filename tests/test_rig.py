@@ -823,8 +823,12 @@ class TestHamlibNetController:
         assert idx_vmain < idx_usb
         assert idx_vsub < idx_vmain
 
-    def test_send_mode_only_does_not_send_s1main(self) -> None:
-        """send_mode_only does not send S 1 Main (preserves split state)."""
+    def test_send_mode_only_ends_with_split_init(self) -> None:
+        """send_mode_only re-sends S 1 Main at the end for non-satmode rigs.
+
+        V Main (used to set DL mode) leaves TX on Main on rigs like FTX-1F.
+        A trailing S 1 Main restores TX=Sub immediately at transponder selection.
+        """
         ctrl = self._make_ctrl()
         sent: list[bytes] = []
         mock_sock = MagicMock(spec=socket.socket)
@@ -833,7 +837,7 @@ class TestHamlibNetController:
         with patch("rig.controller.socket.socket", return_value=mock_sock):
             ctrl.send_mode_only("USB", "USB")
         data = b"".join(sent)
-        assert b"S 1 Main\n" not in data
+        assert b"S 1 Main\n" in data
 
     def test_send_mode_only_unknown_mode_does_nothing(self) -> None:
         """両モードが未知のとき何も送信しない。"""

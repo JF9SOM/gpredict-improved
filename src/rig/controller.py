@@ -2170,6 +2170,12 @@ class HamlibNetController(RigController):
                     _send_recv("V Main")
                     _send_recv(f"M {rigctld_dl} 0")
 
+            # For non-satmode rigs (FTX-1F etc.) the V Main above leaves TX on
+            # Main.  Re-send split init so TX returns to Sub (uplink) immediately.
+            if not is_satmode_rig:
+                split_cmd = "S 1 VFOB" if self._is_same_band else "S 1 Main"
+                _send_recv(split_cmd)
+
             sock.close()
             logger.info("RigNet: send_mode_only dl=%s ul=%s done", dl_mode, ul_mode)
         except Exception as exc:
