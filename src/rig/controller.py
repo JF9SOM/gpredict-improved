@@ -1469,7 +1469,7 @@ class HamlibDirectController(RigController):
         logger.info("RigDirect: exiting satmode → normal VFO-A/B split (same-band)")
         try:
             self._rig.set_func(_H.RIG_FUNC_SATMODE, 0)
-            time.sleep(0.1)
+            time.sleep(0.4)  # wait for IC-9100 internal normal-mode memory restore
             self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
             # IC-9100 restores normal-mode memory on SAT exit (typically USB).
             # Re-apply the transponder's DL/UL modes explicitly.
