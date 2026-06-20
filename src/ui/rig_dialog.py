@@ -492,36 +492,6 @@ class _RigPanel(QWidget):
         self._ctcss_cat_off_edit = QLineEdit()
         self._ctcss_cat_off_edit.setPlaceholderText(_("e.g. CT10;"))
         ctcss_form.addRow(_("CAT OFF command:"), self._ctcss_cat_off_edit)
-        cat_port_row = QWidget()
-        cat_port_layout = QHBoxLayout(cat_port_row)
-        cat_port_layout.setContentsMargins(0, 0, 0, 0)
-        self._direct_cat_port_edit = QComboBox()
-        self._direct_cat_port_edit.setEditable(True)
-        self._direct_cat_port_edit.setMinimumWidth(160)
-        _line = self._direct_cat_port_edit.lineEdit()
-        if _line is not None:
-            _line.setPlaceholderText(_("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)"))
-        self._direct_cat_scan_btn = QPushButton(_("Scan"))
-        self._direct_cat_scan_btn.setMaximumWidth(80)
-        self._direct_cat_scan_btn.clicked.connect(self._on_scan_cat_ports)
-        cat_port_layout.addWidget(self._direct_cat_port_edit)
-        cat_port_layout.addWidget(self._direct_cat_scan_btn)
-        self._direct_cat_port_row = cat_port_row
-        ctcss_form.addRow(_("Direct CAT Port:"), cat_port_row)
-        cat_baud_row = QWidget()
-        cat_baud_layout = QHBoxLayout(cat_baud_row)
-        cat_baud_layout.setContentsMargins(0, 0, 0, 0)
-        self._direct_cat_baud_combo = QComboBox()
-        for b in ["4800", "9600", "19200", "38400", "57600", "115200"]:
-            self._direct_cat_baud_combo.addItem(b)
-        self._direct_cat_baud_combo.setCurrentText("9600")
-        self._cat_baud_test_btn = QPushButton(_("Test"))
-        self._cat_baud_test_btn.setMaximumWidth(80)
-        self._cat_baud_test_btn.clicked.connect(self._on_cat_baud_test)
-        cat_baud_layout.addWidget(self._direct_cat_baud_combo)
-        cat_baud_layout.addWidget(self._cat_baud_test_btn)
-        self._direct_cat_baud_row = cat_baud_row
-        ctcss_form.addRow(_("Direct CAT Baud:"), cat_baud_row)
         form.addWidget(ctcss_group)
         ctcss_group.setEnabled(False)  # disabled by default; enabled when NET mode is selected
 
@@ -566,20 +536,6 @@ class _RigPanel(QWidget):
             else:
                 self._port_combo.setEditText(current)
 
-    def _on_scan_cat_ports(self) -> None:
-        """Scan serial ports and update the Direct CAT Port combo box."""
-        current = self._direct_cat_port_edit.currentText()
-        ports = _scan_serial_ports()
-        self._direct_cat_port_edit.clear()
-        if ports:
-            self._direct_cat_port_edit.addItems(ports)
-        if current:
-            idx = self._direct_cat_port_edit.findText(current)
-            if idx >= 0:
-                self._direct_cat_port_edit.setCurrentIndex(idx)
-            else:
-                self._direct_cat_port_edit.setEditText(current)
-
     def _on_baud_test(self) -> None:
         """Test the Hamlib Direct baud rate using the appropriate command for the rig."""
         port = self._port_combo.currentText()
@@ -589,12 +545,6 @@ class _RigPanel(QWidget):
         # For CI-V, use address from the CI-V Address field (or 0x00 as broadcast fallback).
         civ_addr = int(self._civ_addr_edit.text().strip() or "0", 16)
         self._run_baud_test(port, baud, self._baud_test_btn, test_type, civ_addr)
-
-    def _on_cat_baud_test(self) -> None:
-        """Test the Direct CAT baud rate (CTCSS/mode port)."""
-        port = self._direct_cat_port_edit.currentText()
-        baud = int(self._direct_cat_baud_combo.currentText())
-        self._run_baud_test(port, baud, self._cat_baud_test_btn, "if", 0)
 
     def _run_baud_test(
         self,
@@ -683,12 +633,9 @@ class _RigPanel(QWidget):
     def _on_ctcss_method_changed(self) -> None:
         """Show/hide CAT fields based on the selected CTCSS method."""
         method = self._ctcss_method_combo.currentData()
-        is_cat = method in CTCSS_PRESET_TEMPLATES or method == "custom_cat"
 
         self._ctcss_form.setRowVisible(self._ctcss_cat_on_edit, True)
         self._ctcss_form.setRowVisible(self._ctcss_cat_off_edit, True)
-        self._ctcss_form.setRowVisible(self._direct_cat_port_row, is_cat)
-        self._ctcss_form.setRowVisible(self._direct_cat_baud_row, is_cat)
 
         if method in CTCSS_PRESET_TEMPLATES:
             on_cmd, off_cmd = CTCSS_PRESET_TEMPLATES[method]
@@ -857,11 +804,6 @@ class _RigPanel(QWidget):
                 break
         self._ctcss_cat_on_edit.setText(str(s.get("ctcss_cat_on", "")))
         self._ctcss_cat_off_edit.setText(str(s.get("ctcss_cat_off", "")))
-        self._direct_cat_port_edit.setEditText(str(s.get("direct_cat_port", "")))
-        baud_str = str(s.get("direct_cat_baud", 38400))
-        idx = self._direct_cat_baud_combo.findText(baud_str)
-        if idx >= 0:
-            self._direct_cat_baud_combo.setCurrentIndex(idx)
         self._icom_satmode_cb.setChecked(bool(s.get("icom_satmode_rig", False)))
 
         self._civ_addr_edit.setText(str(s.get("civ_addr", "")))
@@ -887,8 +829,6 @@ class _RigPanel(QWidget):
             "ctcss_method": self._ctcss_method_combo.currentData() or "hamlib",
             "ctcss_cat_on": self._ctcss_cat_on_edit.text(),
             "ctcss_cat_off": self._ctcss_cat_off_edit.text(),
-            "direct_cat_port": self._direct_cat_port_edit.currentText(),
-            "direct_cat_baud": int(self._direct_cat_baud_combo.currentText()),
             "icom_satmode_rig": self._icom_satmode_cb.isChecked(),
         }
         # Rig 1: store its own radio_type (used when Rig 2 is disabled)

@@ -2652,28 +2652,6 @@ class MainWindow(QMainWindow):
         dialog = RigSettingsDialog(self._conn, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._load_rig_settings()
-            self._maybe_reset_satmode_on_net_switch()
-
-    def _maybe_reset_satmode_on_net_switch(self) -> None:
-        """Send CI-V SATMODE OFF→ON when Rig 1 is a NET-mode satmode rig.
-
-        Clears stale rig state left by a previous Direct-mode session so that
-        rigctld starts with a clean satmode state (correct mode, frequency, and
-        CTCSS assignment).  Runs in a background thread; no-op if direct_cat_port
-        is not configured or if the controller is not a satmode HamlibNetController.
-        """
-        from rig.controller import HamlibNetController
-
-        rig = self._rig_controller
-        if not isinstance(rig, HamlibNetController):
-            return
-        if not rig.is_satmode:
-            return
-
-        def _reset() -> None:
-            rig.reset_satmode_civ()
-
-        threading.Thread(target=_reset, daemon=True).start()
 
     def _load_rig_settings(self) -> None:
         """Load Rig 1 and Rig 2 settings from the DB and instantiate controllers.
@@ -2781,8 +2759,7 @@ class MainWindow(QMainWindow):
 
         Args:
             settings: dict with keys 'mode', 'host', 'net_port', 'model_id', 'port',
-                      'baud_rate', 'radio_type', 'direct_cat_port', 'direct_cat_baud',
-                      'ctcss_method'.
+                      'baud_rate', 'radio_type', 'ctcss_method'.
 
         Returns:
             Configured (but not yet connected) RigController instance.
@@ -2794,8 +2771,6 @@ class MainWindow(QMainWindow):
                 host=str(settings.get("host", "localhost")),
                 port=int(settings.get("net_port", 4532)),
                 radio_type=radio_type,
-                direct_cat_port=str(settings.get("direct_cat_port", "")),
-                direct_cat_baud=int(settings.get("direct_cat_baud", 38400)),
                 ctcss_method=str(settings.get("ctcss_method", "hamlib")),
                 is_satmode_rig=bool(settings.get("icom_satmode_rig", False)),
             )

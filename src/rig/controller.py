@@ -1588,32 +1588,25 @@ class HamlibNetController(RigController):
         host: str = "localhost",
         port: int = 4532,
         radio_type: str = "full_duplex",
-        direct_cat_port: str = "",
-        direct_cat_baud: int = 38400,
         ctcss_method: str = "hamlib",
         ctcss_civ_addr: str = "",
         is_satmode_rig: bool = False,
     ) -> None:
         """
         Args:
-            host:             Host where rigctld is running
-            port:             rigctld port number (default 4532)
-            radio_type:       "full_duplex"=send both F and I (default) /
-                              "rx_only"=F only / "tx_only"=I only
-            direct_cat_port:  Serial port for direct CAT (bypasses rigctld w cmd).
-                              Empty string disables direct CAT (uses rigctld).
-            direct_cat_baud:  Baud rate for direct_cat_port (default 38400)
-            ctcss_method:     CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat").
-            ctcss_civ_addr:   Unused; kept for backward compatibility only.
-            is_satmode_rig:   True when the rig is an Icom satmode rig (IC-9100/9700/910H/821H).
-                              Controls satmode split init and same-band detection.
+            host:           Host where rigctld is running
+            port:           rigctld port number (default 4532)
+            radio_type:     "full_duplex"=send both F and I (default) /
+                            "rx_only"=F only / "tx_only"=I only
+            ctcss_method:   CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat").
+            ctcss_civ_addr: Unused; kept for backward compatibility only.
+            is_satmode_rig: True when the rig is an Icom satmode rig (IC-9100/9700/910H/821H).
+                            Controls satmode split init and same-band detection.
         """
         super().__init__()
         self._host = host
         self._port = port
         self._radio_type = radio_type
-        self._direct_port = direct_cat_port
-        self._direct_baud = direct_cat_baud
         self._ctcss_method = ctcss_method
         self._ctcss_civ_addr = ctcss_civ_addr.strip()
         self._is_satmode_rig = is_satmode_rig
@@ -1978,82 +1971,6 @@ class HamlibNetController(RigController):
     def set_vfo(self, vfo: str) -> bool:
         resp = self._cmd(f"V {vfo}")
         return "RPRT 0" in resp
-
-    def _send_cat_direct(self, cmd: str) -> None:
-        """Send a single CAT command directly to the serial port, bypassing rigctld.
-
-        Used when _direct_port is configured and rigctld's w command is unreliable
-        for the connected rig (e.g. FT-991 CTCSS commands).
-        Acquires _cmd_lock so that in-flight F/I Doppler commands (which hold the
-        lock while awaiting rigctld's RPRT response) finish before we write to the
-        serial port directly.  Without this, the direct write races with rigctld's
-        recv() and the FTX-1F returns a garbled response, causing a 10-second timeout.
-        Silently ignores all errors (best-effort).
-        """
-        if not self._direct_port:
-            return
-        try:
-            import serial  # pyserial — optional dependency
-
-            with (
-                self._cmd_lock,
-                serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s,
-            ):
-                s.write(cmd.encode())
-                time.sleep(0.1)
-        except Exception as exc:
-            logger.warning("RigNet: direct CAT failed: %s", exc)
-
-    def _ctcss_civ_addr_int(self) -> int:
-        """Return the CI-V rig address as an integer (default 0x65 for IC-9100)."""
-        addr = self._ctcss_civ_addr
-        if addr:
-            if not addr.lower().startswith("0x"):
-                addr = "0x" + addr
-            try:
-                return int(addr, 16)
-            except ValueError:
-                pass
-        return 0x65
-
-    def reset_satmode_civ(self) -> None:
-        """Send SATMODE OFF → ON via raw CI-V to clear stale rig state.
-
-        Called when switching to NET mode so that any dirty satmode state left
-        by a previous Direct-mode session is cleared before rigctld connects.
-        Requires direct_cat_port to be configured; silently skips otherwise.
-        """
-        if not self._direct_port:
-            return
-        try:
-            import serial  # pyserial — optional dependency
-
-            civ = self._ctcss_civ_addr_int()
-            ctrl = 0xE0
-
-            def frame(*payload: int) -> bytes:
-                return bytes([0xFE, 0xFE, civ, ctrl, *payload, 0xFD])
-
-            satmode_off = frame(0x16, 0x59, 0x00)
-            satmode_on = frame(0x16, 0x59, 0x01)
-
-            with serial.Serial(self._direct_port, self._direct_baud, timeout=0.5) as s:
-                s.write(satmode_off)
-                s.flush()
-                time.sleep(0.15)
-                s.read(32)
-                s.write(satmode_on)
-                s.flush()
-                time.sleep(0.15)
-                s.read(32)
-
-            logger.info(
-                "RigNet: CI-V SATMODE OFF→ON reset sent via %s (addr=0x%02X)",
-                self._direct_port,
-                civ,
-            )
-        except Exception as exc:
-            logger.warning("RigNet.reset_satmode_civ: %s", exc)
 
     def _apply_ctcss_civ_direct(self, tone_hz: float) -> None:
         """Set CTCSS on Icom Sub band (TX/UL) via rigctld commands.
