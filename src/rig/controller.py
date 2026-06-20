@@ -1123,9 +1123,11 @@ class HamlibDirectController(RigController):
 
         Returns True on success, False on error.
         """
-        if self._hamlib is None:
+        try:
+            import Hamlib as _H  # noqa: PLC0415
+        except ImportError:
+            logger.error("RigDirect._apply_mode_and_ctcss_hamlib: Hamlib not available")
             return False
-        _H = self._hamlib
 
         hamlib_mode: dict[str, int] = {
             "FM": _H.RIG_MODE_FM,
