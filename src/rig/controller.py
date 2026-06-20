@@ -527,12 +527,18 @@ class HamlibDirectController(RigController):
                         addr = "0x" + addr
                     rig.set_conf("civaddr", addr)
                     logger.info("RigDirect: CI-V address set to %s", addr)
-                # Satmode rigs: enter SAT mode via CI-V 16 5A 01 before open.
-                # Hamlib's set_func(SATMODE) sends 16 59 (Dual Watch), not 16 5A
-                # (SAT Mode). Sending 16 5A before open keeps cache.satmode=0,
-                # allowing set_freq(VFO_TX) to write UL without ic9700_set_vfo rejection.
-                if self._satmode:
-                    self._satmode_preopen_civ(enable=True)
+                if self._satmode and hasattr(_H, "RIG_FUNC_SATMODE"):
+                    # Satmode rigs: open once, send set_func(SATMODE, 1) so Hamlib
+                    # uses the correct CI-V per model (16 5A for IC-9100/9700,
+                    # 1A 07 for IC-910H), then close and reopen.  On the second
+                    # open Hamlib reads satmode=1 and sets cache->satmode=1,
+                    # which allows set_freq(VFO_TX) for UL writes.
+                    rig.open()
+                    time.sleep(0.3)
+                    rig.set_func(_H.RIG_FUNC_SATMODE, 1)
+                    time.sleep(0.1)
+                    rig.close()
+                    time.sleep(0.1)
                 with self._port_lock:
                     rig.open()
                 self._rig = rig
@@ -1299,32 +1305,6 @@ class HamlibDirectController(RigController):
 
     # -- Internal utilities --
 
-    def _satmode_preopen_civ(self, enable: bool) -> None:
-        """Send CI-V 16 5A 01/00 (SAT mode ON/OFF) via pyserial.
-
-        Must be called when the serial port is FREE (before Hamlib open or
-        after Hamlib close).  CI-V 16 5A is the correct satmode command;
-        Hamlib's set_func(RIG_FUNC_SATMODE) sends 16 59 (Dual Watch) instead.
-        """
-        try:
-            import serial
-        except ImportError:
-            logger.warning("RigDirect: pyserial not available — satmode CI-V skipped")
-            return
-        civ = self._civ_addr_int()
-        data = 0x01 if enable else 0x00
-        frame = bytes([0xFE, 0xFE, civ, 0xE0, 0x16, 0x5A, data, 0xFD])
-        try:
-            ser = serial.Serial(self._port, self._baud_rate, timeout=0.5)
-            ser.write(frame)
-            time.sleep(0.15)
-            ser.close()
-            logger.info(
-                "RigDirect: CI-V 16 5A %02X sent (SAT mode %s)", data, "ON" if enable else "OFF"
-            )
-        except Exception as exc:
-            logger.warning("RigDirect: _satmode_preopen_civ failed — %s", exc)
-
     def _apply_ctcss_civ_via_send_raw(self, tone_hz: float) -> None:
         """Apply CTCSS via rig.send_raw() while Hamlib already holds the port.
 
@@ -1377,10 +1357,7 @@ class HamlibDirectController(RigController):
         tx_vfo = self._vfo_str_to_const("VFOB")
         logger.info("RigDirect: exiting satmode → normal VFO-A/B split (same-band)")
         try:
-            # CI-V 16 5A 00 exits SAT mode; send via send_raw while Hamlib holds the port.
-            civ = self._civ_addr_int()
-            sat_off = bytes([0xFE, 0xFE, civ, 0xE0, 0x16, 0x5A, 0x00, 0xFD])
-            self._rig.send_raw(sat_off)
+            self._rig.set_func(_H.RIG_FUNC_SATMODE, 0)
             time.sleep(0.1)
             self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
         except Exception as exc:
@@ -1395,10 +1372,10 @@ class HamlibDirectController(RigController):
     def _init_split(self) -> None:
         """Enable split/satmode. Called once at connect.
 
-        Satmode rigs (IC-9100/IC-9700): SAT mode was already entered via
-        CI-V 16 5A 01 (pyserial) BEFORE rig.open() in connect().  Hamlib's
-        cache.satmode stays 0 (we never called set_func through Hamlib), which
-        allows set_freq(VFO_TX) to write the UL frequency without rejection.
+        Satmode rigs (IC-9100/IC-9700/IC-910H): SAT mode was entered via
+        Hamlib set_func(SATMODE, 1) in connect() before the final rig.open().
+        On the final open Hamlib reads satmode=1 and sets cache->satmode=1,
+        which allows set_freq(VFO_TX) to write the UL frequency correctly.
         Generic rigs: conventional VFOA/VFOB split via set_split_vfo.
         """
         if self._rig is None:
@@ -1418,18 +1395,33 @@ class HamlibDirectController(RigController):
     def satmode_warmup(self) -> None:
         """Pre-initialize satmode hardware before the user presses Connect.
 
-        Sends CI-V 16 5A 01 (SAT mode ON) via pyserial so the IC-9100/IC-9700
-        dual-band routing hardware is initialized before connect().  Called
-        from a background thread at app startup; delay is invisible to the user.
-
-        Uses pyserial directly — no Hamlib open/close — to avoid the baud-rate
-        corruption caused by rapid open→close→reopen cycles on the IC-9100.
-        (Hamlib's set_func(SATMODE) sends 16 59 which is Dual Watch, not SAT.)
+        Opens the rig, sends set_func(RIG_FUNC_SATMODE, 1) via Hamlib (which
+        automatically uses the correct CI-V per model: 16 5A for IC-9100/9700,
+        1A 07 for IC-910H), then closes.  Called from a background thread at
+        app startup so the delay is invisible to the user.
         """
-        if not self._satmode:
+        if not self._satmode or self._hamlib is None:
             return
-        self._satmode_preopen_civ(enable=True)
-        logger.info("RigDirect: satmode warmup complete (CI-V 16 5A 01 sent)")
+        _H = self._hamlib
+        if not hasattr(_H, "RIG_FUNC_SATMODE"):
+            return
+        try:
+            rig = _H.Rig(self._model_id)
+            rig.set_conf("rig_pathname", self._port)
+            rig.set_conf("serial_speed", str(self._baud_rate))
+            if self._civ_addr:
+                addr = self._civ_addr
+                if not addr.lower().startswith("0x"):
+                    addr = "0x" + addr
+                rig.set_conf("civaddr", addr)
+            rig.open()
+            time.sleep(0.3)
+            rig.set_func(_H.RIG_FUNC_SATMODE, 1)
+            time.sleep(0.1)
+            rig.close()
+            logger.info("RigDirect: satmode warmup complete (Hamlib set_func SATMODE)")
+        except Exception as exc:
+            logger.warning("RigDirect: satmode warmup failed — %s", exc)
 
     def _vfo_str_to_const(self, vfo: str) -> int:
         """Convert a VFO string to the corresponding Hamlib constant (or 0 in mock mode)."""
