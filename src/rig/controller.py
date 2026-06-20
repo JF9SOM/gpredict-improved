@@ -1400,9 +1400,13 @@ class HamlibDirectController(RigController):
         1A 07 for IC-910H), then closes.  Called from a background thread at
         app startup so the delay is invisible to the user.
         """
-        if not self._satmode or self._hamlib is None:
+        if not self._satmode:
             return
-        _H = self._hamlib
+        try:
+            import Hamlib as _H
+        except ImportError:
+            logger.warning("RigDirect: satmode_warmup — Hamlib not available")
+            return
         if not hasattr(_H, "RIG_FUNC_SATMODE"):
             return
         try:
