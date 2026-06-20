@@ -2235,7 +2235,20 @@ class HamlibNetController(RigController):
                 self.send_mode_only(dl_mode, ul_mode)
                 self._apply_ctcss_civ_direct(ctcss_hz)
         else:
-            super().apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
+            # Non-satmode rigs (FTX-1F, FT-991A, etc.):
+            # send_mode_only uses V Sub/V Main which leaves TX on Main after the
+            # last V Main command.  Bracket the mode set with split init so TX
+            # stays on Sub (uplink) both before and after mode is applied.
+            logger.info(
+                "RigNet: apply_transponder_state dl=%s ul=%s ctcss=%.1f",
+                dl_mode,
+                ul_mode,
+                ctcss_hz,
+            )
+            self._send_split_init_independent()
+            self.send_mode_only(dl_mode, ul_mode)
+            self._send_split_init_independent()
+            self.set_ctcss_tone(ctcss_hz)
 
     def get_rig_info(self) -> RigInfo | None:
         if not self.is_connected:
