@@ -478,7 +478,7 @@ class _RigPanel(QWidget):
         ctcss_form = self._ctcss_form
         self._ctcss_method_combo = QComboBox()
         self._ctcss_method_combo.addItem(_("Hamlib standard"), "hamlib")
-        self._ctcss_method_combo.addItem(_("IC-9700/9100 (CI-V)"), "icom_civ")
+        self._ctcss_method_combo.addItem(_("IC-9700/9100/910H/821H (CI-V)"), "icom_civ")
         self._ctcss_method_combo.addItem(_("FTX-1 (Custom CAT)"), "ftx1")
         self._ctcss_method_combo.addItem(_("FT-991 (Custom CAT)"), "ft991")
         self._ctcss_method_combo.addItem(_("Custom CAT command"), "custom_cat")
