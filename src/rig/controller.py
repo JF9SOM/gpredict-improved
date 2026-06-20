@@ -1149,7 +1149,7 @@ class HamlibDirectController(RigController):
         enable = ctcss_hz > 0
         tone_deci = int(round(abs(ctcss_hz) * 10)) if enable else 0
 
-        def _make_rig() -> object:
+        def _make_rig() -> Any:
             r = _H.Rig(self._model_id)
             r.set_conf("rig_pathname", self._port)
             r.set_conf("serial_speed", str(self._baud_rate))
