@@ -1147,35 +1147,54 @@ class HamlibDirectController(RigController):
         enable = ctcss_hz > 0
         tone_deci = int(round(abs(ctcss_hz) * 10)) if enable else 0
 
-        rig = None
-        try:
-            rig = _H.Rig(self._model_id)
-            rig.set_conf("rig_pathname", self._port)
-            rig.set_conf("serial_speed", str(self._baud_rate))
+        def _make_rig() -> object:
+            r = _H.Rig(self._model_id)
+            r.set_conf("rig_pathname", self._port)
+            r.set_conf("serial_speed", str(self._baud_rate))
             if self._civ_addr:
                 addr = self._civ_addr
                 if not addr.lower().startswith("0x"):
                     addr = "0x" + addr
-                rig.set_conf("civaddr", addr)
+                r.set_conf("civaddr", addr)
+            return r
+
+        rig = None
+        rig2 = None
+        try:
             with self._port_lock:
+                # Step 1: open → set_func(SATMODE, 1) → close
+                # This sends CI-V 16 5A 01 to the rig.
+                rig = _make_rig()
                 rig.open()
-                time.sleep(0.2)
+                time.sleep(0.3)
+                rig.set_func(_H.RIG_FUNC_SATMODE, 1)
+                time.sleep(0.3)
+                rig.close()
+                rig = None
+                time.sleep(0.3)
+
+                # Step 2: second open() reads satmode=1 from rig → cache->satmode=1
+                # This enables set_mode(VFO_MAIN/VFO_SUB) and set_freq(VFO_TX).
+                rig2 = _make_rig()
+                rig2.open()
+                time.sleep(0.3)
+
                 # Mode: Main (DL) and Sub (UL)
-                rig.set_mode(dl_hamlib, 0, vfo_main)
+                rig2.set_mode(dl_hamlib, 0, vfo_main)
                 time.sleep(0.1)
-                rig.set_mode(ul_hamlib, 0, vfo_sub)
+                rig2.set_mode(ul_hamlib, 0, vfo_sub)
                 time.sleep(0.1)
                 # CTCSS on Sub (TX/UL)
-                rig.set_vfo(vfo_sub)
+                rig2.set_vfo(vfo_sub)
                 time.sleep(0.1)
-                rig.set_ctcss_tone(vfo_sub, tone_deci)
+                rig2.set_ctcss_tone(vfo_sub, tone_deci)
                 time.sleep(0.1)
-                rig.set_func(func_tone, 1 if enable else 0)
+                rig2.set_func(func_tone, 1 if enable else 0)
                 time.sleep(0.1)
                 # Restore Main and clear any bleed-through
-                rig.set_vfo(vfo_main)
+                rig2.set_vfo(vfo_main)
                 time.sleep(0.1)
-                rig.set_func(func_tone, 0)
+                rig2.set_func(func_tone, 0)
             logger.info(
                 "RigDirect._apply_mode_and_ctcss_hamlib: dl=%s ul=%s ctcss=%.1fHz OK",
                 dl_mode,
@@ -1190,6 +1209,9 @@ class HamlibDirectController(RigController):
             if rig is not None:
                 with contextlib.suppress(Exception):
                     rig.close()
+            if rig2 is not None:
+                with contextlib.suppress(Exception):
+                    rig2.close()
 
     def _apply_mode_and_ctcss_cat_ftx1(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
         """Set mode and CTCSS on FTX-1F via raw CAT commands (no Hamlib calls).
