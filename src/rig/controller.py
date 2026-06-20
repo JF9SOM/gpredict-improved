@@ -527,6 +527,12 @@ class HamlibDirectController(RigController):
                         addr = "0x" + addr
                     rig.set_conf("civaddr", addr)
                     logger.info("RigDirect: CI-V address set to %s", addr)
+                # Satmode rigs: enter SAT mode via CI-V 16 5A 01 before open.
+                # Hamlib's set_func(SATMODE) sends 16 59 (Dual Watch), not 16 5A
+                # (SAT Mode). Sending 16 5A before open keeps cache.satmode=0,
+                # allowing set_freq(VFO_TX) to write UL without ic9700_set_vfo rejection.
+                if self._satmode:
+                    self._satmode_preopen_civ(enable=True)
                 with self._port_lock:
                     rig.open()
                 self._rig = rig
@@ -771,8 +777,8 @@ class HamlibDirectController(RigController):
                     raise RigControlError(f"CI-V no ACK after 3 attempts: {f.hex()}")
 
                 try:
-                    send(frame(0x16, 0x59, 0x00))  # SATMODE OFF — reset state
-                    send(frame(0x16, 0x59, 0x01))  # SATMODE ON — re-enter clean
+                    send(frame(0x16, 0x5A, 0x00))  # SAT MODE OFF — reset state (16 5A = SAT mode)
+                    send(frame(0x16, 0x5A, 0x01))  # SAT MODE ON — re-enter clean
                     send(frame(0x07, 0xD1))  # Select Sub
                     send(frame(0x1B, 0x00, *tone_bcd))  # Tone freq
                     send(frame(0x16, 0x42, tone_byte))  # TONE ON/OFF on Sub
@@ -939,18 +945,24 @@ class HamlibDirectController(RigController):
                             logger.info("RigDirect same-band: set_vfo(VFOA) to restore DL display")
                             self._rig.set_vfo(rx_vfo)
                 else:
-                    # Cross-band: use satmode (IC-9100/9700 firmware routing).
-                    # Always use RIG_VFO_MAIN for DL and RIG_VFO_SUB_A for UL
-                    # explicitly — never RIG_VFO_CURR.  The icom backend leaves
-                    # CURR pointing at Sub_A after set_freq(Sub_A, ...) which
-                    # caused DL to be written to Sub on the next tick.
+                    # Cross-band: SAT mode is active (entered via CI-V 16 5A 01
+                    # before rig.open()).  Hamlib cache.satmode stays 0, so
+                    # set_freq(VFO_TX) writes Sub (TX/UL) without ic9700_set_vfo
+                    # rejection.  No satmode toggle needed.
                     main_vfo = int(_H.RIG_VFO_MAIN)
+                    vfo_tx = int(_H.RIG_VFO_TX)
                     if vfoa_hz is not None:
                         last_dl = self._last_dl_hz
                         if last_dl is None or self._freq_band(vfoa_hz) != self._freq_band(last_dl):
-                            # Pass UL so it is written inside _satmode_enter while
-                            # satmode is temporarily OFF (cache.satmode=False → SUB_A allowed).
-                            self._satmode_enter(vfoa_hz, vfob_hz)
+                            # Band change or first tick: write DL and reset UL
+                            # cache so VFO_TX fires on the very next iteration.
+                            logger.info(
+                                "RigDirect satmode DL (band/init): set_freq(MAIN, %d)", int(vfoa_hz)
+                            )
+                            self._rig.set_freq(main_vfo, int(vfoa_hz))
+                            self._last_dl_hz = vfoa_hz
+                            self._last_ul_hz = None
+                            self._last_ul_update_time = 0.0
                         elif abs(vfoa_hz - last_dl) >= 1.0:
                             logger.info("RigDirect satmode DL: set_freq(MAIN, %d)", int(vfoa_hz))
                             self._rig.set_freq(main_vfo, int(vfoa_hz))
@@ -961,9 +973,6 @@ class HamlibDirectController(RigController):
                             "RigDirect satmode: vfob_hz is None — no uplink defined, UL skipped"
                         )
                     else:
-                        # Read _last_ul_hz AFTER the DL block above: if _satmode_enter
-                        # just wrote UL, _last_ul_hz is already updated and the threshold
-                        # check below will correctly suppress an immediate re-write.
                         last_ul = self._last_ul_hz
                         now = time.monotonic()
                         elapsed = now - self._last_ul_update_time
@@ -975,28 +984,13 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            # Periodic UL update: briefly toggle satmode OFF so that
-                            # ic9700_set_vfo allows RIG_VFO_SUB_A (rejected while
-                            # cache.satmode=True).
-                            vfo_curr = int(_H.RIG_VFO_CURR)
-                            sub_vfo = int(_H.RIG_VFO_SUB_A)
-                            logger.info(
-                                "RigDirect satmode UL: set_freq(SUB_A) via toggle %d Hz",
-                                int(vfob_hz),
-                            )
+                            logger.info("RigDirect satmode UL: set_freq(VFO_TX, %d)", int(vfob_hz))
                             try:
-                                self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
-                                time.sleep(
-                                    0.2
-                                )  # Allow rig to fully process satmode OFF before next CI-V
-                                self._rig.set_freq(sub_vfo, int(vfob_hz))
-                                self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
+                                self._rig.set_freq(vfo_tx, int(vfob_hz))
                                 self._last_ul_hz = vfob_hz
                                 self._last_ul_update_time = now
                             except Exception as exc:
-                                logger.warning("RigDirect satmode UL toggle: %s", exc)
-                                with contextlib.suppress(Exception):
-                                    self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
+                                logger.warning("RigDirect satmode UL VFO_TX: %s", exc)
 
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
@@ -1305,54 +1299,31 @@ class HamlibDirectController(RigController):
 
     # -- Internal utilities --
 
-    def _satmode_enter(self, dl_hz: float, ul_hz: float | None = None) -> None:
-        """Enable satmode with Main on the band of *dl_hz*.
+    def _satmode_preopen_civ(self, enable: bool) -> None:
+        """Send CI-V 16 5A 01/00 (SAT mode ON/OFF) via pyserial.
 
-        Sequences: satmode OFF → set_freq(CURR, dl_hz) [band switch]
-                               → set_freq(SUB_A, ul_hz) [UL while cache.satmode=False]
-                               → satmode ON.
-
-        ic9700_set_vfo only rejects RIG_VFO_SUB_A when cache.satmode=True.
-        Writing UL here, while satmode is temporarily OFF, avoids that rejection.
-        If ul_hz is provided and successfully written, _last_ul_hz is updated so
-        the caller's UL block does not immediately re-trigger.
+        Must be called when the serial port is FREE (before Hamlib open or
+        after Hamlib close).  CI-V 16 5A is the correct satmode command;
+        Hamlib's set_func(RIG_FUNC_SATMODE) sends 16 59 (Dual Watch) instead.
         """
-        if self._rig is None or self._hamlib is None:
-            return
-        _H = self._hamlib
-        if not hasattr(_H, "RIG_FUNC_SATMODE"):
-            return
-        vfo_curr = int(_H.RIG_VFO_CURR)
-        sub_vfo = int(_H.RIG_VFO_SUB_A)
-        logger.info(
-            "RigDirect: entering satmode, Main → %s (%.3f MHz)",
-            self._freq_band(dl_hz),
-            dl_hz / 1e6,
-        )
-        ul_written = False
         try:
-            self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
-            time.sleep(0.2)  # Allow rig to fully process satmode OFF before next CI-V
-            self._rig.set_freq(vfo_curr, int(dl_hz))
-            if ul_hz is not None:
-                self._rig.set_freq(sub_vfo, int(ul_hz))  # SUB_A allowed: cache.satmode=False
-                ul_written = True
-                logger.info(
-                    "RigDirect: satmode UL init set_freq(SUB_A, %d) while satmode=OFF", int(ul_hz)
-                )
-            self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
-            self._satmode_active = True
-            self._last_dl_hz = dl_hz
-            if ul_written:
-                self._last_ul_hz = ul_hz
-                self._last_ul_update_time = time.monotonic()
+            import serial
+        except ImportError:
+            logger.warning("RigDirect: pyserial not available — satmode CI-V skipped")
+            return
+        civ = self._civ_addr_int()
+        data = 0x01 if enable else 0x00
+        frame = bytes([0xFE, 0xFE, civ, 0xE0, 0x16, 0x5A, data, 0xFD])
+        try:
+            ser = serial.Serial(self._port, self._baud_rate, timeout=0.5)
+            ser.write(frame)
+            time.sleep(0.15)
+            ser.close()
+            logger.info(
+                "RigDirect: CI-V 16 5A %02X sent (SAT mode %s)", data, "ON" if enable else "OFF"
+            )
         except Exception as exc:
-            logger.warning("RigDirect: _satmode_enter failed — %s", exc)
-        finally:
-            self._last_dl_update_time = 0.0
-            if not ul_written:
-                self._last_ul_hz = None
-                self._last_ul_update_time = 0.0
+            logger.warning("RigDirect: _satmode_preopen_civ failed — %s", exc)
 
     def _apply_ctcss_civ_via_send_raw(self, tone_hz: float) -> None:
         """Apply CTCSS via rig.send_raw() while Hamlib already holds the port.
@@ -1402,12 +1373,15 @@ class HamlibDirectController(RigController):
         _H = self._hamlib
         if not hasattr(_H, "RIG_FUNC_SATMODE"):
             return
-        vfo_curr = int(_H.RIG_VFO_CURR)
         rx_vfo = self._vfo_str_to_const("VFOA")
         tx_vfo = self._vfo_str_to_const("VFOB")
         logger.info("RigDirect: exiting satmode → normal VFO-A/B split (same-band)")
         try:
-            self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 0)
+            # CI-V 16 5A 00 exits SAT mode; send via send_raw while Hamlib holds the port.
+            civ = self._civ_addr_int()
+            sat_off = bytes([0xFE, 0xFE, civ, 0xE0, 0x16, 0x5A, 0x00, 0xFD])
+            self._rig.send_raw(sat_off)
+            time.sleep(0.1)
             self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
         except Exception as exc:
             logger.warning("RigDirect: _satmode_exit failed — %s", exc)
@@ -1421,29 +1395,18 @@ class HamlibDirectController(RigController):
     def _init_split(self) -> None:
         """Enable split/satmode. Called once at connect.
 
-        Icom satmode rigs (IC-9700 etc.): rig.set_func(RIG_FUNC_SATMODE, 1)
-        sends the correct CI-V write frame (fe fe a2 e0 16 59 01 fd) via
-        icom_set_func().  set_conf("satmode", "1") only sets an internal Hamlib
-        flag and does NOT send a CI-V command; set_split_vfo(MAIN, 1, MAIN)
-        only generates a CI-V read query (16 59 fd) — both are wrong.
-        Falls back to set_conf if RIG_FUNC_SATMODE is not in the binding.
+        Satmode rigs (IC-9100/IC-9700): SAT mode was already entered via
+        CI-V 16 5A 01 (pyserial) BEFORE rig.open() in connect().  Hamlib's
+        cache.satmode stays 0 (we never called set_func through Hamlib), which
+        allows set_freq(VFO_TX) to write the UL frequency without rejection.
         Generic rigs: conventional VFOA/VFOB split via set_split_vfo.
         """
         if self._rig is None:
             return
         try:
             if self._satmode:
-                _H = self._hamlib
-                if _H is not None and hasattr(_H, "RIG_FUNC_SATMODE"):
-                    vfo_curr = int(_H.RIG_VFO_CURR)
-                    self._rig.set_func(vfo_curr, _H.RIG_FUNC_SATMODE, 1)
-                    # IC-9100/IC-9700 need ~1 s after SATMODE ON for the dual-band
-                    # routing hardware to fully initialize.  Without this delay the
-                    # immediately-following _satmode_enter (SATMODE OFF → set_freq
-                    # SUB_A → SATMODE ON) silently fails to write the UL frequency.
-                    time.sleep(1.0)
-                    self._satmode_active = True
-                    logger.info("RigDirect: satmode ON via set_func(RIG_FUNC_SATMODE)")
+                self._satmode_active = True
+                logger.info("RigDirect: satmode active (entered via CI-V 16 5A before open)")
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 tx_vfo = self._vfo_str_to_const("VFOB")
@@ -1455,40 +1418,18 @@ class HamlibDirectController(RigController):
     def satmode_warmup(self) -> None:
         """Pre-initialize satmode hardware before the user presses Connect.
 
-        Opens a temporary Hamlib connection, sends SATMODE ON, waits 1.5 s for
-        the IC-9100/IC-9700 dual-band routing hardware to initialize, then
-        closes immediately.  Called from a background thread at app startup so
-        the delay is invisible to the user.
+        Sends CI-V 16 5A 01 (SAT mode ON) via pyserial so the IC-9100/IC-9700
+        dual-band routing hardware is initialized before connect().  Called
+        from a background thread at app startup; delay is invisible to the user.
 
-        If the port is busy (another process holds it) the method silently
-        returns — the 1-second sleep inside _init_split acts as fallback.
+        Uses pyserial directly — no Hamlib open/close — to avoid the baud-rate
+        corruption caused by rapid open→close→reopen cycles on the IC-9100.
+        (Hamlib's set_func(SATMODE) sends 16 59 which is Dual Watch, not SAT.)
         """
         if not self._satmode:
             return
-        _H = self._hamlib
-        if _H is None or not hasattr(_H, "RIG_FUNC_SATMODE"):
-            return
-        tmp_rig = None
-        try:
-            tmp_rig = _H.Rig(self._model_id)
-            tmp_rig.set_conf("rig_pathname", self._port)
-            tmp_rig.set_conf("serial_speed", str(self._baud_rate))
-            if self._civ_addr:
-                addr = self._civ_addr.strip()
-                if not addr.startswith("0x") and not addr.startswith("0X"):
-                    addr = f"0x{int(addr, 16):02X}"
-                tmp_rig.set_conf("civaddr", addr)
-            tmp_rig.open()
-            tmp_rig.set_func(int(_H.RIG_VFO_CURR), _H.RIG_FUNC_SATMODE, 1)
-            logger.info("RigDirect: satmode warmup — SATMODE ON sent, waiting 1.5 s")
-            time.sleep(1.5)
-            tmp_rig.close()
-            logger.info("RigDirect: satmode warmup complete")
-        except Exception as exc:
-            logger.debug("RigDirect: satmode warmup skipped — %s", exc)
-            with contextlib.suppress(Exception):
-                if tmp_rig is not None:
-                    tmp_rig.close()
+        self._satmode_preopen_civ(enable=True)
+        logger.info("RigDirect: satmode warmup complete (CI-V 16 5A 01 sent)")
 
     def _vfo_str_to_const(self, vfo: str) -> int:
         """Convert a VFO string to the corresponding Hamlib constant (or 0 in mock mode)."""
