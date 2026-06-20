@@ -1146,7 +1146,7 @@ V Main → M {dl_mode} 0  （Main=RX=ダウンリンク）
 ```
 
 `send_mode_only()` は `_is_same_band` フラグで上記3パターンを自動分岐する。
-S 1 Main / S 1 VFOB はモード設定の直前に独立ソケットで送信（`S 1 Main` は接続時の `_init_vfo()` でも送るが、`send_mode_only()` 内でも重複して送ることで順序を保証する）。
+S 1 Main / S 1 VFOB は `apply_transponder_state()` 内の `_send_split_init_independent()` でモード設定より先に独立ソケットで送信し、satmodeを確立してからmode・CTCSSを設定する（Direct modeと同じ順序）。`connect()` の `_init_vfo()` でも再送されるが、リグはすでにSATモードに入っているため冪等。
 
 ### 動作確認環境
 - リグ: Yaesu FTX-1F
@@ -1272,10 +1272,11 @@ return self._satmode or self._ctcss_method == "icom_civ"
 4. If rig is connected: `_disconnect_rig()` first (user must re-press Connect for new satellite)
 5. Background thread: `apply_transponder_state(dl_mode, ul_mode, ctcss_hz)`
    - acquires `_cmd_lock` (pauses Doppler F/I)
+   - `_send_split_init_independent()` — **`S 1 Main`（または同バンド時は `S 1 VFOB`）を独立ソケットで先送り**してsatmodeを確立（Direct modeの `set_func(SATMODE,1)` に相当）
    - `send_mode_only()` via independent socket (VFO branch by `_is_same_band`)
    - `_apply_ctcss_civ_direct()` via rigctld TCP commands (`V Sub / L CTCSS_TONE / U TONE / V Main / U TONE 0`)
 
-**No re-send after Connect**: mode and CTCSS are sent BEFORE Connect (at transponder selection). No reconnect-triggered re-send. IC-9100 confirmed: satmode entry does NOT reset CTCSS state.
+**順序の根拠**: satmode確立→mode設定→CTCSS設定 の順序はDirect modeと同じ。`S 1 Main` を先に送ることでCTCSSがsatmode確立時にリセットされなくなり、トランスポンダー選択直後にTの字が表示される。`connect()` の `_init_vfo()` が再度 `S 1 Main` を送っても、リグはすでにSATモードに入っているためCTCSS状態をリセットしない。
 
 **Auto-disconnect on satellite change**: when `rig.is_satmode == True` and `rig.is_connected == True`, `_apply_transponder_state_to_rig()` calls `_disconnect_rig()` before re-sending mode/CTCSS. User must manually re-press Connect for the new satellite.
 
@@ -1291,7 +1292,7 @@ return self._satmode or self._ctcss_method == "icom_civ"
 >   - HF/VHF クロスバンド（AO-7: 29MHz DL / 145MHz UL）: SAT mode 正常動作確認済み
 >   - `satmode_warmup()`: 起動時に直接 `import Hamlib` することで正常動作（`self._hamlib is None` 問題を修正）
 > - **NET モード（IC-9100 + rigctld）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み
->   - モード: `send_mode_only()` via independent rigctld socket
+>   - トランスポンダー選択時の順序: `_send_split_init_independent()`（S 1 Main）→ `send_mode_only()` → `_apply_ctcss_civ_direct()`（Direct modeと同じ順序。トランスポンダー選択直後にTの字が表示される）
 >   - CTCSS: `_apply_ctcss_civ_direct()` が rigctld TCP コマンド（`V Sub / L CTCSS_TONE / U TONE / V Main / U TONE 0`）を送信（pyserial 廃止・macOS でも動作）
 >   - HF/VHF クロスバンド（AO-7: 29MHz DL / 145MHz UL）: SAT mode 正常動作確認済み
 
