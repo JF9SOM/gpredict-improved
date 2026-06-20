@@ -88,8 +88,6 @@ _FALLBACK_MODELS: list[tuple[int, str, str]] = [
     (1046, "Yaesu", "FT-450D"),
     (1051, "Yaesu", "FTX-1"),
     # Kenwood  (RIG_KENWOOD=2, base=2000)
-    (2001, "Kenwood", "TS-50S"),
-    (2002, "Kenwood", "TS-440S"),
     (2003, "Kenwood", "TS-450S"),
     (2004, "Kenwood", "TS-570D"),
     (2005, "Kenwood", "TS-690S"),
@@ -97,7 +95,6 @@ _FALLBACK_MODELS: list[tuple[int, str, str]] = [
     (2007, "Kenwood", "TS-790E"),
     (2009, "Kenwood", "TS-850S"),
     (2010, "Kenwood", "TS-870S"),
-    (2011, "Kenwood", "TS-940S"),
     (2013, "Kenwood", "TS-950SDX"),
     (2014, "Kenwood", "TS-2000"),
     (2016, "Kenwood", "TS-570S"),
@@ -115,16 +112,7 @@ _FALLBACK_MODELS: list[tuple[int, str, str]] = [
     (2044, "Elecraft", "KX2"),
     (2045, "Elecraft", "KX3"),
     # Icom  (RIG_ICOM=3, base=3000)
-    (3009, "Icom", "IC-706"),
-    (3010, "Icom", "IC-706MkII"),
-    (3011, "Icom", "IC-706MkIIG"),
     (3013, "Icom", "IC-718"),
-    (3016, "Icom", "IC-728"),
-    (3017, "Icom", "IC-729"),
-    (3019, "Icom", "IC-735"),
-    (3020, "Icom", "IC-736"),
-    (3021, "Icom", "IC-737"),
-    (3022, "Icom", "IC-738"),
     (3023, "Icom", "IC-746"),
     (3026, "Icom", "IC-756"),
     (3027, "Icom", "IC-756Pro"),
@@ -151,9 +139,6 @@ _FALLBACK_MODELS: list[tuple[int, str, str]] = [
     (3085, "Icom", "IC-705"),
     # Alinco  (RIG_ALINCO=17, base=17000)
     (17001, "Alinco", "DX-77"),
-    # TenTec  (RIG_TENTEC=16, base=16000)
-    (16002, "TenTec", "Jupiter"),
-    (16008, "TenTec", "Orion"),
     # SDR
     (3000801, "HPSDR", "Apache Labs ANAN-7000DLE MKII"),
 ]
