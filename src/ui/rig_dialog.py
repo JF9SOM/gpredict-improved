@@ -476,18 +476,15 @@ class _RigPanel(QWidget):
         self._ctcss_group = ctcss_group
         self._ctcss_form = QFormLayout(ctcss_group)
         ctcss_form = self._ctcss_form
+        self._icom_satmode_cb = QCheckBox(_("Icom SAT mode rig (IC-9100/9700/910H/821H)"))
+        ctcss_form.addRow("", self._icom_satmode_cb)
         self._ctcss_method_combo = QComboBox()
         self._ctcss_method_combo.addItem(_("Hamlib standard"), "hamlib")
-        self._ctcss_method_combo.addItem(_("IC-9700/9100/910H/821H (CI-V)"), "icom_civ")
         self._ctcss_method_combo.addItem(_("FTX-1 (Custom CAT)"), "ftx1")
         self._ctcss_method_combo.addItem(_("FT-991 (Custom CAT)"), "ft991")
         self._ctcss_method_combo.addItem(_("Custom CAT command"), "custom_cat")
         self._ctcss_method_combo.currentIndexChanged.connect(self._on_ctcss_method_changed)
         ctcss_form.addRow(_("CTCSS Method:"), self._ctcss_method_combo)
-        self._ctcss_civ_addr_edit = QLineEdit()
-        _set_placeholder_color(self._ctcss_civ_addr_edit)
-        self._ctcss_civ_addr_edit.setMaximumWidth(200)
-        ctcss_form.addRow(_("CI-V Address (Icom):"), self._ctcss_civ_addr_edit)
         self._ctcss_cat_on_edit = QLineEdit()
         self._ctcss_cat_on_edit.setPlaceholderText(_("e.g. CN1{tone:03d};CT11;"))
         ctcss_form.addRow(_("CAT ON command:"), self._ctcss_cat_on_edit)
@@ -596,12 +593,7 @@ class _RigPanel(QWidget):
         """Test the Direct CAT baud rate (CTCSS/mode port)."""
         port = self._direct_cat_port_edit.currentText()
         baud = int(self._direct_cat_baud_combo.currentText())
-        method = self._ctcss_method_combo.currentData()
-        if method == "icom_civ":
-            civ_addr = int(self._ctcss_civ_addr_edit.text().strip() or "0", 16)
-            self._run_baud_test(port, baud, self._cat_baud_test_btn, "civ", civ_addr)
-        else:
-            self._run_baud_test(port, baud, self._cat_baud_test_btn, "if", 0)
+        self._run_baud_test(port, baud, self._cat_baud_test_btn, "if", 0)
 
     def _run_baud_test(
         self,
@@ -672,24 +664,14 @@ class _RigPanel(QWidget):
         threading.Thread(target=_test, daemon=True).start()
 
     def _on_ctcss_method_changed(self) -> None:
-        """Show/hide CAT/CI-V fields based on the selected CTCSS method."""
+        """Show/hide CAT fields based on the selected CTCSS method."""
         method = self._ctcss_method_combo.currentData()
-        is_civ = method == "icom_civ"
         is_cat = method in CTCSS_PRESET_TEMPLATES or method == "custom_cat"
-        show_port = is_cat or is_civ
 
-        # QFormLayout.setRowVisible hides both label and field together (Qt 6)
-        self._ctcss_form.setRowVisible(self._ctcss_civ_addr_edit, is_civ)
-        self._ctcss_form.setRowVisible(self._ctcss_cat_on_edit, not is_civ)
-        self._ctcss_form.setRowVisible(self._ctcss_cat_off_edit, not is_civ)
-        self._ctcss_form.setRowVisible(self._direct_cat_port_row, show_port)
-        self._ctcss_form.setRowVisible(self._direct_cat_baud_row, show_port)
-
-        if not is_civ:
-            # Restore the standard placeholder for CAT-based methods
-            _le = self._direct_cat_port_edit.lineEdit()
-            if _le is not None:
-                _le.setPlaceholderText(_("e.g. /dev/ttyUSB0  (empty = use rigctld w cmd)"))
+        self._ctcss_form.setRowVisible(self._ctcss_cat_on_edit, True)
+        self._ctcss_form.setRowVisible(self._ctcss_cat_off_edit, True)
+        self._ctcss_form.setRowVisible(self._direct_cat_port_row, is_cat)
+        self._ctcss_form.setRowVisible(self._direct_cat_baud_row, is_cat)
 
         if method in CTCSS_PRESET_TEMPLATES:
             on_cmd, off_cmd = CTCSS_PRESET_TEMPLATES[method]
@@ -700,29 +682,6 @@ class _RigPanel(QWidget):
         elif method == "custom_cat":
             self._ctcss_cat_on_edit.setEnabled(True)
             self._ctcss_cat_off_edit.setEnabled(True)
-        elif is_civ:
-            # Build placeholder from Hamlib defaults for the 4 satmode models.
-            # _get_icom_default_civ() is cached so only slow on the first call.
-            _SATMODE_MODELS = [
-                (3081, "IC-9700"),
-                (3068, "IC-9100"),
-                (3044, "IC-910H"),
-                (3034, "IC-821H"),
-            ]
-            hints = []
-            for mid, name in _SATMODE_MODELS:
-                addr = _get_icom_default_civ(mid)
-                if addr:
-                    hints.append(f"{name}: {addr}")
-            if hints:
-                placeholder = _("hex (e.g. {examples})").format(examples=", ".join(hints))
-            else:
-                placeholder = _("hex as shown on rig CI-V menu")
-            self._ctcss_civ_addr_edit.setPlaceholderText(placeholder)
-            # Direct CAT Port is required for CI-V; override the FT-991 placeholder
-            self._direct_cat_port_edit.setPlaceholderText(
-                _("e.g. /dev/ttyUSB0  (required — rigctld w cmd does not work for Icom CI-V)")
-            )
         else:  # "hamlib"
             self._ctcss_cat_on_edit.setText("")
             self._ctcss_cat_off_edit.setText("")
@@ -870,8 +829,11 @@ class _RigPanel(QWidget):
                     self._split_mode_combo.setCurrentIndex(i)
                     break
 
-        # CTCSS
+        # CTCSS — migrate legacy "icom_civ" method to "hamlib" + satmode checkbox
         ctcss_method = str(s.get("ctcss_method", "hamlib"))
+        if ctcss_method == "icom_civ":
+            ctcss_method = "hamlib"
+            self._icom_satmode_cb.setChecked(True)
         for i in range(self._ctcss_method_combo.count()):
             if self._ctcss_method_combo.itemData(i) == ctcss_method:
                 self._ctcss_method_combo.setCurrentIndex(i)
@@ -883,7 +845,7 @@ class _RigPanel(QWidget):
         idx = self._direct_cat_baud_combo.findText(baud_str)
         if idx >= 0:
             self._direct_cat_baud_combo.setCurrentIndex(idx)
-        self._ctcss_civ_addr_edit.setText(str(s.get("ctcss_civ_addr", "")))
+        self._icom_satmode_cb.setChecked(bool(s.get("icom_satmode_rig", False)))
 
         self._civ_addr_edit.setText(str(s.get("civ_addr", "")))
         self._on_ctcss_method_changed()
@@ -910,7 +872,7 @@ class _RigPanel(QWidget):
             "ctcss_cat_off": self._ctcss_cat_off_edit.text(),
             "direct_cat_port": self._direct_cat_port_edit.currentText(),
             "direct_cat_baud": int(self._direct_cat_baud_combo.currentText()),
-            "ctcss_civ_addr": self._ctcss_civ_addr_edit.text().strip(),
+            "icom_satmode_rig": self._icom_satmode_cb.isChecked(),
         }
         # Rig 1: store its own radio_type (used when Rig 2 is disabled)
         if self._rig_index == 1 and self._radio_type_combo is not None:

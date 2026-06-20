@@ -1592,6 +1592,7 @@ class HamlibNetController(RigController):
         direct_cat_baud: int = 38400,
         ctcss_method: str = "hamlib",
         ctcss_civ_addr: str = "",
+        is_satmode_rig: bool = False,
     ) -> None:
         """
         Args:
@@ -1602,10 +1603,10 @@ class HamlibNetController(RigController):
             direct_cat_port:  Serial port for direct CAT (bypasses rigctld w cmd).
                               Empty string disables direct CAT (uses rigctld).
             direct_cat_baud:  Baud rate for direct_cat_port (default 38400)
-            ctcss_method:     CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat",
-                              "icom_civ").
-            ctcss_civ_addr:   CI-V address for Icom rigs when ctcss_method=="icom_civ"
-                              (e.g. "65" or "0x65"). Default 0x65 (IC-9100).
+            ctcss_method:     CTCSS method key ("hamlib", "ftx1", "ft991", "custom_cat").
+            ctcss_civ_addr:   Unused; kept for backward compatibility only.
+            is_satmode_rig:   True when the rig is an Icom satmode rig (IC-9100/9700/910H/821H).
+                              Controls satmode split init and same-band detection.
         """
         super().__init__()
         self._host = host
@@ -1615,6 +1616,7 @@ class HamlibNetController(RigController):
         self._direct_baud = direct_cat_baud
         self._ctcss_method = ctcss_method
         self._ctcss_civ_addr = ctcss_civ_addr.strip()
+        self._is_satmode_rig = is_satmode_rig
         self._sock: socket.socket | None = None
         self._vfo_mode: bool = False
         self._cmd_lock = threading.Lock()  # serialise send+recv to prevent response misalignment
@@ -1631,11 +1633,11 @@ class HamlibNetController(RigController):
     def is_satmode(self) -> bool:
         """True when the rig uses satmode.
 
-        Returns True if the model name was detected at connect time, or if
-        ctcss_method is "icom_civ" (user-configured indicator that this is an
-        Icom satmode rig) — reliable even when rigctld model-name detection fails.
+        Returns True if the model name was detected at connect time, or if the
+        "Icom SAT mode rig" checkbox was checked in Rig Settings — reliable even
+        when rigctld model-name detection fails.
         """
-        return self._satmode or self._ctcss_method == "icom_civ"
+        return self._satmode or self._is_satmode_rig
 
     def set_transponder_freqs(self, dl_hz: float, ul_hz: float) -> None:
         """Update same-band flag from transponder DL/UL frequencies.
@@ -1772,7 +1774,7 @@ class HamlibNetController(RigController):
         Sent through _cmd() so _cmd_lock serialises it and prevents buffer
         residue from an independent recv loop on the raw socket.
         """
-        is_satmode_rig = self._satmode or self._ctcss_method == "icom_civ"
+        is_satmode_rig = self._satmode or self._is_satmode_rig
         if is_satmode_rig and self._is_same_band:
             resp = self._cmd("S 1 VFOB")
             logger.info("RigNet: same-band split init (S 1 VFOB)")
@@ -1911,7 +1913,7 @@ class HamlibNetController(RigController):
                 last_ul = self._last_ul_hz
                 now = time.monotonic()
                 elapsed = now - self._last_ul_update_time
-                is_satmode_rig = self._satmode or self._ctcss_method == "icom_civ"
+                is_satmode_rig = self._satmode or self._is_satmode_rig
                 if is_satmode_rig and self._is_same_band:
                     # Satmode rigs (IC-9100 etc.) same-band: throttle I command to
                     # suppress display flicker caused by rapid VFOA↔VFOB switching.
@@ -2113,13 +2115,7 @@ class HamlibNetController(RigController):
 
         Each ';'-separated sub-command is wrapped as 'w <part>;' and forwarded
         verbatim to the rig's serial port by rigctld.
-
-        When ctcss_method is "icom_civ", binary CI-V frames are sent directly
-        via pyserial (cat_on_template / cat_off_template are ignored).
         """
-        if self._ctcss_method == "icom_civ":
-            self._apply_ctcss_civ_direct(tone_hz)
-            return
         if tone_hz > 0 and cat_on_template:
             tone_number = CTCSS_TABLE.get(tone_hz)
             if tone_number is None:
@@ -2225,7 +2221,7 @@ class HamlibNetController(RigController):
             # For icom satmode rigs establish split before setting modes.
             # Same-band (V/V or U/U): S 1 VFOB → normal split (VFOA=RX, VFOB=TX).
             # Cross-band: S 1 Main → satmode (Main=RX, Sub=TX).
-            is_satmode_rig = self._satmode or self._ctcss_method == "icom_civ"
+            is_satmode_rig = self._satmode or self._is_satmode_rig
             if is_satmode_rig:
                 if self._is_same_band:
                     # Same-band (V/V or U/U): normal split, VFOB=TX

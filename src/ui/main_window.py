@@ -2119,7 +2119,7 @@ class MainWindow(QMainWindow):
         threading.Thread(target=_do_send, daemon=True).start()
 
     # Methods that use custom CAT commands for CTCSS (not handled by Hamlib itself).
-    _CAT_CTCSS_METHODS: frozenset[str] = frozenset({"custom_cat", "ftx1", "ft991", "icom_civ"})
+    _CAT_CTCSS_METHODS: frozenset[str] = frozenset({"custom_cat", "ftx1", "ft991"})
 
     def _send_ctcss_cat_to_rig(self, tone_hz: float | None = None) -> None:
         """Send CTCSS tone to the rig when a transponder is selected or the button is pressed.
@@ -2716,15 +2716,10 @@ class MainWindow(QMainWindow):
                     settings: dict[str, Any] = json.loads(row["value"])
                     self._rig_controller = self._build_rig_controller(settings)
                     self._ctcss_method = str(settings.get("ctcss_method", "hamlib"))
-                    # icom_civ is a NET-mode-only method; Direct mode rigs use
-                    # HamlibDirectController.set_ctcss_tone() which handles CI-V
-                    # internally via pyserial.  Force "hamlib" so the correct path
-                    # is taken regardless of what was saved in the DB.
-                    if self._ctcss_method == "icom_civ" and isinstance(
-                        self._rig_controller, HamlibDirectController
-                    ):
+                    # Migrate legacy "icom_civ" value — Icom satmode rigs now use
+                    # Hamlib standard CTCSS (icom_civ dropdown was removed).
+                    if self._ctcss_method == "icom_civ":
                         self._ctcss_method = "hamlib"
-                        logger.info("Rig1: icom_civ CTCSS overridden to hamlib (Direct mode)")
                     # For preset methods, always use the current authoritative template from
                     # CTCSS_PRESET_TEMPLATES rather than the DB value, which may be stale.
                     if self._ctcss_method in CTCSS_PRESET_TEMPLATES:
@@ -2802,7 +2797,7 @@ class MainWindow(QMainWindow):
                 direct_cat_port=str(settings.get("direct_cat_port", "")),
                 direct_cat_baud=int(settings.get("direct_cat_baud", 38400)),
                 ctcss_method=str(settings.get("ctcss_method", "hamlib")),
-                ctcss_civ_addr=str(settings.get("ctcss_civ_addr", "")),
+                is_satmode_rig=bool(settings.get("icom_satmode_rig", False)),
             )
         return HamlibDirectController(
             model_id=int(settings.get("model_id", 1)),
