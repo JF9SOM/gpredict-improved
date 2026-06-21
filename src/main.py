@@ -88,6 +88,16 @@ if sys.platform == "linux":
 if sys.platform.startswith("linux") and "QT_IM_MODULE" not in os.environ:
     os.environ["QT_IM_MODULE"] = "xim"
 
+# Qt6 XKB fix: on some Linux setups (AppImage, non-Latin keyboard layouts such
+# as Japanese), Qt cannot locate the host XKB config files and logs
+# "qt.qpa.keymapper: no keyboard layouts with latin keys present", causing all
+# key input to stop working.  Pointing QT_XKB_CONFIG_ROOT at the system path
+# before QApplication is created resolves this.  Only applied when the variable
+# is not already set by the user and the directory exists on the host.
+if sys.platform.startswith("linux") and "QT_XKB_CONFIG_ROOT" not in os.environ:
+    if os.path.isdir("/usr/share/X11/xkb"):
+        os.environ["QT_XKB_CONFIG_ROOT"] = "/usr/share/X11/xkb"
+
 from PySide6.QtWidgets import QApplication
 
 from core.engine import PassPredictor, SatelliteEngine
