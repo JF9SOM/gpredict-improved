@@ -8,6 +8,8 @@ connect/disconnect buttons and status rows.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import threading
 from typing import Any
 
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -26,7 +29,13 @@ from PySide6.QtWidgets import (
 )
 
 from i18n import _
-from rig.controller import RigController, RigState, RotatorController, RotatorState
+from rig.controller import (
+    HamlibDirectController,
+    RigController,
+    RigState,
+    RotatorController,
+    RotatorState,
+)
 
 
 class RadioControlWidget(QWidget):
@@ -550,6 +559,60 @@ class RadioControlWidget(QWidget):
             self._rot_status_label.setStyleSheet("color: gray;")
             self._connect_rot_btn.setText(_("Connect Rotator"))
 
+    @staticmethod
+    def _rigctld_running() -> bool:
+        """Return True if a rigctld process is currently running."""
+        try:
+            if sys.platform == "win32":
+                result = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq rigctld.exe", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                return "rigctld" in result.stdout.lower()
+            else:
+                result = subprocess.run(
+                    ["pgrep", "-x", "rigctld"],
+                    capture_output=True,
+                    timeout=3,
+                )
+                return result.returncode == 0
+        except Exception:
+            return False
+
+    def _warn_rigctld_if_direct(self, rig: RigController) -> bool:
+        """Show a warning dialog if rigctld is running while connecting in Direct mode.
+
+        Returns True when the caller should proceed with connect(), False when
+        the user cancelled.  Handles the "stopped, retry" loop internally.
+        """
+        if not isinstance(rig, HamlibDirectController):
+            return True
+        while self._rigctld_running():
+            msg = QMessageBox(self)
+            msg.setWindowTitle(_("rigctld is running"))
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setText(
+                _(
+                    "rigctld is running and sharing the same serial port.\n\n"
+                    "Direct mode and rigctld cannot share the port reliably — "
+                    "frequency and mode writes may be corrupted.\n\n"
+                    "Stop rigctld before connecting:\n"
+                    "  Normal launch:   pkill rigctld\n"
+                    "  systemd service: sudo systemctl stop <service-name>"
+                )
+            )
+            retry_btn = msg.addButton(_("I stopped it, retry"), QMessageBox.ButtonRole.AcceptRole)
+            proceed_btn = msg.addButton(_("Connect anyway"), QMessageBox.ButtonRole.DestructiveRole)
+            msg.addButton(_("Cancel"), QMessageBox.ButtonRole.RejectRole)
+            msg.exec()
+            clicked = msg.clickedButton()
+            if clicked is retry_btn:
+                continue  # re-check
+            return clicked is proceed_btn
+        return True
+
     def _on_connect_rig1(self) -> None:
         if self._rig1 is None:
             return
@@ -557,6 +620,8 @@ class RadioControlWidget(QWidget):
             self._rig1.disconnect()
             self.rig_disconnected.emit()
             self._update_rig1_status()
+            return
+        if not self._warn_rigctld_if_direct(self._rig1):
             return
         # Disable button immediately to prevent queued double-clicks during connect.
         # Direct-mode rigs (IC-9100 etc.) can block for several seconds on _port_lock
@@ -587,6 +652,8 @@ class RadioControlWidget(QWidget):
             self._rig2.disconnect()
             self.rig2_disconnected.emit()
         else:
+            if not self._warn_rigctld_if_direct(self._rig2):
+                return
             self._rig2.connect()
             if self._rig2.is_connected:
                 self.rig2_connected.emit()
