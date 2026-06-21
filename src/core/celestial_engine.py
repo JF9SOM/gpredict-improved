@@ -15,9 +15,10 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from skyfield import almanac
 from skyfield.api import Loader, wgs84
 
-from core.engine import Observation
+from core.engine import Observation, PassInfo
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,113 @@ class CelestialEngine:
             if obs is not None:
                 result.append((obs.azimuth_deg, obs.elevation_deg))
         return result
+
+    def moon_events(
+        self,
+        observer_lat: float,
+        observer_lon: float,
+        observer_elev_m: float,
+        start: datetime,
+        end: datetime,
+    ) -> list[PassInfo]:
+        """Return Moonrise/transit/Moonset events as PassInfo objects.
+
+        Each visible window (Moonrise → Moonset) is represented as one PassInfo
+        where aos=Moonrise, tca=transit, los=Moonset.  Events whose Moonrise
+        falls before *start* but whose Moonset falls within the window are also
+        included (the Moon may already be above the horizon at *start*).
+
+        Returns an empty list when the ephemeris is not loaded.
+        """
+        if self._eph is None or self._ts is None:
+            return []
+        try:
+            observer = wgs84.latlon(observer_lat, observer_lon, elevation_m=observer_elev_m)
+            moon_body = self._eph[_MOON_BODY]
+
+            # Search ±1 day around the window to catch in-progress rises/sets
+            search_start = start - timedelta(days=1)
+            search_end = end + timedelta(hours=1)
+            t0 = self._ts.from_datetime(search_start)  # type: ignore[union-attr]
+            t1 = self._ts.from_datetime(search_end)  # type: ignore[union-attr]
+
+            f = almanac.risings_and_settings(self._eph, moon_body, observer)
+            times, is_rise = almanac.find_discrete(t0, t1, f)
+
+            # Build (rise_dt, set_dt) pairs
+            events: list[tuple[datetime, bool]] = [
+                (t.utc_datetime(), bool(r)) for t, r in zip(times, is_rise, strict=False)
+            ]
+
+            pairs: list[tuple[datetime, datetime]] = []
+            pending_rise: datetime | None = None
+            for ev_dt, rising in events:
+                if rising:
+                    pending_rise = ev_dt
+                elif pending_rise is not None:
+                    pairs.append((pending_rise, ev_dt))
+                    pending_rise = None
+
+            # If Moon is already above the horizon at start of the search window,
+            # there may be a leading set event with no preceding rise — represent
+            # it with an artificial AOS at the window start.
+            set_times = [ev_dt for ev_dt, r in events if not r]
+            rise_times = [ev_dt for ev_dt, r in events if r]
+            if set_times and (not rise_times or set_times[0] < rise_times[0]):
+                pairs.insert(0, (start, set_times[0]))
+
+            results: list[PassInfo] = []
+            for rise_dt, set_dt in pairs:
+                # Only include pairs that overlap with [start, end]
+                if set_dt < start or rise_dt > end:
+                    continue
+
+                # Transit: sample elevation at 15-minute intervals to find the peak
+                duration_s = (set_dt - rise_dt).total_seconds()
+                n_steps = max(4, int(duration_s / 900))
+                step_s = duration_s / n_steps
+                best_el = -90.0
+                best_t = rise_dt + timedelta(seconds=duration_s / 2)
+                for i in range(n_steps + 1):
+                    t_sample = rise_dt + timedelta(seconds=i * step_s)
+                    obs = self._observe_body(
+                        _MOON_BODY,
+                        MOON_ID,
+                        observer_lat,
+                        observer_lon,
+                        observer_elev_m,
+                        t_sample,
+                    )
+                    if obs is not None and obs.elevation_deg > best_el:
+                        best_el = obs.elevation_deg
+                        best_t = t_sample
+
+                # AZ at rise and set
+                obs_rise = self._observe_body(
+                    _MOON_BODY, MOON_ID, observer_lat, observer_lon, observer_elev_m, rise_dt
+                )
+                obs_set = self._observe_body(
+                    _MOON_BODY, MOON_ID, observer_lat, observer_lon, observer_elev_m, set_dt
+                )
+                aos_az = obs_rise.azimuth_deg if obs_rise else 0.0
+                los_az = obs_set.azimuth_deg if obs_set else 0.0
+
+                results.append(
+                    PassInfo(
+                        norad_cat_id=MOON_ID,
+                        aos=rise_dt,
+                        tca=best_t,
+                        los=set_dt,
+                        max_elevation_deg=max(0.0, best_el),
+                        aos_azimuth_deg=aos_az,
+                        los_azimuth_deg=los_az,
+                        duration_s=duration_s,
+                    )
+                )
+            return results
+        except Exception:
+            logger.exception("CelestialEngine.moon_events() failed")
+            return []
 
     # ------------------------------------------------------------------
     # Internal helpers

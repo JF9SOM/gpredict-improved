@@ -370,6 +370,7 @@ class MainWindow(QMainWindow):
         self._pass_list.highlight_satellite.connect(self._on_highlight_satellite)
         self._pass_list.group_results_ready.connect(self._on_group_results_ready)
         self._pass_list.set_pass_predictor(self._pass_predictor)
+        self._pass_list.set_celestial_engine(self._celestial_engine)
         # Connect signal that receives satellite list refresh requests from background threads
         self._satellite_list_refresh.connect(self._load_satellites)
         self._rig_error.connect(self._on_rig_error)
@@ -888,19 +889,20 @@ class MainWindow(QMainWindow):
         else:
             self._filter_label.setText(f"Showing: {filter_text} ({count})")
 
-        self._pass_list.set_satellites(filtered_sats)
-
         # Update the visible norads list (used for world-map computation)
         # Moon (MOON_ID) is intentionally excluded — it is drawn separately.
         if filter_text == "All Satellites" and not search_query:
+            self._pass_list.set_satellites(filtered_sats)
             self._visible_norads = list(self._all_norads)
             self._world_map.set_visible_norads(None)
         elif filter_text == "Celestial Bodies" and not search_query:
-            # Show no regular satellites — only the Moon icon (drawn separately)
+            # Pass Moon as the only Group-search target; no TLE satellites shown.
+            self._pass_list.set_satellites([(MOON_ID, _("Moon"))])
             self._visible_norads = []
             self._world_map.set_satellites({})
             self._world_map.set_visible_norads(set())
         else:
+            self._pass_list.set_satellites(filtered_sats)
             self._visible_norads = [n for n, _ in filtered_sats]
             self._world_map.set_visible_norads(set(self._visible_norads))
 
@@ -1418,6 +1420,9 @@ class MainWindow(QMainWindow):
             loc = self._location_manager.current
             self._world_map.set_observer_location(loc.latitude_deg, loc.longitude_deg)
             self._dashboard_view.set_observer(loc.latitude_deg, loc.longitude_deg)
+            self._pass_list.set_observer_location(
+                loc.latitude_deg, loc.longitude_deg, loc.elevation_m
+            )
 
         if self._engine is None or not self._visible_norads:
             return
@@ -2021,11 +2026,9 @@ class MainWindow(QMainWindow):
         self._dashboard_view.set_satellite(norad, name)
 
         if norad == MOON_ID:
-            # Moon: clear pass list and transmitter list — populated in later phases
-            self._current_passes = []
-            self._pass_list.clear()
             self._radio_control.set_transmitters([])
             self._world_map.clear_footprint()
+            self._refresh_passes()
             return
 
         # Switching away from Moon: remove sub-lunar point marker
@@ -2328,10 +2331,37 @@ class MainWindow(QMainWindow):
 
     def _refresh_passes(self) -> None:
         """Fetch pass predictions for the selected satellite and update the pass list and chart."""
-        if self._selected_norad is None or self._pass_predictor is None:
+        if self._selected_norad is None:
             self._pass_list.clear()
             return
+
         now = datetime.now(UTC)
+        item = self._sat_list.currentItem()
+        name = item.text() if item else ""
+
+        if self._selected_norad == MOON_ID:
+            if not self._celestial_engine.is_loaded:
+                self._pass_list.clear()
+                return
+            loc = self._location_manager.current if self._location_manager else None
+            if loc is None:
+                self._pass_list.clear()
+                return
+            passes = self._celestial_engine.moon_events(
+                loc.latitude_deg,
+                loc.longitude_deg,
+                loc.elevation_m,
+                now,
+                now + timedelta(hours=24),
+            )
+            self._current_passes = passes
+            self._pass_list.set_passes(passes)
+            self._pass_chart.set_passes(passes, sat_name=name)
+            return
+
+        if self._pass_predictor is None:
+            self._pass_list.clear()
+            return
         passes = self._pass_predictor.get_passes(
             self._selected_norad,
             now,
@@ -2345,16 +2375,37 @@ class MainWindow(QMainWindow):
             passes = [current_pass, *passes]
         self._current_passes = passes
         self._pass_list.set_passes(passes)
-
-        item = self._sat_list.currentItem()
-        name = item.text() if item else ""
         self._pass_chart.set_passes(passes, sat_name=name)
 
     def _on_chart_range_changed(self, hours: float) -> None:
         """Immediately call PassPredictor when the pass chart time range changes."""
-        if self._selected_norad is None or self._pass_predictor is None:
+        if self._selected_norad is None:
             return
+
         now = datetime.now(UTC)
+        item = self._sat_list.currentItem()
+        name = item.text() if item else ""
+
+        if self._selected_norad == MOON_ID:
+            if not self._celestial_engine.is_loaded:
+                return
+            loc = self._location_manager.current if self._location_manager else None
+            if loc is None:
+                return
+            passes = self._celestial_engine.moon_events(
+                loc.latitude_deg,
+                loc.longitude_deg,
+                loc.elevation_m,
+                now,
+                now + timedelta(hours=hours),
+            )
+            self._current_passes = passes
+            self._pass_list.set_passes(passes)
+            self._pass_chart.set_passes(passes, sat_name=name)
+            return
+
+        if self._pass_predictor is None:
+            return
         passes = self._pass_predictor.get_passes(
             self._selected_norad,
             now,
@@ -2362,21 +2413,41 @@ class MainWindow(QMainWindow):
         )
         self._current_passes = passes
         self._pass_list.set_passes(passes)
-        item = self._sat_list.currentItem()
-        name = item.text() if item else ""
         self._pass_chart.set_passes(passes, sat_name=name)
 
     def _on_target_search_requested(self, start: Any, end: Any) -> None:
         """Called when the Search button on the Target tab is pressed."""
-        if self._selected_norad is None or self._pass_predictor is None:
+        if self._selected_norad is None:
             return
+
         start_dt: datetime = start
         end_dt: datetime = end
+        item = self._sat_list.currentItem()
+        name = item.text() if item else ""
+
+        if self._selected_norad == MOON_ID:
+            if not self._celestial_engine.is_loaded:
+                return
+            loc = self._location_manager.current if self._location_manager else None
+            if loc is None:
+                return
+            passes = self._celestial_engine.moon_events(
+                loc.latitude_deg,
+                loc.longitude_deg,
+                loc.elevation_m,
+                start_dt,
+                end_dt,
+            )
+            self._current_passes = passes
+            self._pass_list.set_passes(passes)
+            self._pass_chart.set_passes(passes, sat_name=name)
+            return
+
+        if self._pass_predictor is None:
+            return
         passes = self._pass_predictor.get_passes(self._selected_norad, start_dt, end_dt)
         self._current_passes = passes
         self._pass_list.set_passes(passes)
-        item = self._sat_list.currentItem()
-        name = item.text() if item else ""
         self._pass_chart.set_passes(passes, sat_name=name)
 
     def _on_highlight_satellite(self, norad: int) -> None:

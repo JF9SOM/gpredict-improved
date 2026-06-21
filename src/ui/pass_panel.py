@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.celestial_engine import MOON_ID, CelestialEngine
 from core.engine import PassInfo, PassPredictor
 from i18n import _
 from ui.pass_chart import QUALITY_COLORS, pass_quality
@@ -223,6 +224,10 @@ class _GroupSearchWorker(QThread):
         end: datetime,
         min_el: float,
         parent: QWidget | None = None,
+        celestial_engine: CelestialEngine | None = None,
+        observer_lat: float = 0.0,
+        observer_lon: float = 0.0,
+        observer_elev_m: float = 0.0,
     ) -> None:
         super().__init__(parent)
         self._predictor = predictor
@@ -231,6 +236,10 @@ class _GroupSearchWorker(QThread):
         self._end = end
         self._min_el = min_el
         self._cancelled = False
+        self._celestial_engine = celestial_engine
+        self._observer_lat = observer_lat
+        self._observer_lon = observer_lon
+        self._observer_elev_m = observer_elev_m
 
     def cancel(self) -> None:
         """Set the cancel flag (stops at the next iteration)."""
@@ -243,7 +252,20 @@ class _GroupSearchWorker(QThread):
             if self._cancelled:
                 break
             try:
-                passes = self._predictor.get_passes(norad, self._start, self._end, self._min_el)
+                if norad == MOON_ID and self._celestial_engine is not None:
+                    passes = [
+                        p
+                        for p in self._celestial_engine.moon_events(
+                            self._observer_lat,
+                            self._observer_lon,
+                            self._observer_elev_m,
+                            self._start,
+                            self._end,
+                        )
+                        if p.max_elevation_deg >= self._min_el
+                    ]
+                else:
+                    passes = self._predictor.get_passes(norad, self._start, self._end, self._min_el)
             except Exception:  # noqa: BLE001
                 passes = []
             for p in passes:
@@ -336,6 +358,10 @@ class PassPanel(QWidget):
         self._cache_results: list[GroupPassResult] = []
         self._pending_cache_key: _CacheKey | None = None
         self._use_utc: bool = True
+        self._celestial_engine: CelestialEngine | None = None
+        self._observer_lat: float = 0.0
+        self._observer_lon: float = 0.0
+        self._observer_elev_m: float = 0.0
         self._setup_ui()
 
     # ------------------------------------------------------------------ #
@@ -656,7 +682,18 @@ class PassPanel(QWidget):
         self._group_search_btn.setEnabled(False)
         self._group_cancel_btn.setEnabled(True)
         self._pending_cache_key = key
-        self._worker = _GroupSearchWorker(self._predictor, self._sat_list, start, end, min_el, self)
+        self._worker = _GroupSearchWorker(
+            self._predictor,
+            self._sat_list,
+            start,
+            end,
+            min_el,
+            self,
+            celestial_engine=self._celestial_engine,
+            observer_lat=self._observer_lat,
+            observer_lon=self._observer_lon,
+            observer_elev_m=self._observer_elev_m,
+        )
         self._worker.progress.connect(self._on_group_progress)
         self._worker.finished_results.connect(self._on_group_results)
         self._worker.start()
@@ -775,6 +812,16 @@ class PassPanel(QWidget):
         # Invalidate the cache because the satellite list has changed
         self._cache_key = None
         self._cache_results = []
+
+    def set_celestial_engine(self, engine: CelestialEngine) -> None:
+        """Provide the CelestialEngine so that MOON_ID entries can be searched."""
+        self._celestial_engine = engine
+
+    def set_observer_location(self, lat: float, lon: float, elev_m: float) -> None:
+        """Update the observer location used for Moon event calculation."""
+        self._observer_lat = lat
+        self._observer_lon = lon
+        self._observer_elev_m = elev_m
 
     # Any is used explicitly here so that mypy does not flag ANN methods
     @staticmethod
