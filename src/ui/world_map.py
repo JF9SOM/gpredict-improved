@@ -404,6 +404,8 @@ class WorldMapView(QWidget):
         self._hit_radius: float = 12.0
         # Selected satellite footprint: (norad, lat_deg, lon_deg, alt_km)
         self._footprint: tuple[int, float, float, float] | None = None
+        # Sub-lunar point (lat_deg, lon_deg) or None when Moon is not selected
+        self._moon_latlon: tuple[float, float] | None = None
         # Filter: None = show all, set = show only specified NORADs
         self._visible_norads: set[int] | None = None
         # Optional background map image (replaces polygon rendering when set)
@@ -510,6 +512,17 @@ class WorldMapView(QWidget):
         if self._observer_lat != lat or self._observer_lon != lon:
             self._observer_lat = lat
             self._observer_lon = lon
+            self.update()
+
+    def set_moon_position(self, lat: float, lon: float) -> None:
+        """Set the sub-lunar point and repaint. Displayed as a ☽ on the map."""
+        self._moon_latlon = (lat, lon)
+        self.update()
+
+    def clear_moon_position(self) -> None:
+        """Remove the sub-lunar point marker."""
+        if self._moon_latlon is not None:
+            self._moon_latlon = None
             self.update()
 
     def latlon_to_xy(self, lat: float, lon: float, w: float, h: float) -> tuple[float, float]:
@@ -645,6 +658,12 @@ class WorldMapView(QWidget):
 
         # Footprint (drawn before satellite dots so dots render on top)
         self._draw_footprint(p, w, h)
+
+        # Sub-lunar point (Moon icon)
+        if self._moon_latlon is not None:
+            mx, my = self.latlon_to_xy(self._moon_latlon[0], self._moon_latlon[1], w, h)
+            if not (math.isnan(mx) or math.isnan(my)):
+                self._draw_moon_icon(p, mx, my)
 
         # Satellite dots + labels
         label_font = QFont()
@@ -801,6 +820,25 @@ class WorldMapView(QWidget):
         p.setPen(QPen(QColor(255, 255, 255, 200), 1.5))
         p.drawLine(int(cx) - cross, int(cy), int(cx) + cross, int(cy))
         p.drawLine(int(cx), int(cy) - cross, int(cx), int(cy) + cross)
+
+    def _draw_moon_icon(self, p: QPainter, cx: float, cy: float) -> None:
+        """Draw a crescent moon icon on the world map at (cx, cy)."""
+        _MOON_COLOR = QColor("#c8d8f8")  # pale blue-silver
+        size = 8.0
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_MOON_COLOR)
+        p.drawEllipse(QPointF(cx, cy), size, size)
+        # Inner offset disc in background colour creates crescent shape
+        bg = self._map_pixmap  # may be None; use a dark fallback
+        bg_color = QColor("#1a2a40") if bg is not None else QColor("#1a3a5a")
+        p.setBrush(bg_color)
+        p.drawEllipse(QPointF(cx + size * 0.45, cy - size * 0.1), size * 0.82, size * 0.82)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        label_font = QFont()
+        label_font.setPointSize(7)
+        p.setFont(label_font)
+        p.setPen(_MOON_COLOR)
+        p.drawText(int(cx) + int(size) + 2, int(cy) + 4, "Moon")
 
     def _draw_star(self, p: QPainter, cx: float, cy: float, r: float) -> None:
         """

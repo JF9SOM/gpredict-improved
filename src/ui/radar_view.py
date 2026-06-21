@@ -17,10 +17,11 @@ import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from core.celestial_engine import MOON_ID
 from i18n import _
 
 # ---------------------------------------------------------------------------
@@ -315,6 +316,10 @@ class RadarView(QWidget):
         if len(track.track) < 2:
             return
 
+        if track.norad_cat_id == MOON_ID:
+            self._draw_moon_track(p, track, cx, cy, r)
+            return
+
         _TRACK_COLOR = QColor("#00bcd4")  # cyan
         _AOS_COLOR = QColor("#4caf50")  # green
         _LOS_COLOR = QColor("#f44336")  # red
@@ -352,6 +357,34 @@ class RadarView(QWidget):
         if track.los_time is not None:
             p.drawText(int(lx) + 6, int(ly) + 10, f"LOS {self._fmt_time(track.los_time)}")
 
+    def _draw_moon_track(
+        self,
+        p: QPainter,
+        track: SatTrackData,
+        cx: float,
+        cy: float,
+        r: float,
+    ) -> None:
+        """Draw the Moon's 24-hour arc as a silver dashed line.
+
+        Large AZ jumps (>180°) indicate the Moon crossing the radar boundary
+        (e.g. going below the horizon and returning); these segments are skipped.
+        """
+        _MOON_TRACK_COLOR = QColor("#c8d8f8")  # pale blue-silver
+        pts = [az_el_to_xy(az, el, cx, cy, r) for az, el in track.track]
+        pen = QPen(_MOON_TRACK_COLOR, 1.5, Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(len(pts) - 1):
+            az0 = track.track[i][0]
+            az1 = track.track[i + 1][0]
+            # Skip segments where the Moon jumps across the radar (>180° AZ change)
+            if abs(az1 - az0) > 180.0:
+                continue
+            x0, y0 = pts[i]
+            x1, y1 = pts[i + 1]
+            p.drawLine(int(x0), int(y0), int(x1), int(y1))
+
     def _draw_satellite(
         self,
         p: QPainter,
@@ -362,8 +395,17 @@ class RadarView(QWidget):
         r: float,
     ) -> None:
         x, y = az_el_to_xy(track.azimuth_deg, track.elevation_deg, cx, cy, r)
-        dot_r = 6
 
+        if track.norad_cat_id == MOON_ID:
+            self._draw_moon_icon(p, x, y)
+            label_font = QFont()
+            label_font.setPointSize(8)
+            p.setFont(label_font)
+            p.setPen(QColor("#c8d8f8"))
+            p.drawText(int(x) + 12, int(y) + 4, "Moon")
+            return
+
+        dot_r = 6
         # Current position: red hollow circle (same style whether visible or not)
         p.setPen(QPen(QColor("#f44336"), 2))
         p.setBrush(Qt.BrushStyle.NoBrush)
@@ -374,6 +416,19 @@ class RadarView(QWidget):
         p.setFont(label_font)
         p.setPen(color)
         p.drawText(int(x) + dot_r + 2, int(y) + 4, track.name)
+
+    def _draw_moon_icon(self, p: QPainter, x: float, y: float) -> None:
+        """Draw a crescent moon icon centred at (x, y)."""
+        _MOON_COLOR = QColor("#c8d8f8")  # pale blue-silver
+        size = 9
+        # Outer filled circle
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(_MOON_COLOR)
+        p.drawEllipse(QPointF(x, y), size, size)
+        # Inner offset circle in background colour to create crescent
+        p.setBrush(QColor("#0d1b2a"))
+        p.drawEllipse(QPointF(x + size * 0.45, y - size * 0.1), size * 0.82, size * 0.82)
+        p.setBrush(Qt.BrushStyle.NoBrush)
 
     def _draw_legend(self, p: QPainter) -> None:
         """Draw a small legend in the top-right corner."""

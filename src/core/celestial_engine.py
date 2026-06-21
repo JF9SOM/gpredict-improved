@@ -108,6 +108,59 @@ class CelestialEngine:
             _MOON_BODY, MOON_ID, observer_lat, observer_lon, observer_elev_m, at
         )
 
+    def moon_subpoint(self, at: datetime | None = None) -> tuple[float, float] | None:
+        """Return the geographic sub-lunar point (lat, lon) in degrees.
+
+        The sub-lunar point is the Earth surface location directly beneath the Moon
+        (i.e. where the Moon is at zenith).  Computed geocentrically from DE421.
+
+        Returns:
+            (latitude_deg, longitude_deg) or None when the ephemeris is not loaded.
+        """
+        if self._eph is None or self._ts is None:
+            return None
+        try:
+            t_dt = at if at is not None else datetime.now(UTC)
+            t = self._ts.from_datetime(t_dt)  # type: ignore[union-attr]
+            earth = self._eph["earth"]  # type: ignore[index]
+            moon = self._eph[_MOON_BODY]  # type: ignore[index]
+            astrometric = earth.at(t).observe(moon)
+            sub = wgs84.subpoint(astrometric)
+            return float(sub.latitude.degrees), float(sub.longitude.degrees)
+        except Exception:
+            logger.exception("CelestialEngine.moon_subpoint() failed")
+            return None
+
+    def moon_track(
+        self,
+        observer_lat: float,
+        observer_lon: float,
+        observer_elev_m: float,
+        hours: float = 24.0,
+        step_minutes: float = 30.0,
+    ) -> list[tuple[float, float]]:
+        """Return a list of (azimuth_deg, elevation_deg) points spanning the given hours.
+
+        Samples the Moon's position at regular intervals starting from now.
+        Used to draw the 24-hour arc on the radar.
+
+        Returns:
+            List of (az, el) tuples, empty when the ephemeris is not loaded.
+        """
+        if self._eph is None or self._ts is None:
+            return []
+        now = datetime.now(UTC)
+        n_steps = int(hours * 60 / step_minutes) + 1
+        result: list[tuple[float, float]] = []
+        for i in range(n_steps):
+            at = now + timedelta(minutes=i * step_minutes)
+            obs = self._observe_body(
+                _MOON_BODY, MOON_ID, observer_lat, observer_lon, observer_elev_m, at
+            )
+            if obs is not None:
+                result.append((obs.azimuth_deg, obs.elevation_deg))
+        return result
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

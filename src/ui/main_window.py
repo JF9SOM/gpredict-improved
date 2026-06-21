@@ -289,6 +289,8 @@ class MainWindow(QMainWindow):
         self._web_server_url: str = ""
         # Celestial body tracking (Moon, etc.)
         self._celestial_engine: CelestialEngine = CelestialEngine()
+        # Cached 24-hour arc track for the Moon (updated every MAP_UPDATE_INTERVAL ticks)
+        self._moon_arc_cache: list[tuple[float, float]] = []
         self._scheduler: Any | None = None
         # Set to True in closeEvent so background threads stop gracefully
         self._shutdown_flag = threading.Event()
@@ -1447,7 +1449,7 @@ class MainWindow(QMainWindow):
             self._world_map.clear_footprint()
 
     def _update_moon(self) -> None:
-        """Update EL/AZ/Range display and radar when the Moon is selected."""
+        """Update EL/AZ/Range, radar 24h arc, world map sub-point, and rotator for the Moon."""
         if not self._celestial_engine.is_loaded:
             return
         loc = self._location_manager.current if self._location_manager else None
@@ -1459,21 +1461,38 @@ class MainWindow(QMainWindow):
         )
         self._detail_panel.update_observation(obs)
 
-        if obs is not None:
-            track = SatTrackData(
-                name="Moon",
-                norad_cat_id=MOON_ID,
-                azimuth_deg=obs.azimuth_deg,
-                elevation_deg=obs.elevation_deg,
-                is_visible=obs.is_above_horizon,
-                track=[],  # 24-hour arc track added in Phase 2
-                aos_time=None,
-                los_time=None,
-                next_max_el=None,
-                next_duration_s=None,
+        if obs is None:
+            return
+
+        # 24-hour arc: recompute only on map-update ticks (every 5 s) to reduce CPU load
+        if self._map_tick_counter == 0 or not self._moon_arc_cache:
+            self._moon_arc_cache = self._celestial_engine.moon_track(
+                loc.latitude_deg, loc.longitude_deg, loc.elevation_m
             )
-            self._radar_view.set_tracks([track])
-            self._dashboard_view.update_observation(obs, subpoint=None, track_data=track)
+        arc = self._moon_arc_cache
+
+        track = SatTrackData(
+            name="Moon",
+            norad_cat_id=MOON_ID,
+            azimuth_deg=obs.azimuth_deg,
+            elevation_deg=obs.elevation_deg,
+            is_visible=obs.is_above_horizon,
+            track=arc,
+            aos_time=None,
+            los_time=None,
+            next_max_el=None,
+            next_duration_s=None,
+        )
+        self._radar_view.set_tracks([track])
+        self._dashboard_view.update_observation(obs, subpoint=None, track_data=track)
+
+        # Sub-lunar point on world map
+        sub = self._celestial_engine.moon_subpoint()
+        if sub is not None:
+            self._world_map.set_moon_position(sub[0], sub[1])
+
+        # Rotator tracking — same non-blocking path as regular satellites
+        self._send_to_rotator(obs)
 
     def _update_selected_satellite(self) -> None:
         """Update the observation values and radar view for the currently selected satellite."""
@@ -1683,6 +1702,21 @@ class MainWindow(QMainWindow):
                     logger.debug("Rig2: previous cycle still running, skipping tick")
 
         # Send AZ/EL to the rotator every tick (same non-blocking pattern as rig).
+        self._send_to_rotator(obs)
+
+        self._radio_control.refresh_status()
+        self._update_rig_label()
+        self._update_rot_label()
+
+    def _on_rig_error(self, msg: str) -> None:
+        """Display an error from the background rig thread in the status bar (UI thread)."""
+        logger.warning("RigControlError: %s", msg)
+        sb = self.statusBar()
+        if sb:
+            sb.showMessage(f"RIG: {msg}", 3000)
+
+    def _send_to_rotator(self, obs: Observation | None) -> None:
+        """Send AZ/EL from obs to the rotator in a background thread (non-blocking)."""
         if (
             obs is not None
             and self._rotator_controller is not None
@@ -1709,17 +1743,6 @@ class MainWindow(QMainWindow):
                 logger.debug("Rotator: previous cycle still running, skipping tick")
         elif self._rotator_controller is None or not self._rotator_controller.is_connected:
             self._radar_view.set_rotator_position(None, None)
-
-        self._radio_control.refresh_status()
-        self._update_rig_label()
-        self._update_rot_label()
-
-    def _on_rig_error(self, msg: str) -> None:
-        """Display an error from the background rig thread in the status bar (UI thread)."""
-        logger.warning("RigControlError: %s", msg)
-        sb = self.statusBar()
-        if sb:
-            sb.showMessage(f"RIG: {msg}", 3000)
 
     def _on_rotator_pos_updated(self, rot_az: float, rot_el: float) -> None:
         """Update the radar rotator marker with the actual rotator position (UI thread)."""
@@ -1972,6 +1995,7 @@ class MainWindow(QMainWindow):
             self._detail_panel.clear()
             self._radio_control.clear_satellite()
             self._world_map.clear_footprint()
+            self._world_map.clear_moon_position()
             return
         item = self._sat_list.item(row)
         if item is None:
@@ -1991,6 +2015,8 @@ class MainWindow(QMainWindow):
             self._world_map.clear_footprint()
             return
 
+        # Switching away from Moon: remove sub-lunar point marker
+        self._world_map.clear_moon_position()
         self._refresh_passes()
         self._refresh_radio_control(norad)
 
