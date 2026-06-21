@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.celestial_engine import MOON_ID
 from i18n import _
 from ui.radar_view import RadarView, SatTrackData, az_el_to_xy  # noqa: F401
 from ui.world_map import WorldMapView
@@ -274,7 +275,10 @@ class DashboardView(QWidget):
             self._local_map.set_satellites(
                 {self._selected_norad: (self._selected_name, lat, lon, color)}
             )
-            self._local_map.draw_footprint(self._selected_norad, lat, lon, alt_km)
+            # Moon has no footprint — skip draw_footprint to avoid drawing a
+            # misleadingly large circle using range_km as altitude.
+            if self._selected_norad != MOON_ID:
+                self._local_map.draw_footprint(self._selected_norad, lat, lon, alt_km)
 
         # ── Radar (skip repaint when tab is hidden) ────────────────────
         if is_visible_tab:

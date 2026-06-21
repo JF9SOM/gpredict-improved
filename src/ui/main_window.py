@@ -892,9 +892,14 @@ class MainWindow(QMainWindow):
 
         # Update the visible norads list (used for world-map computation)
         # Moon (MOON_ID) is intentionally excluded — it is drawn separately.
-        if filter_text in ("All Satellites", "Celestial Bodies") and not search_query:
+        if filter_text == "All Satellites" and not search_query:
             self._visible_norads = list(self._all_norads)
             self._world_map.set_visible_norads(None)
+        elif filter_text == "Celestial Bodies" and not search_query:
+            # Show no regular satellites — only the Moon icon (drawn separately)
+            self._visible_norads = []
+            self._world_map.set_satellites({})
+            self._world_map.set_visible_norads(set())
         else:
             self._visible_norads = [n for n, _ in filtered_sats]
             self._world_map.set_visible_norads(set(self._visible_norads))
@@ -1484,12 +1489,20 @@ class MainWindow(QMainWindow):
             next_duration_s=None,
         )
         self._radar_view.set_tracks([track])
-        self._dashboard_view.update_observation(obs, subpoint=None, track_data=track)
 
-        # Sub-lunar point on world map
+        # Sub-lunar point: used for both the world map icon and the Dashboard zoom
         sub = self._celestial_engine.moon_subpoint()
         if sub is not None:
             self._world_map.set_moon_position(sub[0], sub[1])
+            # Pass sub-lunar point to Dashboard so it can zoom/center on the Moon.
+            # alt_km slot carries range_km; draw_footprint is skipped for MOON_ID.
+            self._dashboard_view.update_observation(
+                obs,
+                subpoint=(sub[0], sub[1], obs.range_km),
+                track_data=track,
+            )
+        else:
+            self._dashboard_view.update_observation(obs, subpoint=None, track_data=track)
 
         # Rotator tracking — same non-blocking path as regular satellites
         self._send_to_rotator(obs)
