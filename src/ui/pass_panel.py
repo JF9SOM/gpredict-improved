@@ -332,6 +332,7 @@ class PassPanel(QWidget):
     _TARGET_COLS: tuple[str, ...] = (
         "AOS (UTC)",
         "Max El",
+        "LOS (UTC)",
         "Duration",
         "AZ In",
         "AZ Out",
@@ -341,6 +342,7 @@ class PassPanel(QWidget):
         "Satellite",
         "AOS (UTC)",
         "Max El",
+        "LOS (UTC)",
         "Duration",
         "AZ In",
         "Quality",
@@ -540,11 +542,20 @@ class PassPanel(QWidget):
 
         # Update table column headers
         aos_header = "AOS (UTC)" if use_utc else _("AOS (Local)")
-        for table in (self._target_table, self._group_table):
-            # AOS column is index 0 on group table, index 0 on target table
-            header = table.horizontalHeaderItem(0 if table is self._target_table else 1)
-            if header is not None:
-                header.setText(aos_header)
+        los_header = "LOS (UTC)" if use_utc else _("LOS (Local)")
+        # Target: AOS=col0, LOS=col2 — Group: AOS=col1, LOS=col3
+        target_aos = self._target_table.horizontalHeaderItem(0)
+        target_los = self._target_table.horizontalHeaderItem(2)
+        group_aos = self._group_table.horizontalHeaderItem(1)
+        group_los = self._group_table.horizontalHeaderItem(3)
+        if target_aos is not None:
+            target_aos.setText(aos_header)
+        if target_los is not None:
+            target_los.setText(los_header)
+        if group_aos is not None:
+            group_aos.setText(aos_header)
+        if group_los is not None:
+            group_los.setText(los_header)
 
         # Refresh table rows with new timezone formatting
         self._populate_target_table(self._passes)
@@ -576,14 +587,15 @@ class PassPanel(QWidget):
             self._target_table.insertRow(row)
             self._target_table.setItem(row, 0, QTableWidgetItem(_format_aos(p.aos, self._use_utc)))
             self._target_table.setItem(row, 1, QTableWidgetItem(f"{p.max_elevation_deg:.1f}°"))
+            self._target_table.setItem(row, 2, QTableWidgetItem(_format_aos(p.los, self._use_utc)))
             mins, secs = divmod(int(p.duration_s), 60)
-            self._target_table.setItem(row, 2, QTableWidgetItem(f"{mins}m {secs:02d}s"))
-            self._target_table.setItem(row, 3, QTableWidgetItem(f"{p.aos_azimuth_deg:.0f}°"))
-            self._target_table.setItem(row, 4, QTableWidgetItem(f"{p.los_azimuth_deg:.0f}°"))
+            self._target_table.setItem(row, 3, QTableWidgetItem(f"{mins}m {secs:02d}s"))
+            self._target_table.setItem(row, 4, QTableWidgetItem(f"{p.aos_azimuth_deg:.0f}°"))
+            self._target_table.setItem(row, 5, QTableWidgetItem(f"{p.los_azimuth_deg:.0f}°"))
             quality = pass_quality(p.max_elevation_deg)
             q_item = QTableWidgetItem(quality)
             q_item.setForeground(QUALITY_COLORS[quality])
-            self._target_table.setItem(row, 5, q_item)
+            self._target_table.setItem(row, 6, q_item)
 
     def _refresh_group_page(self) -> None:
         self._group_table.setRowCount(0)
@@ -598,13 +610,14 @@ class PassPanel(QWidget):
             p = r.pass_info
             self._group_table.setItem(row, 1, QTableWidgetItem(_format_aos(p.aos, self._use_utc)))
             self._group_table.setItem(row, 2, QTableWidgetItem(f"{p.max_elevation_deg:.1f}°"))
+            self._group_table.setItem(row, 3, QTableWidgetItem(_format_aos(p.los, self._use_utc)))
             mins, secs = divmod(int(p.duration_s), 60)
-            self._group_table.setItem(row, 3, QTableWidgetItem(f"{mins}m {secs:02d}s"))
-            self._group_table.setItem(row, 4, QTableWidgetItem(f"{p.aos_azimuth_deg:.0f}°"))
+            self._group_table.setItem(row, 4, QTableWidgetItem(f"{mins}m {secs:02d}s"))
+            self._group_table.setItem(row, 5, QTableWidgetItem(f"{p.aos_azimuth_deg:.0f}°"))
             quality = pass_quality(p.max_elevation_deg)
             q_item = QTableWidgetItem(quality)
             q_item.setForeground(QUALITY_COLORS[quality])
-            self._group_table.setItem(row, 5, q_item)
+            self._group_table.setItem(row, 6, q_item)
         total_pages = max(1, (len(self._group_results) + self._PAGE_SIZE - 1) // self._PAGE_SIZE)
         self._page_label.setText(
             f"Page {self._group_page + 1}/{total_pages}  ({len(self._group_results)} passes)"
@@ -764,6 +777,7 @@ class PassPanel(QWidget):
                         "NORAD",
                         "AOS (UTC)",
                         "Max El (deg)",
+                        "LOS (UTC)",
                         "Duration",
                         "AZ In (deg)",
                         "AZ Out (deg)",
@@ -779,6 +793,7 @@ class PassPanel(QWidget):
                             r.norad_cat_id,
                             p.aos.strftime("%Y-%m-%d %H:%M:%S"),
                             f"{p.max_elevation_deg:.1f}",
+                            p.los.strftime("%Y-%m-%d %H:%M:%S"),
                             f"{mins}m {secs:02d}s",
                             f"{p.aos_azimuth_deg:.0f}",
                             f"{p.los_azimuth_deg:.0f}",
