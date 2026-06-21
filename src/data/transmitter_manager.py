@@ -30,6 +30,16 @@ _COMMUNITY_JSON = (
     else Path(__file__).parent / "community_transmitters.json"
 )
 
+# Path to the bundled EME frequency database (Moon-only, not stored in SQLite).
+_EME_JSON = (
+    Path(sys._MEIPASS) / "data" / "eme_frequencies.json"  # type: ignore[attr-defined]
+    if getattr(sys, "frozen", False)
+    else Path(__file__).parent / "eme_frequencies.json"
+)
+
+# Sentinel NORAD ID used for the Moon throughout the UI layer.
+_MOON_ID: int = -1
+
 # Matches "CTCSS 67.0 Hz" or "CTCSS 100 Hz" in transmitter description text
 _CTCSS_RE = re.compile(r"CTCSS\s+([\d.]+)\s*Hz", re.IGNORECASE)
 
@@ -65,7 +75,11 @@ class TransmitterManager:
         """
         Return the transponder list for the specified satellite.
         Returns manually added data and SATNOGS data in an integrated way.
+        For MOON_ID (-1) returns the static EME frequency list from eme_frequencies.json.
         """
+        if norad_cat_id == _MOON_ID:
+            return self._get_eme_transmitters()
+
         query = """
             SELECT * FROM transmitters
             WHERE norad_cat_id = ?
@@ -75,6 +89,15 @@ class TransmitterManager:
 
         rows = self._conn.execute(query, (norad_cat_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def _get_eme_transmitters(self) -> list[dict[str, Any]]:
+        """Load and return the static EME frequency table from eme_frequencies.json."""
+        try:
+            with _EME_JSON.open(encoding="utf-8") as fh:
+                entries: list[dict[str, Any]] = json.load(fh)
+            return [e for e in entries if "uuid" in e]
+        except Exception:
+            return []
 
     def get_all_satellites(self) -> list[dict[str, Any]]:
         """Return the list of trackable satellites (those with TLE data)"""

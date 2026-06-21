@@ -1182,7 +1182,8 @@ class MainWindow(QMainWindow):
             if obs is not None:
                 dl_nom = self._current_transmitter.get("downlink_low")
                 ul_nom = self._current_transmitter.get("uplink_low")
-                rr = obs.range_rate_km_s
+                # EME round-trip: Doppler is twice the one-way shift
+                rr = obs.range_rate_km_s * (2.0 if self._selected_norad == MOON_ID else 1.0)
                 if dl_nom:
                     dl_hz = float(dl_nom)
                     doppler_dl = -dl_hz * rr / 299792.458
@@ -1509,6 +1510,51 @@ class MainWindow(QMainWindow):
         else:
             self._dashboard_view.update_observation(obs, subpoint=None, track_data=track)
 
+        # Radio Control: EME Doppler correction (round-trip × 2)
+        if self._current_transmitter is not None:
+            rr = obs.range_rate_km_s * 2.0
+            dl_nom = self._current_transmitter.get("downlink_low")
+            ul_nom = self._current_transmitter.get("uplink_low")
+            mode = self._current_transmitter.get("mode")
+            dl_corr, dl_shift = (
+                DopplerCalculator.correct_downlink(float(dl_nom), rr)
+                if dl_nom is not None
+                else (None, None)
+            )
+            ul_corr, ul_shift = (
+                DopplerCalculator.correct_uplink(float(ul_nom), rr)
+                if ul_nom is not None
+                else (None, None)
+            )
+            if self._tune_dl_override is not None:
+                dl_corr = self._tune_dl_override
+                dl_shift = None
+                self._tune_dl_override = None
+            if self._tune_ul_override is not None:
+                ul_corr = self._tune_ul_override
+                ul_shift = None
+                self._tune_ul_override = None
+            self._radio_control.update_doppler(
+                dl_nom,
+                dl_corr,
+                dl_shift,
+                ul_nom,
+                ul_corr,
+                ul_shift,
+                mode,
+                None,
+            )
+            if sub is not None:
+                self._dashboard_view.update_observation(
+                    obs,
+                    subpoint=(sub[0], sub[1], obs.range_km),
+                    dl_hz=dl_corr,
+                    ul_hz=ul_corr,
+                    dl_doppler=dl_shift,
+                    ul_doppler=ul_shift,
+                    track_data=track,
+                )
+
         # Rotator tracking — same non-blocking path as regular satellites
         self._send_to_rotator(obs)
 
@@ -1577,7 +1623,8 @@ class MainWindow(QMainWindow):
         # Always compute and transmit as long as TLE and frequency data are
         # available, regardless of elevation.
         if obs is not None and self._current_transmitter is not None:
-            rr = obs.range_rate_km_s
+            # EME round-trip: Doppler is twice the one-way shift
+            rr = obs.range_rate_km_s * (2.0 if self._selected_norad == MOON_ID else 1.0)
             dl_nom = self._current_transmitter.get("downlink_low")
             ul_nom = self._current_transmitter.get("uplink_low")
             invert = bool(self._current_transmitter.get("invert", False))
@@ -2026,9 +2073,9 @@ class MainWindow(QMainWindow):
         self._dashboard_view.set_satellite(norad, name)
 
         if norad == MOON_ID:
-            self._radio_control.set_transmitters([])
             self._world_map.clear_footprint()
             self._refresh_passes()
+            self._refresh_radio_control(norad)
             return
 
         # Switching away from Moon: remove sub-lunar point marker
@@ -2044,7 +2091,13 @@ class MainWindow(QMainWindow):
           2. Transceiver below 1 GHz
           3. Any entry below 1 GHz
           4. downlink_low ASC (lower frequency first)
+        For MOON_ID, EME frequencies are loaded from eme_frequencies.json instead of the DB.
         """
+        if norad == MOON_ID:
+            transmitters = self._transmitter_manager.get_transmitters(MOON_ID)
+            self._radio_control.set_transmitters(transmitters)
+            return
+
         rows = self._conn.execute(
             """
             SELECT uuid, description, type,

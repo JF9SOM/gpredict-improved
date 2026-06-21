@@ -1,0 +1,161 @@
+[
+  {
+    "_comment": "EME (Earth-Moon-Earth) conventional operating frequencies.",
+    "_comment2": "DL/UL are the same band (simplex). Doppler is applied x2 (round trip).",
+    "_comment3": "Source: IARU Region 1/2/3 band plans and EME community conventions."
+  },
+  {
+    "uuid": "eme-50-cw",
+    "description": "50 MHz EME — CW",
+    "type": "Transponder",
+    "downlink_low": 50190000,
+    "uplink_low": 50190000,
+    "mode": "CW",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-50-digital",
+    "description": "50 MHz EME — Digital (Q65/JT65)",
+    "type": "Transponder",
+    "downlink_low": 50200000,
+    "uplink_low": 50200000,
+    "mode": "SSB",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-144-cw",
+    "description": "144 MHz EME — CW",
+    "type": "Transponder",
+    "downlink_low": 144000000,
+    "uplink_low": 144000000,
+    "mode": "CW",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-144-digital",
+    "description": "144 MHz EME — Digital (Q65/JT65B)",
+    "type": "Transponder",
+    "downlink_low": 144100000,
+    "uplink_low": 144100000,
+    "mode": "SSB",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-432-cw",
+    "description": "432 MHz EME — CW",
+    "type": "Transponder",
+    "downlink_low": 432000000,
+    "uplink_low": 432000000,
+    "mode": "CW",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-432-digital",
+    "description": "432 MHz EME — Digital (Q65/JT65C)",
+    "type": "Transponder",
+    "downlink_low": 432065000,
+    "uplink_low": 432065000,
+    "mode": "SSB",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-1296-cw",
+    "description": "1296 MHz EME — CW",
+    "type": "Transponder",
+    "downlink_low": 1296000000,
+    "uplink_low": 1296000000,
+    "mode": "CW",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-1296-digital",
+    "description": "1296 MHz EME — Digital (Q65/JT65D)",
+    "type": "Transponder",
+    "downlink_low": 1296065000,
+    "uplink_low": 1296065000,
+    "mode": "SSB",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-2320-cw",
+    "description": "2320 MHz EME — CW",
+    "type": "Transponder",
+    "downlink_low": 2320000000,
+    "uplink_low": 2320000000,
+    "mode": "CW",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-2320-digital",
+    "description": "2320 MHz EME — Digital",
+    "type": "Transponder",
+    "downlink_low": 2320065000,
+    "uplink_low": 2320065000,
+    "mode": "SSB",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-5760-cw",
+    "description": "5760 MHz EME — CW",
+    "type": "Transponder",
+    "downlink_low": 5760000000,
+    "uplink_low": 5760000000,
+    "mode": "CW",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-5760-digital",
+    "description": "5760 MHz EME — Digital",
+    "type": "Transponder",
+    "downlink_low": 5760065000,
+    "uplink_low": 5760065000,
+    "mode": "SSB",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-10368-cw",
+    "description": "10368 MHz EME — CW",
+    "type": "Transponder",
+    "downlink_low": 10368000000,
+    "uplink_low": 10368000000,
+    "mode": "CW",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  },
+  {
+    "uuid": "eme-10368-digital",
+    "description": "10368 MHz EME — Digital",
+    "type": "Transponder",
+    "downlink_low": 10368065000,
+    "uplink_low": 10368065000,
+    "mode": "SSB",
+    "invert": false,
+    "alive": true,
+    "source": "eme"
+  }
+]
