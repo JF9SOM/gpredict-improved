@@ -553,6 +553,17 @@ class HamlibDirectController(RigController):
                     time.sleep(0.1)
                 with self._port_lock:
                     rig.open()
+                    # IC-9700 does not correctly read back satmode=1 during open(),
+                    # leaving cache->satmode=0.  A second set_func call after open()
+                    # forces cache->satmode=1 so that VFO_MAIN/VFO_SUB are routed
+                    # correctly for subsequent set_freq / set_mode calls.
+                    # IC-9100/IC-910H/IC-821H must NOT receive this extra call —
+                    # sending set_func(SATMODE,1) twice breaks those rigs (confirmed).
+                    if self._satmode and self._model_id in _SATMODE_USE_VFO_SUB:
+                        time.sleep(0.1)
+                        rig.set_func(_H.RIG_FUNC_SATMODE, 1)
+                        time.sleep(0.1)
+                        logger.info("RigDirect: IC-9700 extra set_func(SATMODE,1) to fix cache")
                 self._rig = rig
             else:
                 self._rig = _MockRig(self._model_id)
@@ -1201,6 +1212,15 @@ class HamlibDirectController(RigController):
                 rig2 = _make_rig()
                 rig2.open()
                 time.sleep(0.3)
+                # IC-9700 does not correctly read back satmode=1 during open().
+                # Force cache->satmode=1 with an extra set_func call so that
+                # set_mode(VFO_MAIN) routes to SAT-mode Main (not Normal VFOA).
+                # Only for _SATMODE_USE_VFO_SUB models — IC-9100 must NOT receive
+                # a second set_func(SATMODE,1) after open() (confirmed to break it).
+                if self._model_id in _SATMODE_USE_VFO_SUB:
+                    rig2.set_func(_H.RIG_FUNC_SATMODE, 1)
+                    time.sleep(0.1)
+                    logger.info("RigDirect._apply_mode_and_ctcss_hamlib: IC-9700 extra set_func")
 
                 # Mode: Main (DL) and Sub (UL)
                 rig2.set_mode(dl_hamlib, 0, vfo_main)
