@@ -1245,12 +1245,21 @@ rig_dialog.py のカスタムリストでは 1036 = FT-991A として登録。`_
 
 **Python binding caveat**: `rig.set_func()` takes exactly **2 arguments** `(func, status)`. Calling with 3 arguments `rig.set_func(CURR, SATMODE, 1)` silently passes `func=CURR` (a VFO constant), which causes `rig_has_set_func` to return 0 → ENAVAIL → no CI-V is sent. Always use `rig.set_func(RIG_FUNC_SATMODE, 1)`.
 
+**`_SATMODE_USE_VFO_SUB = frozenset({3081})`** (IC-9700 のみ):
+
+IC-9100 は `RIG_VFO_TX` でUL周波数書き込みが正常動作するが、IC-9700 は `open()` 時の read-back で `cache->satmode=1` が正しくセットされず `VFO_TX` が拒否されるケースがある。IC-9700 は代わりに `RIG_VFO_SUB` を使う。また、2回目の `open()` 後に追加で `set_func(SATMODE,1)` を送り `cache->satmode=1` を強制する。
+
+| モデル | UL周波数 VFO定数 | 2回目 open() 後の追加 set_func | 備考 |
+|---|---|---|---|
+| IC-9700 (3081) | `RIG_VFO_SUB` | あり（`_SATMODE_USE_VFO_SUB`） | read-back が不完全なため強制上書き |
+| IC-9100 (3068) / IC-910H (3044) / IC-821H (3034) | `RIG_VFO_TX` | なし | 2回目 open() で cache->satmode=1 確立 |
+
 **Implementation (src/rig/controller.py)**:
 - `connect()`: for satmode rigs — `rig.open()` → `time.sleep(0.3)` → `rig.set_func(RIG_FUNC_SATMODE, 1)` → `rig.close()` → `rig.open()`. Second open reads satmode=1 from rig, sets `cache->satmode=1`, which allows `set_freq(VFO_TX)` for UL writes.
 - `satmode_warmup()`: same open→set_func→close sequence, called from background thread at startup. Imports Hamlib directly (`import Hamlib as _H`) rather than using `self._hamlib`, because `self._hamlib` is `None` until the first `connect()` call.
 - `_init_split()`: just sets `_satmode_active = True` — SAT mode was already entered by `connect()`
 - DL: `set_freq(RIG_VFO_MAIN, dl_hz)` as before
-- UL (periodic): `set_freq(RIG_VFO_TX, ul_hz)` — works because `cache.satmode=1` is correctly set by second `rig.open()`
+- UL (periodic): IC-9700 → `set_freq(RIG_VFO_SUB, ul_hz)` / IC-9100 → `set_freq(RIG_VFO_TX, ul_hz)`
 
 **Why VFO_TX works**: in SAT mode, Hamlib maps `RIG_VFO_TX` to the TX VFO (Sub/UL). With `cache.satmode=1` (set by the second `rig.open()`), `ic9700_set_vfo` routes the command correctly. Confirmed with test script `scripts/test_ic9100_hamlib_satmode2.py` (2026-06-20).
 
@@ -1267,16 +1276,19 @@ return self._satmode or self._ctcss_method == "icom_civ"
 
 **Transponder selection flow (NET mode satmode rig)**:
 1. User selects transponder → `_apply_transponder_state_to_rig()` in `main_window.py`
-2. `set_transponder_freqs(dl_hz, ul_hz)` → sets `_is_same_band` flag
-3. `set_current_modes(dl_mode, ul_mode)` → stores DL mode for UL throttle threshold
+2. `set_transponder_freqs(dl_hz, ul_hz)` → sets `_is_same_band` flag + stores `_transponder_dl_hz`/`_transponder_ul_hz`
+3. `set_current_modes(dl_mode, ul_mode)` → stores DL/UL modes for UL throttle threshold and Stage-2 resend
 4. If rig is connected: `_disconnect_rig()` first (user must re-press Connect for new satellite)
 5. Background thread: `apply_transponder_state(dl_mode, ul_mode, ctcss_hz)`
+   - caches `_current_dl_mode`/`_current_ul_mode`; sets `_pending_ctcss_hz` and `_pending_mode_net = True`
    - acquires `_cmd_lock` (pauses Doppler F/I)
    - `_send_split_init_independent()` — **`S 1 Main`（または同バンド時は `S 1 VFOB`）を独立ソケットで先送り**してsatmodeを確立（Direct modeの `set_func(SATMODE,1)` に相当）
+   - `_send_freq_preset_independent()` — **DL/UL周波数を先書き**して IC-9100/9700 SAT mode Main/Sub バンド割り当てをアンカー（後述 Stage 1）
    - `send_mode_only()` via independent socket (VFO branch by `_is_same_band`)
    - `_apply_ctcss_civ_direct()` via rigctld TCP commands (`V Sub / L CTCSS_TONE / U TONE / V Main / U TONE 0`)
+6. After connect() + first live Doppler `I` write: **Stage-2 resend** — `send_mode_only()` + `_apply_ctcss_civ_direct()` (see below)
 
-**順序の根拠**: satmode確立→mode設定→CTCSS設定 の順序はDirect modeと同じ。`S 1 Main` を先に送ることでCTCSSがsatmode確立時にリセットされなくなり、トランスポンダー選択直後にTの字が表示される。`connect()` の `_init_vfo()` が再度 `S 1 Main` を送っても、リグはすでにSATモードに入っているためCTCSS状態をリセットしない。
+**順序の根拠**: satmode確立→周波数アンカー→mode設定→CTCSS設定 の順序。`S 1 Main` を先に送ることでsatmodeを確立し、続いて周波数を書いてIC-9100のSATモードメモリのバンド割り当てを新しい衛星に固定してからモード・CTCSSを送る。`connect()` の `_init_vfo()` が再度 `S 1 Main` を送っても、リグはすでにSATモードに入っているためCTCSS状態をリセットしない。
 
 **Auto-disconnect on satellite change**: when `rig.is_satmode == True` and `rig.is_connected == True`, `_apply_transponder_state_to_rig()` calls `_disconnect_rig()` before re-sending mode/CTCSS. User must manually re-press Connect for the new satellite.
 
@@ -1284,7 +1296,7 @@ return self._satmode or self._ctcss_method == "icom_civ"
 > - **Direct モード（IC-9100実機）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み
 >   - SATモード有効化: Hamlib `set_func(RIG_FUNC_SATMODE, 1)` の `open→set_func→close→open` 方式
 >   - モード・CTCSS: `_apply_mode_and_ctcss_hamlib()` で Hamlib のみ使用（pyserial 廃止・クロスプラットフォーム対応）
->   - クロスバンドUL: `set_freq(VFO_TX)` 方式で正常書き込み確認済み
+>   - クロスバンドUL: `set_freq(VFO_TX)` 方式で正常書き込み確認済み（IC-9700 は `VFO_SUB`）
 >   - SAT ランプが点灯した状態でドップラー補正が正常動作（RS-44・ISS クロスバンドで確認）
 >   - 同バンドFM（ISS等）: `_satmode_exit()` 後に `set_mode()` でモードを再設定（`_satmode_exit()` 内の sleep を 0.4s に設定して IC-9100 の内部モード復元を待つ）
 >   - 同バンドDL表示を `set_vfo(VFOA)` で確実に復元（`set_freq(VFOA)` では不可）
@@ -1292,9 +1304,13 @@ return self._satmode or self._ctcss_method == "icom_civ"
 >   - HF/VHF クロスバンド（AO-7: 29MHz DL / 145MHz UL）: SAT mode 正常動作確認済み
 >   - `satmode_warmup()`: 起動時に直接 `import Hamlib` することで正常動作（`self._hamlib is None` 問題を修正）
 > - **NET モード（IC-9100 + rigctld）**: 周波数・モード・CTCSSトーン（クロスバンド・同バンド両方）すべて動作確認済み
->   - トランスポンダー選択時の順序: `_send_split_init_independent()`（S 1 Main）→ `send_mode_only()` → `_apply_ctcss_civ_direct()`（Direct modeと同じ順序。トランスポンダー選択直後にTの字が表示される）
+>   - トランスポンダー選択時の順序: `_send_split_init_independent()`（S 1 Main）→ `_send_freq_preset_independent()`（DL/UL周波数先書き）→ `send_mode_only()` → `_apply_ctcss_civ_direct()`
 >   - CTCSS: `_apply_ctcss_civ_direct()` が rigctld TCP コマンド（`V Sub / L CTCSS_TONE / U TONE / V Main / U TONE 0`）を送信（pyserial 廃止・macOS でも動作）
 >   - HF/VHF クロスバンド（AO-7: 29MHz DL / 145MHz UL）: SAT mode 正常動作確認済み
+>
+> **衛星切り替え時の VFO 逆転バグ修正（2026-06-21, cf62d6d）**: 実機確認待ち
+>   - 2-stage freq anchor を追加（詳細は上記セクション参照）
+>   - IC-9700 の `_SATMODE_USE_VFO_SUB` 分岐も Stage 1/2 の周波数プリセットに反映済み
 
 **`_freq_band()` のバンド分類（クロスバンド判定に使用）**:
 | 周波数範囲 | 戻り値 | 例 |
@@ -1320,10 +1336,12 @@ return self._satmode or self._ctcss_method == "icom_civ"
 1. `import Hamlib as _H` を直接実行（`self._hamlib` は connect() 前は None なので使えない）
 2. `rig.open()` → `set_func(RIG_FUNC_SATMODE, 1)` → `rig.close()` — satmode ON を送信
 3. `rig2.open()` — 2回目の open で `cache->satmode=1` が確立（これがないと `VFO_MAIN/SUB` が拒否される）
-4. `set_mode(dl_hamlib, 0, VFO_MAIN)` + `set_mode(ul_hamlib, 0, VFO_SUB)` — DL/UL モード設定
-5. `set_vfo(VFO_SUB)` → `set_ctcss_tone(VFO_SUB, deci_hz)` → `set_func(FUNC_TONE, 1/0)` — Sub CTCSS
-6. `set_vfo(VFO_MAIN)` → `set_func(FUNC_TONE, 0)` — Main CTCSS クリア（ブリード防止）
-7. `rig2.close()`
+   - IC-9700 のみ (`_SATMODE_USE_VFO_SUB`): さらに `set_func(SATMODE,1)` を追加送信して `cache->satmode=1` を強制上書き（read-back が不完全なため）
+4. **Stage 1 周波数プリセット**: `_transponder_dl_hz`/`_transponder_ul_hz` が設定済みであれば先に `set_freq(VFO_MAIN, dl)` + `set_freq(vfo_ul_preset, ul)` を送信して IC-9100/9700 SAT mode Main/Sub バンド割り当てをアンカー。UL VFO定数: IC-9700 → `VFO_SUB`、IC-9100以下 → `VFO_TX`
+5. `set_mode(dl_hamlib, 0, VFO_MAIN)` + `set_mode(ul_hamlib, 0, VFO_SUB)` — DL/UL モード設定
+6. `set_vfo(VFO_SUB)` → `set_ctcss_tone(VFO_SUB, deci_hz)` → `set_func(FUNC_TONE, 1/0)` — Sub CTCSS
+7. `set_vfo(VFO_MAIN)` → `set_func(FUNC_TONE, 0)` — Main CTCSS クリア（ブリード防止）
+8. `rig2.close()`
 - 全体を `_port_lock` で保護（connect() との競合を防ぐ）
 
 **Direct mode — `set_ctcss_tone(tone_hz)`**:
@@ -1347,6 +1365,30 @@ U TONE 1/0              # CTCSS エンコーダー ON/OFF
 V Main                   # VFO Main を復元
 U TONE 0                 # Main の CTCSS クリア（ブリード防止）
 ```
+
+#### 衛星切り替え時の VFO 割り当て逆転バグ修正（2-stage freq anchor, 2026-06-21）
+
+**バグの原因**: IC-9100/9700 は SAT モードメモリに「前回の Main/Sub バンド割り当て」を保持する。`set_func(SATMODE,1)` / `S 1 Main` を送るとこのメモリが復元される。AO-73（145MHz DL/435MHz UL）→ ISS V/U（145MHz DL/435MHz UL）のように、同じバンド構成でも **衛星が変わると SAT モードメモリが前の衛星のバンド状態で復元**されるため、直後に送ったモードや CTCSS が誤った VFO に書き込まれる。
+
+例: AO-73（UHF DL）→ ISS V/U（VHF DL）に切り替えると、IC-9100 が Main=UHF の状態のまま復元し、次の `set_mode(VFO_MAIN, FM)` が UHF Main（本来は VHF）に書かれ CTCSS トーンも同様に逆転する。
+
+**修正方針 — 2-stage アプローチ**:
+
+| ステージ | タイミング | 処理 | 目的 |
+|---|---|---|---|
+| **Stage 1** | トランスポンダー選択時（connect前） | DL/UL周波数を先に書く → モード/CTCSSを送る | IC-9100/9700 SAT mode バンド割り当てを新衛星に固定してからモード書き込み |
+| **Stage 2** | connect後・最初の Doppler UL 書き込み時 | モード+CTCSSを再送 | ライブ接続上でバンド割り当て確定後の保険的再確認 |
+
+**Stage 1 の実装**:
+- Direct mode: `main_window._apply_transponder_state_to_rig()` でトランスポンダーの DL/UL Hz を `rig._transponder_dl_hz`/`rig._transponder_ul_hz` にセット → `_apply_mode_and_ctcss_hamlib()` 内で step 4 として周波数を先書き
+- NET mode: `set_transponder_freqs()` で `_transponder_dl_hz`/`_transponder_ul_hz` を保存 → `apply_transponder_state()` 内で `_send_split_init_independent()` の直後に `_send_freq_preset_independent()` を呼ぶ
+
+**Stage 2 の実装**:
+- Direct mode: `apply_transponder_state()` で `_pending_mode_ctcss = True` をセット → `_set_vfo_frequencies_locked()` で最初の UL 書き込み後に `_resend_mode_ctcss_via_rig()` を呼んで `self._rig` 経由でモード+CTCSS を再送
+- NET mode: `apply_transponder_state()` で `_pending_mode_net = True`/`_pending_ctcss_hz` をセット → `set_vfo_frequencies()` で最初の `I` 書き込み後に `send_mode_only()` + `_apply_ctcss_civ_direct()` を再送（`_cmd_lock` 保持中だが両関数は独立ソケットで `_cmd_lock` を取得しないため安全）
+
+**`_SATMODE_USE_VFO_SUB` と周波数プリセットの関係**:
+- Stage 1 でも Stage 2（Doppler UL 書き込み）でも、VFO定数の選択は同じ分岐（IC-9700 = `VFO_SUB`、その他 = `VFO_TX`）に従う。
 
 **IC-9100 mode behaviour — key facts**:
 - Entering SAT mode: IC-9100 does **not** unconditionally reset to FM. It generally preserves the mode from the previous session.
