@@ -503,6 +503,13 @@ class HamlibDirectController(RigController):
         self._port_lock = threading.Lock()
         # Last CTCSS tone set for satmode rigs (Hz). Re-applied in _satmode_enter.
         self._ctcss_tone_hz: float = 0.0
+        # Transponder DL/UL frequencies stored at selection time for Stage-1 freq
+        # pre-write in _apply_mode_and_ctcss_hamlib (IC-9100/9700 SAT mode anchor).
+        self._transponder_dl_hz: float | None = None
+        self._transponder_ul_hz: float | None = None
+        # Stage-2 flag: after first UL write post-connect, re-send mode/CTCSS to
+        # confirm correct VFO assignment once SAT mode band anchor is locked.
+        self._pending_mode_ctcss: bool = False
 
     # -- Connection management --
 
@@ -1023,9 +1030,13 @@ class HamlibDirectController(RigController):
                                 "RigDirect satmode UL: set_freq(%s, %d)", vfo_name, int(vfob_hz)
                             )
                             try:
+                                was_first_ul = last_ul is None
                                 self._rig.set_freq(vfo_tx, int(vfob_hz))
                                 self._last_ul_hz = vfob_hz
                                 self._last_ul_update_time = now
+                                if was_first_ul and self._pending_mode_ctcss:
+                                    self._pending_mode_ctcss = False
+                                    self._resend_mode_ctcss_via_rig()
                             except Exception as exc:
                                 logger.warning("RigDirect satmode UL %s: %s", vfo_name, exc)
 
@@ -1222,6 +1233,31 @@ class HamlibDirectController(RigController):
                     time.sleep(0.1)
                     logger.info("RigDirect._apply_mode_and_ctcss_hamlib: IC-9700 extra set_func")
 
+                # Stage 1: write DL/UL frequencies to anchor IC-9100/9700 SAT mode
+                # Main/Sub band assignment BEFORE setting modes.  Without this, the
+                # rig restores the previous satellite's band assignment from SAT mode
+                # memory (set_func(SATMODE,1) restores memory), causing modes and
+                # CTCSS to be written to the wrong VFO.
+                if self._transponder_dl_hz is not None:
+                    vfo_ul_preset = (
+                        int(_H.RIG_VFO_SUB)
+                        if self._model_id in _SATMODE_USE_VFO_SUB
+                        else int(_H.RIG_VFO_TX)
+                    )
+                    logger.info(
+                        "RigDirect._apply_mode_and_ctcss_hamlib: freq preset DL=%.3fMHz",
+                        self._transponder_dl_hz / 1e6,
+                    )
+                    rig2.set_freq(vfo_main, int(self._transponder_dl_hz))
+                    time.sleep(0.1)
+                    if self._transponder_ul_hz is not None:
+                        logger.info(
+                            "RigDirect._apply_mode_and_ctcss_hamlib: freq preset UL=%.3fMHz",
+                            self._transponder_ul_hz / 1e6,
+                        )
+                        rig2.set_freq(vfo_ul_preset, int(self._transponder_ul_hz))
+                        time.sleep(0.1)
+
                 # Mode: Main (DL) and Sub (UL)
                 rig2.set_mode(dl_hamlib, 0, vfo_main)
                 time.sleep(0.1)
@@ -1365,6 +1401,61 @@ class HamlibDirectController(RigController):
         except Exception as exc:
             logger.error("RigDirect.ft991 CAT: %s", exc)
 
+    def _resend_mode_ctcss_via_rig(self) -> None:
+        """Stage 2: re-apply mode and CTCSS via self._rig after first UL write.
+
+        Called from _set_vfo_frequencies_locked when _pending_mode_ctcss is True
+        and the first DL+UL frequency pair has been written to the rig.
+        At that point IC-9100/9700 SAT mode Main/Sub band assignment is locked
+        to the new satellite, so modes/CTCSS land on the correct VFOs.
+        Called with _rig_cmd_lock held; self._rig is guaranteed non-None here.
+        """
+        if self._rig is None:
+            return
+        try:
+            import Hamlib as _H  # noqa: PLC0415
+
+            hamlib_mode: dict[str, int] = {
+                "FM": _H.RIG_MODE_FM,
+                "DIGITALVOICE": _H.RIG_MODE_FM,
+                "AFSK": _H.RIG_MODE_FM,
+                "USB": _H.RIG_MODE_USB,
+                "SSB": _H.RIG_MODE_USB,
+                "LSB": _H.RIG_MODE_LSB,
+                "CW": _H.RIG_MODE_CW,
+                "CW-R": _H.RIG_MODE_CWR,
+                "AM": _H.RIG_MODE_AM,
+                "BPSK": _H.RIG_MODE_PKTUSB,
+            }
+            dl_hamlib = hamlib_mode.get(self._current_dl_mode, _H.RIG_MODE_FM)
+            ul_hamlib = hamlib_mode.get(self._current_ul_mode, _H.RIG_MODE_FM)
+            vfo_main = int(_H.RIG_VFO_MAIN)
+            vfo_sub = int(_H.RIG_VFO_SUB)
+            func_tone = _H.RIG_FUNC_TONE
+            enable = self._current_ctcss_hz > 0
+            tone_deci = int(round(self._current_ctcss_hz * 10)) if enable else 0
+            self._rig.set_mode(dl_hamlib, 0, vfo_main)
+            time.sleep(0.05)
+            self._rig.set_mode(ul_hamlib, 0, vfo_sub)
+            time.sleep(0.05)
+            self._rig.set_vfo(vfo_sub)
+            time.sleep(0.05)
+            self._rig.set_ctcss_tone(vfo_sub, tone_deci)
+            time.sleep(0.05)
+            self._rig.set_func(func_tone, 1 if enable else 0)
+            time.sleep(0.05)
+            self._rig.set_vfo(vfo_main)
+            time.sleep(0.05)
+            self._rig.set_func(func_tone, 0)
+            logger.info(
+                "RigDirect: Stage-2 mode/CTCSS resent dl=%s ul=%s ctcss=%.1fHz",
+                self._current_dl_mode,
+                self._current_ul_mode,
+                self._current_ctcss_hz,
+            )
+        except Exception as exc:
+            logger.warning("RigDirect._resend_mode_ctcss_via_rig: %s", exc)
+
     def apply_transponder_state(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
         """Apply mode and CTCSS atomically for Direct-mode rigs.
 
@@ -1387,6 +1478,7 @@ class HamlibDirectController(RigController):
         if self._satmode:
             self._current_dl_mode = dl_mode
             self._current_ul_mode = ul_mode
+            self._current_ctcss_hz = ctcss_hz
             logger.info(
                 "RigDirect: apply_transponder_state (satmode Hamlib) dl=%s ul=%s ctcss=%.1f",
                 dl_mode,
@@ -1395,6 +1487,9 @@ class HamlibDirectController(RigController):
             )
             if not self._apply_mode_and_ctcss_hamlib(dl_mode, ul_mode, ctcss_hz):
                 raise RigControlError("Mode/CTCSS Error: Hamlib apply failed for satmode rig")
+            # Stage 2: after connect() + first Doppler UL write, re-confirm mode/CTCSS
+            # now that SAT mode band assignment is locked by the frequency write.
+            self._pending_mode_ctcss = True
         elif self._model_id in _FTX1_MODEL_IDS:
             self._apply_mode_and_ctcss_cat_ftx1(dl_mode, ul_mode, ctcss_hz)
         elif self._model_id in _FT991_DIRECT_MODEL_IDS:
@@ -1657,10 +1752,20 @@ class HamlibNetController(RigController):
         self._satmode: bool = False
         self._is_same_band: bool = False  # True when DL and UL are on the same band (V/V or U/U)
         self._current_dl_mode: str = ""  # updated by set_current_modes(); used for UL throttle
+        self._current_ul_mode: str = (
+            ""  # updated by set_current_modes() and apply_transponder_state
+        )
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
         self._last_ul_update_time: float = 0.0  # monotonic; used for same-band UL throttle
         self._pending_ctcss_hz: float | None = None  # re-applied after connect() on satmode rigs
+        # Transponder DL/UL frequencies stored at selection time for Stage-1 freq
+        # pre-write in _send_freq_preset_independent (IC-9100/9700 SAT mode anchor).
+        self._transponder_dl_hz: float | None = None
+        self._transponder_ul_hz: float | None = None
+        # Stage-2 flag: after first I (UL) write post-connect, re-send mode/CTCSS
+        # with the connection's send_mode_only and _apply_ctcss_civ_direct.
+        self._pending_mode_net: bool = False
 
     # -- Connection management --
 
@@ -1682,6 +1787,8 @@ class HamlibNetController(RigController):
         split (S 1 VFOB) for same-band transponders like ISS APRS (V/V).
         """
         self._is_same_band = self._freq_band(dl_hz) == self._freq_band(ul_hz)
+        self._transponder_dl_hz = dl_hz
+        self._transponder_ul_hz = ul_hz
         logger.info(
             "RigNet: transponder freqs dl=%.3fMHz ul=%.3fMHz same_band=%s",
             dl_hz / 1e6,
@@ -1689,9 +1796,10 @@ class HamlibNetController(RigController):
             self._is_same_band,
         )
 
-    def set_current_modes(self, dl_mode: str, ul_mode: str) -> None:  # noqa: ARG002
-        """Store current DL mode so same-band UL throttle can pick the right threshold."""
+    def set_current_modes(self, dl_mode: str, ul_mode: str) -> None:
+        """Store current DL/UL modes so same-band UL throttle can pick the right threshold."""
         self._current_dl_mode = dl_mode
+        self._current_ul_mode = ul_mode
 
     @property
     def is_connected(self) -> bool:
@@ -1978,12 +2086,35 @@ class HamlibNetController(RigController):
                 else:
                     send_ul = last_ul is None or abs(vfob_hz - last_ul) >= 1.0
                 if send_ul:
+                    was_first_ul = last_ul is None
                     logger.info("RigNet: sending I %d", int(vfob_hz))
                     resp = self._cmd_raw(f"I {int(vfob_hz)}")
                     if "RPRT 0" not in resp:
                         raise RigControlError(f"set TX freq failed: {resp!r}")
                     self._last_ul_hz = vfob_hz
                     self._last_ul_update_time = now
+                    if was_first_ul and (
+                        self._pending_mode_net or self._pending_ctcss_hz is not None
+                    ):
+                        # Stage 2: SAT mode band assignment is now locked by the
+                        # first live frequency write — re-send modes and CTCSS.
+                        # send_mode_only and _apply_ctcss_civ_direct use independent
+                        # sockets and do not acquire _cmd_lock, so this is safe.
+                        _dl = self._current_dl_mode
+                        _ul = self._current_ul_mode
+                        _ctcss = self._pending_ctcss_hz
+                        self._pending_mode_net = False
+                        self._pending_ctcss_hz = None
+                        if _dl:
+                            self.send_mode_only(_dl, _ul)
+                        if _ctcss is not None and _ctcss > 0.0:
+                            self._apply_ctcss_civ_direct(_ctcss)
+                        logger.info(
+                            "RigNet: Stage-2 mode/CTCSS resent dl=%s ul=%s ctcss=%.1fHz",
+                            _dl,
+                            _ul,
+                            _ctcss or 0.0,
+                        )
 
         return True
 
@@ -2234,6 +2365,47 @@ class HamlibNetController(RigController):
         except Exception as exc:
             logger.warning("RigNet: send_mode_only failed: %s", exc)
 
+    def _send_freq_preset_independent(self) -> None:
+        """Stage 1: write DL/UL frequencies via independent TCP socket.
+
+        Anchors IC-9100/9700 SAT mode Main/Sub band assignment BEFORE
+        send_mode_only() and _apply_ctcss_civ_direct() are called.
+        Uses F (Main=DL) and I (Sub/TX=UL), matching the Doppler cycle.
+        Called inside apply_transponder_state immediately after
+        _send_split_init_independent() so SAT mode is already established.
+        """
+        if not self._transponder_dl_hz and not self._transponder_ul_hz:
+            return
+        logger.info(
+            "RigNet: freq preset DL=%.3fMHz UL=%.3fMHz via independent socket",
+            (self._transponder_dl_hz or 0) / 1e6,
+            (self._transponder_ul_hz or 0) / 1e6,
+        )
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self._TIMEOUT)
+            sock.connect((self._host, self._port))
+            sock.settimeout(2.0)
+
+            def _send_recv(cmd: str) -> None:
+                sock.sendall((cmd + "\n").encode())
+                buf = b""
+                with contextlib.suppress(OSError):
+                    while b"RPRT" not in buf:
+                        chunk = sock.recv(256)
+                        if not chunk:
+                            break
+                        buf += chunk
+
+            if self._transponder_dl_hz:
+                _send_recv(f"F {int(self._transponder_dl_hz)}")
+            if self._transponder_ul_hz:
+                _send_recv(f"I {int(self._transponder_ul_hz)}")
+            sock.close()
+            logger.info("RigNet: freq preset done")
+        except Exception as exc:
+            logger.error("RigNet: freq preset failed: %s", exc)
+
     def _send_split_init_independent(self) -> None:
         """Send satmode/split init via a fresh TCP socket (mirrors Direct-mode set_func(SATMODE,1)).
 
@@ -2289,15 +2461,25 @@ class HamlibNetController(RigController):
                 ul_mode,
                 ctcss_hz,
             )
-            # Store so connect() can re-apply after S 1 Main (SAT mode established).
+            # Cache modes for Stage-2 resend.
+            self._current_dl_mode = dl_mode
+            self._current_ul_mode = ul_mode
+            # Store so connect() and Stage-2 can re-apply CTCSS after SAT mode is confirmed.
             # IC-9700 keeps Normal-mode and SAT-mode CTCSS registers separately;
             # writing before connect() lands in Normal mode, so we resend after
-            # _init_vfo() confirms the rig is in SAT mode.
+            # the first live F/I write locks the band assignment.
             self._pending_ctcss_hz = ctcss_hz if ctcss_hz > 0.0 else None
             with self._cmd_lock:
                 self._send_split_init_independent()
+                # Stage 1: write DL/UL frequencies BEFORE modes/CTCSS so that
+                # IC-9100/9700 SAT mode Main/Sub band assignment is anchored to
+                # the new satellite before mode bytes are sent.
+                self._send_freq_preset_independent()
                 self.send_mode_only(dl_mode, ul_mode)
                 self._apply_ctcss_civ_direct(ctcss_hz)
+            # Stage 2: after connect() + first Doppler I write, re-confirm
+            # mode/CTCSS now that freq anchor is established on the live connection.
+            self._pending_mode_net = True
         else:
             # Non-satmode rigs (FTX-1F, FT-991A, etc.):
             # send_mode_only uses V Sub/V Main which leaves TX on Main after the

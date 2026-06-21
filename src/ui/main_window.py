@@ -2032,6 +2032,14 @@ class MainWindow(QMainWindow):
             if rig.is_connected:
                 self._disconnect_rig()  # must run on UI thread
 
+            # Pass transponder frequencies to Direct-mode satmode rigs so that
+            # _apply_mode_and_ctcss_hamlib can write them first (Stage 1 freq anchor).
+            if isinstance(rig, HamlibDirectController) and rig._satmode:
+                dl_hz = float(self._current_transmitter.get("downlink_low") or 0)
+                ul_hz = float(self._current_transmitter.get("uplink_low") or dl_hz)
+                rig._transponder_dl_hz = dl_hz
+                rig._transponder_ul_hz = ul_hz
+
             def _do_satmode() -> None:
                 rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
@@ -2047,7 +2055,6 @@ class MainWindow(QMainWindow):
             from rig.controller import (
                 _FT991_DIRECT_MODEL_IDS,
                 _FTX1_MODEL_IDS,
-                HamlibDirectController,
             )
 
             _raw_cat_ids = _FTX1_MODEL_IDS | _FT991_DIRECT_MODEL_IDS
