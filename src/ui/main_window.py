@@ -1555,6 +1555,48 @@ class MainWindow(QMainWindow):
                     track_data=track,
                 )
 
+            # Send Doppler-corrected frequencies to the connected rig (same
+            # non-blocking pattern as regular satellites).
+            if self._rig_controller is not None and self._rig_controller.is_connected:
+                if self._rig_busy_lock.acquire(blocking=False):
+                    rig = self._rig_controller
+                    dl = dl_corr
+                    ul = ul_corr
+
+                    def _eme_rig_send() -> None:
+                        try:
+                            rig.set_vfo_frequencies(dl, ul)
+                        except RigControlError as exc:
+                            self._rig_error.emit(str(exc))
+                        except Exception as exc:
+                            logger.error("EME rig: unexpected error: %s", exc)
+                            self._rig_error.emit(str(exc))
+                        finally:
+                            self._rig_busy_lock.release()
+
+                    threading.Thread(target=_eme_rig_send, daemon=True).start()
+                else:
+                    logger.debug("EME rig: previous cycle still running, skipping tick")
+
+            if self._rig2_controller is not None and self._rig2_controller.is_connected:
+                if self._rig2_busy_lock.acquire(blocking=False):
+                    rig2 = self._rig2_controller
+                    dl2 = dl_corr
+                    ul2 = ul_corr
+
+                    def _eme_rig2_send() -> None:
+                        try:
+                            rig2.set_vfo_frequencies(dl2, ul2)
+                        except RigControlError as exc:
+                            self._rig_error.emit(str(exc))
+                        except Exception as exc:
+                            logger.error("EME rig2: unexpected error: %s", exc)
+                            self._rig_error.emit(str(exc))
+                        finally:
+                            self._rig2_busy_lock.release()
+
+                    threading.Thread(target=_eme_rig2_send, daemon=True).start()
+
         # Rotator tracking — same non-blocking path as regular satellites
         self._send_to_rotator(obs)
 
