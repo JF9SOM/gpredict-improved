@@ -174,6 +174,18 @@ _SATMODE_RIG_IDS: frozenset[int] = frozenset(
     ]
 )
 
+# IC-9700 requires RIG_VFO_SUB for UL writes in satmode.
+# IC-9100/IC-910H/IC-821H require RIG_VFO_TX (confirmed 2026-06-21).
+# Background: IC-9700's Hamlib backend does not correctly route RIG_VFO_TX
+# to Sub in satmode; RIG_VFO_SUB addresses Sub directly and works reliably.
+# IC-9100 exhibits the opposite behaviour: RIG_VFO_SUB fails on the 2nd
+# consecutive call, while RIG_VFO_TX works across multiple calls.
+_SATMODE_USE_VFO_SUB: frozenset[int] = frozenset(
+    [
+        3081,  # IC-9700
+    ]
+)
+
 # NET mode: rigctld reports the connected rig name via the _ command.
 
 # ---------------------------------------------------------------------------
@@ -955,7 +967,11 @@ class HamlibDirectController(RigController):
                     # set_freq(VFO_TX) writes Sub (TX/UL) without ic9700_set_vfo
                     # rejection.  No satmode toggle needed.
                     main_vfo = int(_H.RIG_VFO_MAIN)
-                    vfo_tx = int(_H.RIG_VFO_TX)
+                    # IC-9700 needs RIG_VFO_SUB; IC-9100/910H/821H need RIG_VFO_TX.
+                    if self._model_id in _SATMODE_USE_VFO_SUB:
+                        vfo_tx = int(_H.RIG_VFO_SUB)
+                    else:
+                        vfo_tx = int(_H.RIG_VFO_TX)
                     if vfoa_hz is not None:
                         last_dl = self._last_dl_hz
                         if last_dl is None or self._freq_band(vfoa_hz) != self._freq_band(last_dl):
@@ -989,13 +1005,18 @@ class HamlibDirectController(RigController):
                             or abs(vfob_hz - last_ul) >= _UL_THRESH
                             or elapsed >= _UL_MAX_S
                         ):
-                            logger.info("RigDirect satmode UL: set_freq(VFO_TX, %d)", int(vfob_hz))
+                            vfo_name = (
+                                "VFO_SUB" if self._model_id in _SATMODE_USE_VFO_SUB else "VFO_TX"
+                            )
+                            logger.info(
+                                "RigDirect satmode UL: set_freq(%s, %d)", vfo_name, int(vfob_hz)
+                            )
                             try:
                                 self._rig.set_freq(vfo_tx, int(vfob_hz))
                                 self._last_ul_hz = vfob_hz
                                 self._last_ul_update_time = now
                             except Exception as exc:
-                                logger.warning("RigDirect satmode UL VFO_TX: %s", exc)
+                                logger.warning("RigDirect satmode UL %s: %s", vfo_name, exc)
 
             else:
                 rx_vfo = self._vfo_str_to_const("VFOA")
