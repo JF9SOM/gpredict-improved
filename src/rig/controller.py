@@ -1640,6 +1640,7 @@ class HamlibNetController(RigController):
         self._last_dl_hz: float | None = None  # None = just connected; forces the first F/I send
         self._last_ul_hz: float | None = None
         self._last_ul_update_time: float = 0.0  # monotonic; used for same-band UL throttle
+        self._pending_ctcss_hz: float | None = None  # re-applied after connect() on satmode rigs
 
     # -- Connection management --
 
@@ -1712,6 +1713,17 @@ class HamlibNetController(RigController):
                     self._state = RigState.ERROR
                 logger.error("RigNet: S 1 Main timed out or failed — aborting connect")
                 return False
+            # Re-apply CTCSS after SAT mode is established for satmode rigs (IC-9700 etc.).
+            # Transponder selection sends CTCSS before connect(), at which point the rig
+            # may not yet be in SAT mode — IC-9700 stores Normal-mode and SAT-mode CTCSS
+            # separately, so the earlier write goes to Normal mode.  Resending here ensures
+            # the tone lands in SAT mode after _init_vfo() (S 1 Main) has been sent.
+            if self.is_satmode and self._pending_ctcss_hz is not None:
+                logger.info(
+                    "RigNet: re-applying CTCSS %.1f Hz after connect (satmode)",
+                    self._pending_ctcss_hz,
+                )
+                self._apply_ctcss_civ_direct(self._pending_ctcss_hz)
             return True
         except OSError as exc:
             with self._lock:
@@ -2257,6 +2269,11 @@ class HamlibNetController(RigController):
                 ul_mode,
                 ctcss_hz,
             )
+            # Store so connect() can re-apply after S 1 Main (SAT mode established).
+            # IC-9700 keeps Normal-mode and SAT-mode CTCSS registers separately;
+            # writing before connect() lands in Normal mode, so we resend after
+            # _init_vfo() confirms the rig is in SAT mode.
+            self._pending_ctcss_hz = ctcss_hz if ctcss_hz > 0.0 else None
             with self._cmd_lock:
                 self._send_split_init_independent()
                 self.send_mode_only(dl_mode, ul_mode)
