@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.autotrack import AutotrackManager
+from core.celestial_engine import MOON_ID, CelestialEngine
 from core.engine import DopplerCalculator, Observation, PassPredictor, SatelliteEngine
 from core.location import LocationManager
 from core.notifier import PassNotifier
@@ -179,7 +180,7 @@ class SatDetailPanel(QWidget):
     def set_satellite(self, norad: int, name: str) -> None:
         """Set basic info for the selected satellite."""
         self._name_label.setText(name)
-        self._norad_label.setText(str(norad))
+        self._norad_label.setText("—" if norad == MOON_ID else str(norad))
 
     def update_observation(self, obs: Observation | None) -> None:
         """Update observation values. Sets '—' for all fields when obs is None."""
@@ -286,6 +287,8 @@ class MainWindow(QMainWindow):
         self._current_transmitter: dict[str, Any] | None = None
         self._web_server: Any | None = None
         self._web_server_url: str = ""
+        # Celestial body tracking (Moon, etc.)
+        self._celestial_engine: CelestialEngine = CelestialEngine()
         self._scheduler: Any | None = None
         # Set to True in closeEvent so background threads stop gracefully
         self._shutdown_flag = threading.Event()
@@ -768,7 +771,25 @@ class MainWindow(QMainWindow):
         restore_row = -1
         filtered_sats: list[tuple[int, str]] = []
 
+        # Inject Moon entry for "All Satellites" and "Celestial Bodies" filters
+        show_moon = filter_text in ("All Satellites", "Celestial Bodies") and not search_query
+        if show_moon:
+            moon_item = QListWidgetItem("☽ Moon")
+            moon_item.setData(Qt.ItemDataRole.UserRole, MOON_ID)
+            moon_item.setForeground(QColor("#c8d8f8"))
+            font: QFont = moon_item.font()
+            font.setBold(True)
+            moon_item.setFont(font)
+            self._sat_list.addItem(moon_item)
+            if current_norad == MOON_ID:
+                restore_row = count
+            count += 1
+            # Moon is not included in filtered_sats (no pass prediction in Phase 1)
+
         for d in self._all_sat_data:
+            # Skip regular satellites when Celestial Bodies filter is active
+            if filter_text == "Celestial Bodies":
+                continue
             # Visibility filter:
             #   is_hidden=1 (user-hidden)   -> shown only under the "Hidden" filter
             #   is_hidden=2 (system-hidden) -> hidden from all filters
@@ -868,7 +889,8 @@ class MainWindow(QMainWindow):
         self._pass_list.set_satellites(filtered_sats)
 
         # Update the visible norads list (used for world-map computation)
-        if filter_text == "All Satellites" and not search_query:
+        # Moon (MOON_ID) is intentionally excluded — it is drawn separately.
+        if filter_text in ("All Satellites", "Celestial Bodies") and not search_query:
             self._visible_norads = list(self._all_norads)
             self._world_map.set_visible_norads(None)
         else:
@@ -949,6 +971,9 @@ class MainWindow(QMainWindow):
         # to start only after satellite rows are present in the DB.
         threading.Thread(target=self._refresh_satellite_names_sync, daemon=True).start()
 
+        # Load DE421 ephemeris for celestial body tracking (downloads ~17 MB on first run)
+        threading.Thread(target=self._load_celestial_engine, daemon=True).start()
+
     @staticmethod
     def _sort_sources_by_priority(sources: list[str]) -> list[str]:
         """Sort TLE source names by their priority in TLE_SOURCES (ascending).
@@ -986,6 +1011,14 @@ class MainWindow(QMainWindow):
             self._satellite_list_refresh.emit()
         except Exception as exc:
             logger.warning("AMSAT status refresh failed: %s", exc)
+
+    def _load_celestial_engine(self) -> None:
+        """Load the DE421 ephemeris in a background thread."""
+        ok = self._celestial_engine.load()
+        if ok:
+            logger.info("CelestialEngine ready")
+        else:
+            logger.warning("CelestialEngine failed to load — Moon tracking unavailable")
 
     def _refresh_satellite_names_sync(self) -> None:
         """Sync satellite names from SATNOGS, then fetch provisional and legacy TLEs.
@@ -1129,7 +1162,14 @@ class MainWindow(QMainWindow):
 
         # Frequencies from current transmitter + Doppler
         if self._current_transmitter is not None and self._selected_norad is not None:
-            obs = self._engine.observe(self._selected_norad) if self._engine else None
+            loc = self._location_manager.current if self._location_manager else None
+            obs = (
+                self._celestial_engine.observe_moon(
+                    loc.latitude_deg, loc.longitude_deg, loc.elevation_m
+                )
+                if self._selected_norad == MOON_ID and loc is not None
+                else (self._engine.observe(self._selected_norad) if self._engine else None)
+            )
             if obs is not None:
                 dl_nom = self._current_transmitter.get("downlink_low")
                 ul_nom = self._current_transmitter.get("uplink_low")
@@ -1406,9 +1446,45 @@ class MainWindow(QMainWindow):
         else:
             self._world_map.clear_footprint()
 
+    def _update_moon(self) -> None:
+        """Update EL/AZ/Range display and radar when the Moon is selected."""
+        if not self._celestial_engine.is_loaded:
+            return
+        loc = self._location_manager.current if self._location_manager else None
+        if loc is None:
+            return
+
+        obs = self._celestial_engine.observe_moon(
+            loc.latitude_deg, loc.longitude_deg, loc.elevation_m
+        )
+        self._detail_panel.update_observation(obs)
+
+        if obs is not None:
+            track = SatTrackData(
+                name="Moon",
+                norad_cat_id=MOON_ID,
+                azimuth_deg=obs.azimuth_deg,
+                elevation_deg=obs.elevation_deg,
+                is_visible=obs.is_above_horizon,
+                track=[],  # 24-hour arc track added in Phase 2
+                aos_time=None,
+                los_time=None,
+                next_max_el=None,
+                next_duration_s=None,
+            )
+            self._radar_view.set_tracks([track])
+            self._dashboard_view.update_observation(obs, subpoint=None, track_data=track)
+
     def _update_selected_satellite(self) -> None:
         """Update the observation values and radar view for the currently selected satellite."""
-        if self._engine is None or self._selected_norad is None:
+        if self._selected_norad is None:
+            return
+
+        if self._selected_norad == MOON_ID:
+            self._update_moon()
+            return
+
+        if self._engine is None:
             return
 
         obs = self._engine.observe(self._selected_norad)
@@ -1830,6 +1906,7 @@ class MainWindow(QMainWindow):
             "Science",
             "Space Stations",
             "Operational (AMSAT)",
+            "Celestial Bodies",
             "Hidden",
         ]
         self._filter_combo.addItems(items)
@@ -1905,6 +1982,15 @@ class MainWindow(QMainWindow):
         self._detail_panel.set_satellite(norad, name)
         self._radio_control.set_satellite(norad, name)
         self._dashboard_view.set_satellite(norad, name)
+
+        if norad == MOON_ID:
+            # Moon: clear pass list and transmitter list — populated in later phases
+            self._current_passes = []
+            self._pass_list.clear()
+            self._radio_control.set_transmitters([])
+            self._world_map.clear_footprint()
+            return
+
         self._refresh_passes()
         self._refresh_radio_control(norad)
 
