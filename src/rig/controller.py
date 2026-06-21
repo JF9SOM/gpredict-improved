@@ -1203,83 +1203,116 @@ class HamlibDirectController(RigController):
                 r.set_conf("civaddr", addr)
             return r
 
+        # Detect same-band from stored transponder frequencies.
+        # IC-9100/9700 satmode requires different bands for Main/Sub; same-band
+        # pairs must use normal split (VFO-A=RX, VFO-B=TX) instead.
+        is_same_band = (
+            self._transponder_dl_hz is not None
+            and self._transponder_ul_hz is not None
+            and self._freq_band(self._transponder_dl_hz) == self._freq_band(self._transponder_ul_hz)
+        )
+
         rig = None
         rig2 = None
         try:
             with self._port_lock:
-                # Step 1: open → set_func(SATMODE, 1) → close
-                # This sends CI-V 16 5A 01 to the rig.
-                rig = _make_rig()
-                rig.open()
-                time.sleep(0.3)
-                rig.set_func(_H.RIG_FUNC_SATMODE, 1)
-                time.sleep(0.3)
-                rig.close()
-                rig = None
-                time.sleep(0.3)
-
-                # Step 2: second open() reads satmode=1 from rig → cache->satmode=1
-                # This enables set_mode(VFO_MAIN/VFO_SUB) and set_freq(VFO_TX).
-                rig2 = _make_rig()
-                rig2.open()
-                time.sleep(0.3)
-                # IC-9700 does not correctly read back satmode=1 during open().
-                # Force cache->satmode=1 with an extra set_func call so that
-                # set_mode(VFO_MAIN) routes to SAT-mode Main (not Normal VFOA).
-                # Only for _SATMODE_USE_VFO_SUB models — IC-9100 must NOT receive
-                # a second set_func(SATMODE,1) after open() (confirmed to break it).
-                if self._model_id in _SATMODE_USE_VFO_SUB:
-                    rig2.set_func(_H.RIG_FUNC_SATMODE, 1)
+                if is_same_band:
+                    # Same-band path (V/V or U/U): exit SAT mode, use normal split.
+                    # CTCSS is intentionally skipped — same-band satellite transponders
+                    # do not require uplink access tones.
+                    vfo_a = int(_H.RIG_VFO_A)
+                    vfo_b = int(_H.RIG_VFO_B)
+                    vfo_curr = int(_H.RIG_VFO_CURR)
+                    rig2 = _make_rig()
+                    rig2.open()
+                    time.sleep(0.3)
+                    rig2.set_func(_H.RIG_FUNC_SATMODE, 0)
+                    time.sleep(0.4)  # wait for IC-9100 normal-mode memory restore
+                    rig2.set_split_vfo(vfo_curr, 1, vfo_b)
                     time.sleep(0.1)
-                    logger.info("RigDirect._apply_mode_and_ctcss_hamlib: IC-9700 extra set_func")
-
-                # Stage 1: write DL/UL frequencies to anchor IC-9100/9700 SAT mode
-                # Main/Sub band assignment BEFORE setting modes.  Without this, the
-                # rig restores the previous satellite's band assignment from SAT mode
-                # memory (set_func(SATMODE,1) restores memory), causing modes and
-                # CTCSS to be written to the wrong VFO.
-                if self._transponder_dl_hz is not None:
-                    vfo_ul_preset = (
-                        int(_H.RIG_VFO_SUB)
-                        if self._model_id in _SATMODE_USE_VFO_SUB
-                        else int(_H.RIG_VFO_TX)
-                    )
+                    # Write frequencies to anchor VFO-A/B band assignment
+                    rig2.set_freq(vfo_a, int(self._transponder_dl_hz))  # type: ignore[arg-type]
+                    time.sleep(0.1)
+                    rig2.set_freq(vfo_b, int(self._transponder_ul_hz))  # type: ignore[arg-type]
+                    time.sleep(0.1)
+                    rig2.set_mode(dl_hamlib, 0, vfo_a)
+                    time.sleep(0.1)
+                    rig2.set_mode(ul_hamlib, 0, vfo_b)
+                    time.sleep(0.1)
+                    rig2.set_vfo(vfo_a)  # restore display to DL VFO
                     logger.info(
-                        "RigDirect._apply_mode_and_ctcss_hamlib: freq preset DL=%.3fMHz",
-                        self._transponder_dl_hz / 1e6,
+                        "RigDirect._apply_mode_and_ctcss_hamlib: same-band dl=%s ul=%s no-CTCSS OK",
+                        dl_mode,
+                        ul_mode,
                     )
-                    rig2.set_freq(vfo_main, int(self._transponder_dl_hz))
-                    time.sleep(0.1)
-                    if self._transponder_ul_hz is not None:
-                        logger.info(
-                            "RigDirect._apply_mode_and_ctcss_hamlib: freq preset UL=%.3fMHz",
-                            self._transponder_ul_hz / 1e6,
-                        )
-                        rig2.set_freq(vfo_ul_preset, int(self._transponder_ul_hz))
-                        time.sleep(0.1)
+                else:
+                    # Cross-band path: SAT mode sequence.
+                    # Step 1: open → set_func(SATMODE, 1) → close
+                    rig = _make_rig()
+                    rig.open()
+                    time.sleep(0.3)
+                    rig.set_func(_H.RIG_FUNC_SATMODE, 1)
+                    time.sleep(0.3)
+                    rig.close()
+                    rig = None
+                    time.sleep(0.3)
 
-                # Mode: Main (DL) and Sub (UL)
-                rig2.set_mode(dl_hamlib, 0, vfo_main)
-                time.sleep(0.1)
-                rig2.set_mode(ul_hamlib, 0, vfo_sub)
-                time.sleep(0.1)
-                # CTCSS on Sub (TX/UL)
-                rig2.set_vfo(vfo_sub)
-                time.sleep(0.1)
-                rig2.set_ctcss_tone(vfo_sub, tone_deci)
-                time.sleep(0.1)
-                rig2.set_func(func_tone, 1 if enable else 0)
-                time.sleep(0.1)
-                # Restore Main and clear any bleed-through
-                rig2.set_vfo(vfo_main)
-                time.sleep(0.1)
-                rig2.set_func(func_tone, 0)
-            logger.info(
-                "RigDirect._apply_mode_and_ctcss_hamlib: dl=%s ul=%s ctcss=%.1fHz OK",
-                dl_mode,
-                ul_mode,
-                ctcss_hz,
-            )
+                    # Step 2: second open() reads satmode=1 → cache->satmode=1
+                    rig2 = _make_rig()
+                    rig2.open()
+                    time.sleep(0.3)
+                    # IC-9700: force cache->satmode=1 with extra set_func after open().
+                    if self._model_id in _SATMODE_USE_VFO_SUB:
+                        rig2.set_func(_H.RIG_FUNC_SATMODE, 1)
+                        time.sleep(0.1)
+                        logger.info(
+                            "RigDirect._apply_mode_and_ctcss_hamlib: IC-9700 extra set_func"
+                        )
+
+                    # Stage 1: write DL/UL frequencies to anchor IC-9100/9700 SAT mode
+                    # Main/Sub band assignment BEFORE setting modes.
+                    if self._transponder_dl_hz is not None:
+                        vfo_ul_preset = (
+                            int(_H.RIG_VFO_SUB)
+                            if self._model_id in _SATMODE_USE_VFO_SUB
+                            else int(_H.RIG_VFO_TX)
+                        )
+                        logger.info(
+                            "RigDirect._apply_mode_and_ctcss_hamlib: freq preset DL=%.3fMHz",
+                            self._transponder_dl_hz / 1e6,
+                        )
+                        rig2.set_freq(vfo_main, int(self._transponder_dl_hz))
+                        time.sleep(0.1)
+                        if self._transponder_ul_hz is not None:
+                            logger.info(
+                                "RigDirect._apply_mode_and_ctcss_hamlib: freq preset UL=%.3fMHz",
+                                self._transponder_ul_hz / 1e6,
+                            )
+                            rig2.set_freq(vfo_ul_preset, int(self._transponder_ul_hz))
+                            time.sleep(0.1)
+
+                    # Mode: Main (DL) and Sub (UL)
+                    rig2.set_mode(dl_hamlib, 0, vfo_main)
+                    time.sleep(0.1)
+                    rig2.set_mode(ul_hamlib, 0, vfo_sub)
+                    time.sleep(0.1)
+                    # CTCSS on Sub (TX/UL)
+                    rig2.set_vfo(vfo_sub)
+                    time.sleep(0.1)
+                    rig2.set_ctcss_tone(vfo_sub, tone_deci)
+                    time.sleep(0.1)
+                    rig2.set_func(func_tone, 1 if enable else 0)
+                    time.sleep(0.1)
+                    # Restore Main and clear any bleed-through
+                    rig2.set_vfo(vfo_main)
+                    time.sleep(0.1)
+                    rig2.set_func(func_tone, 0)
+                    logger.info(
+                        "RigDirect._apply_mode_and_ctcss_hamlib: dl=%s ul=%s ctcss=%.1fHz OK",
+                        dl_mode,
+                        ul_mode,
+                        ctcss_hz,
+                    )
             return True
         except Exception as exc:
             logger.error("RigDirect._apply_mode_and_ctcss_hamlib: %s", exc)
@@ -1487,9 +1520,17 @@ class HamlibDirectController(RigController):
             )
             if not self._apply_mode_and_ctcss_hamlib(dl_mode, ul_mode, ctcss_hz):
                 raise RigControlError("Mode/CTCSS Error: Hamlib apply failed for satmode rig")
-            # Stage 2: after connect() + first Doppler UL write, re-confirm mode/CTCSS
-            # now that SAT mode band assignment is locked by the frequency write.
-            self._pending_mode_ctcss = True
+            # Stage 2: after connect() + first Doppler UL write, re-confirm mode/CTCSS.
+            # Only for cross-band — same-band uses normal split and _satmode_exit()
+            # re-applies modes at Doppler startup; Stage-2 VFO_MAIN/SUB would be wrong.
+            is_same_band_xpdr = (
+                self._transponder_dl_hz is not None
+                and self._transponder_ul_hz is not None
+                and self._freq_band(self._transponder_dl_hz)
+                == self._freq_band(self._transponder_ul_hz)
+            )
+            if not is_same_band_xpdr:
+                self._pending_mode_ctcss = True
         elif self._model_id in _FTX1_MODEL_IDS:
             self._apply_mode_and_ctcss_cat_ftx1(dl_mode, ul_mode, ctcss_hz)
         elif self._model_id in _FT991_DIRECT_MODEL_IDS:
