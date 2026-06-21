@@ -88,15 +88,19 @@ if sys.platform == "linux":
 if sys.platform.startswith("linux") and "QT_IM_MODULE" not in os.environ:
     os.environ["QT_IM_MODULE"] = "xim"
 
-# Qt6 XKB fix: on some Linux setups (AppImage, non-Latin keyboard layouts such
-# as Japanese), Qt cannot locate the host XKB config files and logs
-# "qt.qpa.keymapper: no keyboard layouts with latin keys present", causing all
-# key input to stop working.  Pointing QT_XKB_CONFIG_ROOT at the system path
-# before QApplication is created resolves this.  Only applied when the variable
-# is not already set by the user and the directory exists on the host.
-if sys.platform.startswith("linux") and "QT_XKB_CONFIG_ROOT" not in os.environ:
-    if os.path.isdir("/usr/share/X11/xkb"):
-        os.environ["QT_XKB_CONFIG_ROOT"] = "/usr/share/X11/xkb"
+# Qt6 / libxkbcommon XKB fix: AppImages running on non-Ubuntu distros (e.g.
+# openSUSE) with non-Latin keyboard layouts (Japanese etc.) log
+# "qt.qpa.keymapper: no keyboard layouts with latin keys present" and drop all
+# key input.  The bundled libxkbcommon cannot find the host XKB config files.
+# Set both QT_XKB_CONFIG_ROOT (Qt6) and XKB_CONFIG_ROOT (libxkbcommon) to the
+# host path before QApplication is created.  Try standard locations in order;
+# use the first one that exists.  Skip if the user has already set the vars.
+if sys.platform.startswith("linux"):
+    for _xkb_path in ("/usr/share/X11/xkb", "/usr/share/xkb"):
+        if os.path.isdir(_xkb_path):
+            os.environ.setdefault("QT_XKB_CONFIG_ROOT", _xkb_path)
+            os.environ.setdefault("XKB_CONFIG_ROOT", _xkb_path)
+            break
 
 from PySide6.QtWidgets import QApplication
 
