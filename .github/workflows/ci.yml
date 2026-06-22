@@ -322,80 +322,47 @@ jobs:
           Compress-Archive -Path "$pkgName\*" -DestinationPath "$pkgName.zip"
           "HAMLIB_PORTABLE_PKG=$pkgName.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
 
-      - name: Bundle SoapySDR for Windows (PothosSDR)
+      - name: Bundle SoapySDR for Windows (conda-forge pre-built)
         shell: pwsh
         run: |
-          # Step 1: Install PothosSDR — a pre-tested Windows SDR distribution that includes
-          # RTL-SDR, HackRF, Airspy, AirspyHF, and PlutoSDR support bundled together.
-          # The conda-forge rtl-sdr 2.0.2 package caused crashes with libusbK; PothosSDR's
-          # librtlsdr (0.6.x / osmocom) is more stable on Windows.
-          Write-Host "Finding latest PothosSDR release via GitHub API..."
-          $apiHeaders = @{
-            "User-Agent"    = "GitHub-Actions"
-            "Accept"        = "application/vnd.github.v3+json"
-            "Authorization" = "Bearer $env:GITHUB_TOKEN"
-          }
-          $releases = Invoke-RestMethod `
-            -Uri "https://api.github.com/repos/pothosware/PothosSDR/releases" `
-            -Headers $apiHeaders
-          Write-Host "API returned $($releases.Count) release(s)"
-          if ($releases.Count -eq 0) { throw "No PothosSDR releases found" }
-          $latest = $releases[0]
-          Write-Host "Found release: $($latest.tag_name)"
-          Write-Host "Assets: $($latest.assets | ForEach-Object { $_.name } | Join-String ', ')"
-          $asset = $latest.assets | Where-Object { $_.name -like "PothosSDR*x64*.exe" } | Select-Object -First 1
-          if (-not $asset) { throw "PothosSDR x64 installer not found in release $($latest.tag_name)" }
-          Write-Host "Downloading: $($asset.browser_download_url)"
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile PothosSDR-setup.exe
-          Write-Host "Installing PothosSDR silently ..."
-          Start-Process -FilePath "$PWD\PothosSDR-setup.exe" -ArgumentList "/S" -Wait
-          Start-Sleep -Seconds 10
-          $pothosDir = "C:\Program Files\PothosSDR"
-          if (-not (Test-Path $pothosDir)) { throw "PothosSDR installation not found at $pothosDir" }
-          Write-Host "PothosSDR installed at $pothosDir"
-
-          # Step 2: Extract Python 3.11 SoapySDR binding from conda-forge.
-          # PothosSDR ships its own Python binding for an older Python version;
-          # we need the py311 .pyd from conda-forge.
           pip install zstandard -q
-          Invoke-WebRequest `
-            -Uri "https://conda.anaconda.org/conda-forge/win-64/soapysdr-0.8.1-py311haef1a59_6.conda" `
-            -OutFile "soapysdr-0.8.1-py311haef1a59_6.conda"
+
+          # conda-forge package URLs (pinned for reproducibility).
+          # PlutoSDR (ADALM-Pluto) is intentionally excluded: SoapyPlutoSDR requires
+          # a separate libiio build and caused CI instability; omit for now.
+          $packages = @(
+            # SoapySDR core + Python 3.11 binding
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-0.8.1-py311haef1a59_6.conda",
+            # RTL-SDR
+            "https://conda.anaconda.org/conda-forge/win-64/rtl-sdr-2.0.2-h2466b09_3.conda",
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-rtlsdr-0.3.3-h0644a59_3.conda",
+            # HackRF
+            "https://conda.anaconda.org/conda-forge/win-64/libhackrf0-2026.01.3-hfd05255_0.conda",
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-hackrf-0.3.4-h23704b7_0.tar.bz2",
+            # Airspy
+            "https://conda.anaconda.org/conda-forge/win-64/libairspy-1.0.10-h2466b09_1.conda",
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-airspy-0.2.0-h23704b7_0.tar.bz2",
+            # Airspy HF+
+            "https://conda.anaconda.org/conda-forge/win-64/libairspyhf-1.6.8-h2466b09_1.conda",
+            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-airspyhf-0.2.0-h23704b7_0.tar.bz2"
+          )
 
           New-Item -ItemType Directory -Force -Path soapy-win64\bin     | Out-Null
           New-Item -ItemType Directory -Force -Path soapy-win64\python   | Out-Null
           New-Item -ItemType Directory -Force -Path soapy-win64\modules  | Out-Null
 
-          # extract_soapy_conda.py processes all *.conda / *.tar.bz2 in CWD.
-          # With only the soapysdr package present it will extract the .pyd and
-          # SoapySDR.py helper into soapy-win64/python/, and SoapySDR.dll into
-          # soapy-win64/bin/.  We then override the native DLLs with PothosSDR's.
+          foreach ($url in $packages) {
+            $fname = Split-Path $url -Leaf
+            Write-Host "Downloading $fname ..."
+            Invoke-WebRequest -Uri $url -OutFile $fname
+          }
+
           python "$env:GITHUB_WORKSPACE\scripts\extract_soapy_conda.py"
-
-          # Step 3: Override all native DLLs and plugin modules with PothosSDR versions.
-          # PothosSDR's bin\ contains SoapySDR.dll plus all device-support DLLs.
-          # PothosSDR's lib\SoapySDR\modules0.8\ contains the plugin DLLs (SoapyRTLSDR.dll etc.)
-          $pothosBin     = "$pothosDir\bin"
-          $pothosModules = "$pothosDir\lib\SoapySDR\modules0.8"
-
-          Write-Host "Copying PothosSDR bin DLLs ..."
-          Get-ChildItem "$pothosBin\*.dll" | ForEach-Object {
-            Copy-Item $_.FullName "soapy-win64\bin\" -Force
-          }
-
-          Write-Host "Copying PothosSDR plugin modules ..."
-          if (Test-Path $pothosModules) {
-            Get-ChildItem "$pothosModules\*.dll" | ForEach-Object {
-              Copy-Item $_.FullName "soapy-win64\modules\" -Force
-            }
-          } else {
-            Write-Warning "PothosSDR modules directory not found: $pothosModules"
-          }
 
           Write-Host "=== soapy-win64 contents ==="
           Get-ChildItem soapy-win64 -Recurse -File | Select-Object FullName
 
-          # Step 4: Verify SoapySDR import using the Python 3.11 .pyd + PothosSDR DLLs.
+          # Verify SoapySDR import using the extracted .pyd
           $PY_SITE = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
           Copy-Item soapy-win64\python\* "$PY_SITE\" -Force
           Copy-Item soapy-win64\bin\*.dll "$PY_SITE\" -Force
@@ -407,7 +374,6 @@ jobs:
           print('SoapySDR version:', SoapySDR.getAPIVersion())
           devs = SoapySDR.Device.enumerate()
           print('Detected devices:', len(devs))
-          print('Modules found:', [str(d.get('driver','?')) for d in devs])
           "
 
       - name: Disable Windows Defender and install NSIS
