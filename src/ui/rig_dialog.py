@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sdr.device import SdrDeviceInfo
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -856,6 +856,8 @@ class _SdrSettingsPanel(QWidget):
 
     # Emitted when the assigned rig slot changes: value is 1, 2, or None.
     assigned_rig_changed = Signal(object)
+    # Emitted from background thread when enumerate() completes
+    _enumerate_done = Signal(object)
 
     # Sample rates offered in the dropdown (Hz)
     _SAMPLE_RATES: list[tuple[str, float]] = [
@@ -871,6 +873,8 @@ class _SdrSettingsPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._devices: list[SdrDeviceInfo] = []
+        self._enum_thread: QThread | None = None
+        self._enumerate_done.connect(self._on_enumerate)
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -898,7 +902,7 @@ class _SdrSettingsPanel(QWidget):
         self._dev_combo = QComboBox()
         self._dev_combo.setMinimumWidth(260)
         self._enum_btn = QPushButton(_("Enumerate"))
-        self._enum_btn.clicked.connect(self._on_enumerate)
+        self._enum_btn.clicked.connect(self._start_enumerate)
         dev_row.addWidget(self._dev_combo)
         dev_row.addWidget(self._enum_btn)
         dev_form.addRow(_("Device:"), dev_row)
@@ -978,20 +982,38 @@ class _SdrSettingsPanel(QWidget):
 
         layout.addStretch()
 
-        # Enumerate on first show
-        self._on_enumerate()
+        # Enumerate on first show (in background to avoid UI freeze on Windows)
+        self._start_enumerate()
 
     # ------------------------------------------------------------------ #
 
-    def _on_enumerate(self) -> None:
+    def _start_enumerate(self) -> None:
+        """Run SdrDevice.enumerate() in a background thread to avoid UI freeze."""
         if not SOAPY_AVAILABLE:
             return
-        try:
-            from sdr.device import SdrDevice
+        if self._enum_thread is not None and self._enum_thread.isRunning():
+            return
 
-            self._devices = SdrDevice.enumerate()
-        except Exception:
-            self._devices = []
+        import threading
+
+        def _run() -> None:
+            try:
+                from sdr.device import SdrDevice
+
+                devices = SdrDevice.enumerate()
+            except Exception:
+                devices = []
+            # Signal delivers result back to the UI thread via Qt event loop
+            self._enumerate_done.emit(devices)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+    def _on_enumerate(self, devices: list[SdrDeviceInfo] | None = None) -> None:
+        if devices is not None:
+            self._devices = devices
+        if not SOAPY_AVAILABLE and devices is None:
+            return
 
         if not hasattr(self, "_dev_combo"):
             return
