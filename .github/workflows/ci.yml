@@ -330,12 +330,19 @@ jobs:
           # The conda-forge rtl-sdr 2.0.2 package caused crashes with libusbK; PothosSDR's
           # librtlsdr (0.6.x / osmocom) is more stable on Windows.
           Write-Host "Finding latest PothosSDR release via GitHub API..."
+          $apiHeaders = @{
+            "User-Agent"    = "GitHub-Actions"
+            "Accept"        = "application/vnd.github.v3+json"
+            "Authorization" = "Bearer $env:GITHUB_TOKEN"
+          }
           $releases = Invoke-RestMethod `
             -Uri "https://api.github.com/repos/pothosware/PothosSDR/releases" `
-            -Headers @{"User-Agent"="GitHub-Actions"; "Accept"="application/vnd.github.v3+json"}
+            -Headers $apiHeaders
+          Write-Host "API returned $($releases.Count) release(s)"
           if ($releases.Count -eq 0) { throw "No PothosSDR releases found" }
           $latest = $releases[0]
           Write-Host "Found release: $($latest.tag_name)"
+          Write-Host "Assets: $($latest.assets | ForEach-Object { $_.name } | Join-String ', ')"
           $asset = $latest.assets | Where-Object { $_.name -like "PothosSDR*x64*.exe" } | Select-Object -First 1
           if (-not $asset) { throw "PothosSDR x64 installer not found in release $($latest.tag_name)" }
           Write-Host "Downloading: $($asset.browser_download_url)"
