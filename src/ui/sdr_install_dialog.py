@@ -96,21 +96,16 @@ class _EnumWorker(QObject):
     # Emits (soapy_devices, usb_devices) once the scan completes
     done = Signal(object, object)
 
-    def __init__(self, force: bool = False) -> None:
-        super().__init__()
-        self._force = force
-
     def run(self) -> None:
         from sdr.device import SdrDevice as _SdrDevice
+        from sdr.device import _enumerate_cache
 
-        soapy: list[SdrDeviceInfo] = []
-        if SOAPY_AVAILABLE:
-            try:
-                # Use cached results by default; only force re-scan when the
-                # user clicks Rescan (avoids the Windows SoapySDR crash on 2nd call).
-                soapy = _SdrDevice.enumerate(force=self._force)
-            except Exception:
-                logger.exception("SDR install dialog: soapy enumerate failed")
+        # Never call SoapySDR.Device.enumerate() from here.
+        # On Windows, calling enumerate() can crash the process (segfault in
+        # the native DLL loader).  Instead, use the process-level cache
+        # populated by Rig Settings.  If the cache is empty (Rig Settings was
+        # never opened this session) we just show USB-detected devices only.
+        soapy: list[SdrDeviceInfo] = list(_enumerate_cache) if _enumerate_cache is not None else []
         try:
             usb = _SdrDevice.enumerate_usb()
         except Exception:
@@ -211,7 +206,7 @@ class SdrInstallDialog(QDialog):
         # -- Rescan + close --
         btn_row = QHBoxLayout()
         self._rescan_btn = QPushButton(_("🔍 Rescan Devices"))
-        self._rescan_btn.clicked.connect(lambda: self._start_refresh(force=True))
+        self._rescan_btn.clicked.connect(self._start_refresh)
         btn_row.addWidget(self._rescan_btn)
         btn_row.addStretch()
         close_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -223,18 +218,15 @@ class SdrInstallDialog(QDialog):
     # Scan and populate
     # ------------------------------------------------------------------
 
-    def _start_refresh(self, force: bool = False) -> None:
-        """Kick off an asynchronous device scan (does not block the UI thread).
-
-        force=True bypasses the SoapySDR enumerate cache (used by Rescan button).
-        """
+    def _start_refresh(self) -> None:
+        """Kick off an asynchronous device scan (does not block the UI thread)."""
         if self._enum_thread is not None and self._enum_thread.isRunning():
             return
 
         self._rescan_btn.setEnabled(False)
         self._dev_placeholder.setText(_("Scanning…"))
 
-        obj = _EnumWorker(force=force)
+        obj = _EnumWorker()
         thread = QThread(self)
         obj.moveToThread(thread)
         obj.done.connect(self._on_enum_done)
@@ -246,8 +238,8 @@ class SdrInstallDialog(QDialog):
         self._enum_worker = obj
 
     def _refresh(self) -> None:
-        """Legacy alias — initial scan uses cache (force=False)."""
-        self._start_refresh(force=False)
+        """Legacy alias for install-completion refresh."""
+        self._start_refresh()
 
     @Slot(object, object)
     def _on_enum_done(
