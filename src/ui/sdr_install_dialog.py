@@ -20,7 +20,7 @@ import platform
 import shutil
 import subprocess
 
-from PySide6.QtCore import QThread, Signal, Slot
+from PySide6.QtCore import QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -106,7 +106,10 @@ class SdrInstallDialog(QDialog):
         self.resize(620, 560)
         self._worker: _InstallWorker | None = None
         self._setup_ui()
-        self._refresh()
+        # Delay initial enumerate by 300 ms so the dialog renders first and
+        # the USB driver (especially WinUSB / RTL-SDR on Windows) has time to
+        # settle after any previous enumerate call from Rig Settings.
+        QTimer.singleShot(300, self._refresh)
 
     # ------------------------------------------------------------------
     # UI construction

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -249,21 +250,46 @@ class SdrDevice:
     # ------------------------------------------------------------------
 
     def open(self) -> bool:
-        """Open the device. Returns True on success."""
+        """Open the device. Returns True on success.
+
+        Retries up to 3 times with a short delay between attempts because on
+        Windows the RTL-SDR USB driver can transiently fail immediately after
+        a SoapySDR.Device.enumerate() call.
+        """
         import SoapySDR
+
+        _MAX_ATTEMPTS = 3
+        _RETRY_DELAY = 0.6  # seconds
 
         with self._lock:
             if self._dev is not None:
                 return True
-            try:
-                self._dev = SoapySDR.Device(self._info.args)
-                self._apply_settings()
-                logger.info("SDR opened: %s", self._info.display_name)
-                return True
-            except Exception:
-                logger.exception("Failed to open SDR device %s", self._info.display_name)
-                self._dev = None
-                return False
+            last_exc: Exception | None = None
+            for attempt in range(1, _MAX_ATTEMPTS + 1):
+                try:
+                    self._dev = SoapySDR.Device(self._info.args)
+                    self._apply_settings()
+                    logger.info("SDR opened: %s", self._info.display_name)
+                    return True
+                except Exception as exc:
+                    last_exc = exc
+                    self._dev = None
+                    if attempt < _MAX_ATTEMPTS:
+                        logger.warning(
+                            "SDR open attempt %d/%d failed for %s, retrying in %.1fs…",
+                            attempt,
+                            _MAX_ATTEMPTS,
+                            self._info.display_name,
+                            _RETRY_DELAY,
+                        )
+                        time.sleep(_RETRY_DELAY)
+            logger.exception(
+                "Failed to open SDR device %s after %d attempts",
+                self._info.display_name,
+                _MAX_ATTEMPTS,
+                exc_info=last_exc,
+            )
+            return False
 
     def close(self) -> None:
         """Close the device and release resources."""
