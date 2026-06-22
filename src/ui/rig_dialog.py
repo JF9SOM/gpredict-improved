@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sdr.device import SdrDeviceInfo
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -873,7 +873,7 @@ class _SdrSettingsPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._devices: list[SdrDeviceInfo] = []
-        self._enum_thread: QThread | None = None
+        self._enum_running: bool = False
         self._enumerate_done.connect(self._on_enumerate)
         self._setup_ui()
 
@@ -991,8 +991,11 @@ class _SdrSettingsPanel(QWidget):
         """Run SdrDevice.enumerate() in a background thread to avoid UI freeze."""
         if not SOAPY_AVAILABLE:
             return
-        if self._enum_thread is not None and self._enum_thread.isRunning():
+        if self._enum_running:
             return
+        self._enum_running = True
+        if hasattr(self, "_enum_btn"):
+            self._enum_btn.setEnabled(False)
 
         import threading
 
@@ -1010,6 +1013,10 @@ class _SdrSettingsPanel(QWidget):
         t.start()
 
     def _on_enumerate(self, devices: list[SdrDeviceInfo] | None = None) -> None:
+        self._enum_running = False
+        if hasattr(self, "_enum_btn"):
+            self._enum_btn.setEnabled(True)
+
         if devices is not None:
             self._devices = devices
         if not SOAPY_AVAILABLE and devices is None:
@@ -1017,6 +1024,12 @@ class _SdrSettingsPanel(QWidget):
 
         if not hasattr(self, "_dev_combo"):
             return
+
+        # Disconnect before clearing to avoid spurious currentIndexChanged during clear()
+        import contextlib
+
+        with contextlib.suppress(RuntimeError):
+            self._dev_combo.currentIndexChanged.disconnect(self._on_device_selected)
 
         self._dev_combo.clear()
         if not self._devices:
@@ -1026,8 +1039,8 @@ class _SdrSettingsPanel(QWidget):
         else:
             for d in self._devices:
                 self._dev_combo.addItem(d.display_name)
-            self._on_device_selected(0)
             self._dev_combo.currentIndexChanged.connect(self._on_device_selected)
+            self._on_device_selected(0)
 
     def _on_device_selected(self, idx: int) -> None:
         if not self._devices or idx < 0 or idx >= len(self._devices):

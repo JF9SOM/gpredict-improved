@@ -80,6 +80,12 @@ class SdrDeviceInfo:
 # so users only see real RF receivers (RTL-SDR, HackRF, AirSpy, etc.).
 _NON_SDR_DRIVERS: frozenset[str] = frozenset({"audio", "null", "remote", "mircsdr"})
 
+# Global lock: SoapySDR C++ layer is not re-entrant on Windows.
+# All enumerate() and Device() calls must be serialised to prevent segfaults
+# when multiple threads (Rig Settings, SDR Install dialog, pipeline) call
+# SoapySDR concurrently.
+_SOAPY_GLOBAL_LOCK: threading.Lock = threading.Lock()
+
 
 class SdrDevice:
     """
@@ -111,37 +117,37 @@ class SdrDevice:
     # ------------------------------------------------------------------
 
     @classmethod
-    @classmethod
     def enumerate(cls) -> list[SdrDeviceInfo]:
         """Return SoapySDR-visible hardware SDR devices (audio devices excluded)."""
         if not SOAPY_AVAILABLE:
             return []
-        try:
-            import SoapySDR
+        with _SOAPY_GLOBAL_LOCK:
+            try:
+                import SoapySDR
 
-            results: list[SdrDeviceInfo] = []
-            for kw in SoapySDR.Device.enumerate():
-                d = dict(kw)  # SoapySDRKwargs has no .get(); convert first
-                driver = str(d.get("driver") or "")
-                # Skip non-hardware drivers (audio, null, remote, etc.)
-                if driver.lower() in _NON_SDR_DRIVERS:
-                    continue
-                label = str(d.get("label") or d.get("device") or driver)
-                serial = str(d.get("serial") or "")
-                hardware = str(d.get("hardware") or "")
-                results.append(
-                    SdrDeviceInfo(
-                        driver=driver,
-                        label=label,
-                        serial=serial,
-                        hardware=hardware,
-                        args=dict(kw),
+                results: list[SdrDeviceInfo] = []
+                for kw in SoapySDR.Device.enumerate():
+                    d = dict(kw)  # SoapySDRKwargs has no .get(); convert first
+                    driver = str(d.get("driver") or "")
+                    # Skip non-hardware drivers (audio, null, remote, etc.)
+                    if driver.lower() in _NON_SDR_DRIVERS:
+                        continue
+                    label = str(d.get("label") or d.get("device") or driver)
+                    serial = str(d.get("serial") or "")
+                    hardware = str(d.get("hardware") or "")
+                    results.append(
+                        SdrDeviceInfo(
+                            driver=driver,
+                            label=label,
+                            serial=serial,
+                            hardware=hardware,
+                            args=dict(kw),
+                        )
                     )
-                )
-            return results
-        except Exception:
-            logger.exception("SoapySDR enumerate failed")
-            return []
+                return results
+            except Exception:
+                logger.exception("SoapySDR enumerate failed")
+                return []
 
     @classmethod
     def enumerate_usb(cls) -> list[SdrDeviceInfo]:
@@ -281,7 +287,8 @@ class SdrDevice:
                     if not args:
                         continue
                     try:
-                        self._dev = SoapySDR.Device(args)
+                        with _SOAPY_GLOBAL_LOCK:
+                            self._dev = SoapySDR.Device(args)
                         self._apply_settings()
                         logger.info(
                             "SDR opened: %s (attempt %d, %s)",

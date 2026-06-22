@@ -20,7 +20,7 @@ import platform
 import shutil
 import subprocess
 
-from PySide6.QtCore import QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from i18n import _
 from sdr import SOAPY_AVAILABLE
-from sdr.device import SdrDevice, SdrDeviceInfo
+from sdr.device import SdrDeviceInfo
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,29 @@ class _InstallWorker(QThread):
             self.finished.emit(False, str(exc))
 
 
+class _EnumWorker(QObject):
+    """Background worker that runs SdrDevice.enumerate() off the UI thread."""
+
+    # Emits (soapy_devices, usb_devices) once the scan completes
+    done = Signal(object, object)
+
+    def run(self) -> None:
+        from sdr.device import SdrDevice as _SdrDevice
+
+        soapy: list[SdrDeviceInfo] = []
+        if SOAPY_AVAILABLE:
+            try:
+                soapy = _SdrDevice.enumerate()
+            except Exception:
+                logger.exception("SDR install dialog: soapy enumerate failed")
+        try:
+            usb = _SdrDevice.enumerate_usb()
+        except Exception:
+            logger.exception("SDR install dialog: USB enumerate failed")
+            usb = []
+        self.done.emit(soapy, usb)
+
+
 class SdrInstallDialog(QDialog):
     """
     SDR Device Installation dialog.
@@ -105,11 +128,13 @@ class SdrInstallDialog(QDialog):
         self.setWindowTitle(_("SDR Device Installation"))
         self.resize(620, 560)
         self._worker: _InstallWorker | None = None
+        self._enum_thread: QThread | None = None
+        self._enum_worker: _EnumWorker | None = None
         self._setup_ui()
         # Delay initial enumerate by 300 ms so the dialog renders first and
-        # the USB driver (especially WinUSB / RTL-SDR on Windows) has time to
+        # the USB driver (especially libusbK / RTL-SDR on Windows) has time to
         # settle after any previous enumerate call from Rig Settings.
-        QTimer.singleShot(300, self._refresh)
+        QTimer.singleShot(300, self._start_refresh)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -192,8 +217,40 @@ class SdrInstallDialog(QDialog):
     # Scan and populate
     # ------------------------------------------------------------------
 
+    def _start_refresh(self) -> None:
+        """Kick off an asynchronous device scan (does not block the UI thread)."""
+        if self._enum_thread is not None and self._enum_thread.isRunning():
+            return
+
+        self._rescan_btn.setEnabled(False)
+        self._dev_placeholder.setText(_("Scanning…"))
+
+        obj = _EnumWorker()
+        thread = QThread(self)
+        obj.moveToThread(thread)
+        obj.done.connect(self._on_enum_done)
+        obj.done.connect(thread.quit)
+        thread.started.connect(obj.run)
+        thread.start()
+        self._enum_thread = thread
+        # keep a reference to the worker so it isn't GC'd before done fires
+        self._enum_worker = obj
+
     def _refresh(self) -> None:
-        """Scan devices and update the UI."""
+        """Public alias kept for the Rescan button."""
+        self._start_refresh()
+
+    @Slot(object, object)
+    def _on_enum_done(
+        self, soapy_devices: list[SdrDeviceInfo], usb_devices: list[SdrDeviceInfo]
+    ) -> None:
+        """Called on the UI thread when background enumerate completes."""
+        self._rescan_btn.setEnabled(True)
+
+        logger.info("SDR dialog refresh: SOAPY_AVAILABLE=%s", SOAPY_AVAILABLE)
+        logger.info("SDR dialog: soapy_devices=%s", [(d.driver, d.label) for d in soapy_devices])
+        logger.info("SDR dialog: usb_devices=%s", [(d.driver, d.label) for d in usb_devices])
+
         # Clear device list
         while self._dev_layout.count():
             item = self._dev_layout.takeAt(0)
@@ -201,18 +258,6 @@ class SdrInstallDialog(QDialog):
                 w = item.widget()
                 if w:
                     w.deleteLater()
-
-        # 1. Try SoapySDR enumerate first (preferred — gives full info)
-        soapy_devices: list[SdrDeviceInfo] = []
-        logger.info("SDR dialog refresh: SOAPY_AVAILABLE=%s", SOAPY_AVAILABLE)
-        if SOAPY_AVAILABLE:
-            soapy_devices = SdrDevice.enumerate()
-        logger.info("SDR dialog: soapy_devices=%s", [(d.driver, d.label) for d in soapy_devices])
-
-        # 2. Fallback to USB scan when SoapySDR absent or no devices found
-        # enumerate_usb() tries pyusb first, then Linux sysfs — no guard needed
-        usb_devices: list[SdrDeviceInfo] = SdrDevice.enumerate_usb()
-        logger.info("SDR dialog: usb_devices=%s", [(d.driver, d.label) for d in usb_devices])
 
         all_devices = soapy_devices or usb_devices
 
