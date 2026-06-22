@@ -161,13 +161,13 @@ python -m src.main
 
 | Platform | SoapySDR | Bundled device modules |
 |----------|----------|------------------------|
-| **Windows** | ✅ Bundled in installer | RTL-SDR, HackRF One, Airspy, Airspy HF+, ADALM-Pluto |
+| **Windows** | ✅ Bundled in installer | RTL-SDR, HackRF One, Airspy, Airspy HF+ |
 | **Linux** | Requires system package | — |
 | **macOS** | Requires Homebrew | — |
 
 **Windows** — SoapySDR and the device modules listed above are included in the installer.
 For RTL-SDR you still need to apply the WinUSB driver once with **Zadig** (one-time, free).
-ADALM-Pluto can be used over USB (requires WinUSB driver via Zadig) or network (192.168.2.1, no driver needed).
+ADALM-Pluto is not bundled; use it over the network (192.168.2.1) with a separately installed SoapySDR + SoapyPlutoSDR.
 Use **Help → SDR Device Installation** for step-by-step instructions.
 
 **Linux** — install via apt:
@@ -255,11 +255,11 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture reference used during devel
 | HackRF One | SDR | ✓ bundled | ✓ | SoapyHackRF, NFM/USB/CW, Spectrum, Bias-T |
 | Airspy R2 / Mini | SDR | ✓ bundled | ✓ | SoapyAirspy, spectrum, demod |
 | Airspy HF+ | SDR | ✓ bundled | ✓ | SoapyAirspyHF, HF/VHF spectrum, demod |
-| ADALM-Pluto | SDR | ✓ bundled† | — | SoapyPlutoSDR, spectrum, demod |
+| ADALM-Pluto | SDR | — (not bundled) | — | SoapyPlutoSDR via network (192.168.2.1) |
 | FTX-1F + RTL-SDR | Dual-rig | ✓ | ✓ | Passband Tune + Lock verified |
 
 \* RTL-SDR on Windows requires a one-time WinUSB driver install via Zadig (see **Help → SDR Device Installation**).
-† ADALM-Pluto: Windows bundled (SoapyPlutoSDR + libiio). USB connection needs WinUSB via Zadig; network (192.168.2.1) needs no driver. Unverified on hardware.
+† ADALM-Pluto is not included in the Windows installer. It can be used over the network (192.168.2.1) if SoapySDR and SoapyPlutoSDR are installed separately.
 
 ---
 
