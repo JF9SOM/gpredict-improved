@@ -441,10 +441,14 @@ jobs:
           if (-not $builtDll) { throw "PlutoSDRSupport.dll not found after build" }
           Copy-Item $builtDll.FullName "soapy-win64\modules\" -Force
           Copy-Item "$depsLib\bin\libiio.dll" "soapy-win64\bin\" -Force
+          # Also place libiio.dll alongside PlutoSDRSupport.dll in modules/ so that
+          # SoapySDR can resolve it when loading PlutoSDRSupport.dll at enumerate() time.
+          Copy-Item "$depsLib\bin\libiio.dll" "soapy-win64\modules\" -Force
 
           Write-Host "=== PlutoSDR bundle result ==="
-          Write-Host "PlutoSDRSupport.dll: $(Test-Path 'soapy-win64\modules\PlutoSDRSupport.dll')"
-          Write-Host "libiio.dll:          $(Test-Path 'soapy-win64\bin\libiio.dll')"
+          Write-Host "PlutoSDRSupport.dll:  $(Test-Path 'soapy-win64\modules\PlutoSDRSupport.dll')"
+          Write-Host "libiio.dll (bin):     $(Test-Path 'soapy-win64\bin\libiio.dll')"
+          Write-Host "libiio.dll (modules): $(Test-Path 'soapy-win64\modules\libiio.dll')"
 
       - name: Disable Windows Defender and install NSIS
         shell: pwsh
