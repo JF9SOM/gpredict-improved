@@ -322,45 +322,66 @@ jobs:
           Compress-Archive -Path "$pkgName\*" -DestinationPath "$pkgName.zip"
           "HAMLIB_PORTABLE_PKG=$pkgName.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
 
-      - name: Bundle SoapySDR for Windows (conda-forge pre-built)
+      - name: Bundle SoapySDR for Windows (PothosSDR)
         shell: pwsh
         run: |
-          pip install zstandard -q
+          # Step 1: Install PothosSDR — a pre-tested Windows SDR distribution that includes
+          # RTL-SDR, HackRF, Airspy, AirspyHF, and PlutoSDR support bundled together.
+          # The conda-forge rtl-sdr 2.0.2 package caused crashes with libusbK; PothosSDR's
+          # librtlsdr (0.6.x / osmocom) is more stable on Windows.
+          $pothosVersion = "2021.07.25.0"
+          $pothosUrl = "https://github.com/pothosware/PothosSDR/releases/download/pothos-sdr-$pothosVersion/PothosSDR-$pothosVersion-vc14_x64.exe"
+          Write-Host "Downloading PothosSDR $pothosVersion ..."
+          Invoke-WebRequest -Uri $pothosUrl -OutFile PothosSDR-setup.exe
+          Write-Host "Installing PothosSDR silently ..."
+          Start-Process -FilePath "$PWD\PothosSDR-setup.exe" -ArgumentList "/S" -Wait
+          Start-Sleep -Seconds 10
+          $pothosDir = "C:\Program Files\PothosSDR"
+          if (-not (Test-Path $pothosDir)) { throw "PothosSDR installation not found at $pothosDir" }
+          Write-Host "PothosSDR installed at $pothosDir"
 
-          # conda-forge package URLs (pinned for reproducibility)
-          $packages = @(
-            # SoapySDR core + Python 3.11 binding
-            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-0.8.1-py311haef1a59_6.conda",
-            # RTL-SDR
-            "https://conda.anaconda.org/conda-forge/win-64/rtl-sdr-2.0.2-h2466b09_3.conda",
-            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-rtlsdr-0.3.3-h0644a59_3.conda",
-            # HackRF
-            "https://conda.anaconda.org/conda-forge/win-64/libhackrf0-2026.01.3-hfd05255_0.conda",
-            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-hackrf-0.3.4-h23704b7_0.tar.bz2",
-            # Airspy
-            "https://conda.anaconda.org/conda-forge/win-64/libairspy-1.0.10-h2466b09_1.conda",
-            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-airspy-0.2.0-h23704b7_0.tar.bz2",
-            # Airspy HF+
-            "https://conda.anaconda.org/conda-forge/win-64/libairspyhf-1.6.8-h2466b09_1.conda",
-            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-airspyhf-0.2.0-h23704b7_0.tar.bz2"
-          )
+          # Step 2: Extract Python 3.11 SoapySDR binding from conda-forge.
+          # PothosSDR ships its own Python binding for an older Python version;
+          # we need the py311 .pyd from conda-forge.
+          pip install zstandard -q
+          Invoke-WebRequest `
+            -Uri "https://conda.anaconda.org/conda-forge/win-64/soapysdr-0.8.1-py311haef1a59_6.conda" `
+            -OutFile "soapysdr-0.8.1-py311haef1a59_6.conda"
 
           New-Item -ItemType Directory -Force -Path soapy-win64\bin     | Out-Null
           New-Item -ItemType Directory -Force -Path soapy-win64\python   | Out-Null
           New-Item -ItemType Directory -Force -Path soapy-win64\modules  | Out-Null
 
-          foreach ($url in $packages) {
-            $fname = Split-Path $url -Leaf
-            Write-Host "Downloading $fname ..."
-            Invoke-WebRequest -Uri $url -OutFile $fname
+          # extract_soapy_conda.py processes all *.conda / *.tar.bz2 in CWD.
+          # With only the soapysdr package present it will extract the .pyd and
+          # SoapySDR.py helper into soapy-win64/python/, and SoapySDR.dll into
+          # soapy-win64/bin/.  We then override the native DLLs with PothosSDR's.
+          python "$env:GITHUB_WORKSPACE\scripts\extract_soapy_conda.py"
+
+          # Step 3: Override all native DLLs and plugin modules with PothosSDR versions.
+          # PothosSDR's bin\ contains SoapySDR.dll plus all device-support DLLs.
+          # PothosSDR's lib\SoapySDR\modules0.8\ contains the plugin DLLs (SoapyRTLSDR.dll etc.)
+          $pothosBin     = "$pothosDir\bin"
+          $pothosModules = "$pothosDir\lib\SoapySDR\modules0.8"
+
+          Write-Host "Copying PothosSDR bin DLLs ..."
+          Get-ChildItem "$pothosBin\*.dll" | ForEach-Object {
+            Copy-Item $_.FullName "soapy-win64\bin\" -Force
           }
 
-          python "$env:GITHUB_WORKSPACE\scripts\extract_soapy_conda.py"
+          Write-Host "Copying PothosSDR plugin modules ..."
+          if (Test-Path $pothosModules) {
+            Get-ChildItem "$pothosModules\*.dll" | ForEach-Object {
+              Copy-Item $_.FullName "soapy-win64\modules\" -Force
+            }
+          } else {
+            Write-Warning "PothosSDR modules directory not found: $pothosModules"
+          }
 
           Write-Host "=== soapy-win64 contents ==="
           Get-ChildItem soapy-win64 -Recurse -File | Select-Object FullName
 
-          # Verify SoapySDR import using the extracted .pyd
+          # Step 4: Verify SoapySDR import using the Python 3.11 .pyd + PothosSDR DLLs.
           $PY_SITE = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
           Copy-Item soapy-win64\python\* "$PY_SITE\" -Force
           Copy-Item soapy-win64\bin\*.dll "$PY_SITE\" -Force
@@ -372,83 +393,8 @@ jobs:
           print('SoapySDR version:', SoapySDR.getAPIVersion())
           devs = SoapySDR.Device.enumerate()
           print('Detected devices:', len(devs))
+          print('Modules found:', [str(d.get('driver','?')) for d in devs])
           "
-
-      - name: Build SoapyPlutoSDR for Windows (ADALM-Pluto support)
-        shell: pwsh
-        run: |
-          # --- Step 1: get libiio DLL + headers via conda ---
-          # We only install libiio + soapysdr here; cmake is NOT installed via conda
-          # so the system cmake (which knows VS) is used later.
-          $condaExe = $null
-          foreach ($p in @(
-            "$env:CONDA\Scripts\conda.exe",
-            "C:\Miniconda3\Scripts\conda.exe",
-            "C:\Miniconda\Scripts\conda.exe"
-          )) {
-            if (Test-Path $p) { $condaExe = $p; break }
-          }
-          if (-not $condaExe) { throw "conda not found on runner" }
-          Write-Host "Using conda: $condaExe"
-
-          $depsPrefix = "$PWD\pluto-deps"
-          & $condaExe create -y -q --prefix $depsPrefix -c conda-forge --override-channels `
-              "soapysdr=0.8.1" "libiio>=0.26"
-          if ($LASTEXITCODE -ne 0) { throw "conda create failed" }
-
-          $depsLib = "$depsPrefix\Library"
-
-          # --- Step 2: set up MSVC compiler environment via vcvarsall ---
-          # Use vswhere to locate VS, then run vcvarsall x64 and capture the env vars.
-          # This makes cl.exe and link.exe available to cmake's Ninja generator.
-          $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vsInstall = & $vsWhere -latest -products * `
-              -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-              -property installationPath 2>$null
-          if (-not $vsInstall) { throw "Visual Studio with C++ tools not found via vswhere" }
-          $vcvarsall = Join-Path $vsInstall "VC\Auxiliary\Build\vcvarsall.bat"
-          Write-Host "vcvarsall: $vcvarsall"
-          $envLines = & cmd /c "`"$vcvarsall`" x64 && set" 2>&1
-          foreach ($line in $envLines) {
-            if ($line -match '^([^=]+)=(.*)$') {
-              [System.Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
-            }
-          }
-          Write-Host "MSVC environment ready. cl.exe: $((Get-Command cl.exe -ErrorAction SilentlyContinue)?.Source)"
-
-          # --- Step 3: clone + build SoapyPlutoSDR with Ninja (MSVC toolchain) ---
-          git clone --depth 1 https://github.com/pothosware/SoapyPlutoSDR.git "$PWD\SoapyPlutoSDR-src"
-          if ($LASTEXITCODE -ne 0) { throw "git clone SoapyPlutoSDR failed" }
-
-          # Use system cmake (full path, avoids any conda cmake in PATH).
-          # Ninja generator: works without VS IDE; only needs cl.exe in PATH (set above).
-          # No libad9361 -- not needed for amateur satellite sample rates (>260 kHz).
-          $cmakeExe = "C:\Program Files\CMake\bin\cmake.exe"
-          & $cmakeExe -S "$PWD\SoapyPlutoSDR-src" -B "$PWD\SoapyPlutoSDR-build" `
-              -G Ninja `
-              "-DCMAKE_BUILD_TYPE=Release" `
-              "-DCMAKE_PREFIX_PATH=$depsLib"
-          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
-
-          & $cmakeExe --build "$PWD\SoapyPlutoSDR-build"
-          if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
-
-          # --- Step 4: copy outputs into soapy-win64 bundle directories ---
-          # Note: SoapyPlutoSDR builds as "PlutoSDRSupport.dll" (not "SoapyPlutoSDR.dll").
-          # SoapySDR loads all DLLs from SOAPY_SDR_PLUGIN_PATH regardless of filename.
-          $builtDll = Get-ChildItem "$PWD\SoapyPlutoSDR-build" -Recurse -Filter "PlutoSDRSupport.dll" |
-                      Select-Object -First 1
-          if (-not $builtDll) { throw "PlutoSDRSupport.dll not found after build" }
-          Copy-Item $builtDll.FullName "soapy-win64\modules\" -Force
-          Copy-Item "$depsLib\bin\libiio.dll" "soapy-win64\bin\" -Force
-          # Also place libiio.dll alongside PlutoSDRSupport.dll in modules/ so that
-          # SoapySDR can resolve it when loading PlutoSDRSupport.dll at enumerate() time.
-          Copy-Item "$depsLib\bin\libiio.dll" "soapy-win64\modules\" -Force
-
-          Write-Host "=== PlutoSDR bundle result ==="
-          Write-Host "PlutoSDRSupport.dll:  $(Test-Path 'soapy-win64\modules\PlutoSDRSupport.dll')"
-          Write-Host "libiio.dll (bin):     $(Test-Path 'soapy-win64\bin\libiio.dll')"
-          Write-Host "libiio.dll (modules): $(Test-Path 'soapy-win64\modules\libiio.dll')"
 
       - name: Disable Windows Defender and install NSIS
         shell: pwsh
