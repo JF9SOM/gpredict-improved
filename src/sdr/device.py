@@ -252,37 +252,64 @@ class SdrDevice:
     def open(self) -> bool:
         """Open the device. Returns True on success.
 
-        Retries up to 3 times with a short delay between attempts because on
-        Windows the RTL-SDR USB driver can transiently fail immediately after
-        a SoapySDR.Device.enumerate() call.
+        On Windows, librtlsdr may fail to read USB descriptor strings via
+        WinUSB, causing Device.make() to reject the serial-number-based args
+        with "no match".  We therefore try two arg sets per attempt:
+          1. Full args from enumerate() (includes serial, label, …)
+          2. Minimal args {driver: <driver>} — lets SoapySDR pick device 0
+        Each pair is tried up to 3 times with a short delay.
         """
         import SoapySDR
 
         _MAX_ATTEMPTS = 3
         _RETRY_DELAY = 0.6  # seconds
 
+        # Minimal fallback: driver only, no serial matching
+        minimal_args: dict[str, str] = {}
+        if self._info.driver:
+            minimal_args = {"driver": self._info.driver}
+
         with self._lock:
             if self._dev is not None:
                 return True
             last_exc: Exception | None = None
             for attempt in range(1, _MAX_ATTEMPTS + 1):
-                try:
-                    self._dev = SoapySDR.Device(self._info.args)
-                    self._apply_settings()
-                    logger.info("SDR opened: %s", self._info.display_name)
-                    return True
-                except Exception as exc:
-                    last_exc = exc
-                    self._dev = None
-                    if attempt < _MAX_ATTEMPTS:
-                        logger.warning(
-                            "SDR open attempt %d/%d failed for %s, retrying in %.1fs…",
+                for args_label, args in [
+                    ("full args", self._info.args),
+                    ("minimal args", minimal_args),
+                ]:
+                    if not args:
+                        continue
+                    try:
+                        self._dev = SoapySDR.Device(args)
+                        self._apply_settings()
+                        logger.info(
+                            "SDR opened: %s (attempt %d, %s)",
+                            self._info.display_name,
+                            attempt,
+                            args_label,
+                        )
+                        return True
+                    except Exception as exc:
+                        last_exc = exc
+                        self._dev = None
+                        logger.debug(
+                            "SDR open attempt %d/%d (%s) failed for %s: %s",
                             attempt,
                             _MAX_ATTEMPTS,
+                            args_label,
                             self._info.display_name,
-                            _RETRY_DELAY,
+                            exc,
                         )
-                        time.sleep(_RETRY_DELAY)
+                if attempt < _MAX_ATTEMPTS:
+                    logger.warning(
+                        "SDR open attempt %d/%d failed for %s, retrying in %.1fs…",
+                        attempt,
+                        _MAX_ATTEMPTS,
+                        self._info.display_name,
+                        _RETRY_DELAY,
+                    )
+                    time.sleep(_RETRY_DELAY)
             logger.exception(
                 "Failed to open SDR device %s after %d attempts",
                 self._info.display_name,
