@@ -972,11 +972,11 @@ class TestMainWindow:
         tm = TLEManager(populated_db)
         w = MainWindow(conn=populated_db, tle_manager=tm)
         qtbot.addWidget(w)
-        assert w._sat_list.count() == 5  # 2 from populated_db + 3 community satellites
+        assert w._sat_list.count() == 6  # 2 from populated_db + 3 community satellites + Moon
 
     def test_empty_db_gives_empty_satellite_list(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
-        assert w._sat_list.count() == 3  # 3 community satellites always loaded at startup
+        assert w._sat_list.count() == 4  # 3 community satellites + Moon always loaded at startup
 
     def test_no_crash_with_none_engine(self, qtbot, db, tle_manager) -> None:
         w = MainWindow(conn=db, tle_manager=tle_manager, engine=None)
