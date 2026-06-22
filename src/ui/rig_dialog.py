@@ -902,7 +902,7 @@ class _SdrSettingsPanel(QWidget):
         self._dev_combo = QComboBox()
         self._dev_combo.setMinimumWidth(260)
         self._enum_btn = QPushButton(_("Enumerate"))
-        self._enum_btn.clicked.connect(self._start_enumerate)
+        self._enum_btn.clicked.connect(lambda: self._start_enumerate(force=True))
         dev_row.addWidget(self._dev_combo)
         dev_row.addWidget(self._enum_btn)
         dev_form.addRow(_("Device:"), dev_row)
@@ -987,8 +987,12 @@ class _SdrSettingsPanel(QWidget):
 
     # ------------------------------------------------------------------ #
 
-    def _start_enumerate(self) -> None:
-        """Run SdrDevice.enumerate() in a background thread to avoid UI freeze."""
+    def _start_enumerate(self, force: bool = False) -> None:
+        """Run SdrDevice.enumerate() in a background thread to avoid UI freeze.
+
+        force=True bypasses the process-level cache (used when the user
+        explicitly clicks the Enumerate button after plugging in a new device).
+        """
         if not SOAPY_AVAILABLE:
             return
         if self._enum_running:
@@ -1003,7 +1007,7 @@ class _SdrSettingsPanel(QWidget):
             try:
                 from sdr.device import SdrDevice
 
-                devices = SdrDevice.enumerate()
+                devices = SdrDevice.enumerate(force=force)
             except Exception:
                 devices = []
             # Signal delivers result back to the UI thread via Qt event loop

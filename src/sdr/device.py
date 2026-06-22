@@ -86,6 +86,12 @@ _NON_SDR_DRIVERS: frozenset[str] = frozenset({"audio", "null", "remote", "mircsd
 # SoapySDR concurrently.
 _SOAPY_GLOBAL_LOCK: threading.Lock = threading.Lock()
 
+# Process-level enumerate cache.  On Windows, calling SoapySDR.Device.enumerate()
+# more than once per process can crash (segfault inside the native module loader).
+# Cache the first successful result and return it on subsequent calls.
+# Pass force=True (only from the Enumerate button) to bypass the cache.
+_enumerate_cache: list[SdrDeviceInfo] | None = None
+
 
 class SdrDevice:
     """
@@ -117,10 +123,18 @@ class SdrDevice:
     # ------------------------------------------------------------------
 
     @classmethod
-    def enumerate(cls) -> list[SdrDeviceInfo]:
-        """Return SoapySDR-visible hardware SDR devices (audio devices excluded)."""
+    def enumerate(cls, force: bool = False) -> list[SdrDeviceInfo]:
+        """Return SoapySDR-visible hardware SDR devices (audio devices excluded).
+
+        Results are cached after the first successful call.  Pass force=True to
+        bypass the cache (e.g. when the user explicitly clicks the Enumerate
+        button after plugging in a new device).
+        """
+        global _enumerate_cache
         if not SOAPY_AVAILABLE:
             return []
+        if not force and _enumerate_cache is not None:
+            return list(_enumerate_cache)
         with _SOAPY_GLOBAL_LOCK:
             try:
                 import SoapySDR
@@ -144,7 +158,8 @@ class SdrDevice:
                             args=dict(kw),
                         )
                     )
-                return results
+                _enumerate_cache = results
+                return list(results)
             except Exception:
                 logger.exception("SoapySDR enumerate failed")
                 return []

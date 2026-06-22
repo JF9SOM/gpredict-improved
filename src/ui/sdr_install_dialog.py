@@ -96,13 +96,19 @@ class _EnumWorker(QObject):
     # Emits (soapy_devices, usb_devices) once the scan completes
     done = Signal(object, object)
 
+    def __init__(self, force: bool = False) -> None:
+        super().__init__()
+        self._force = force
+
     def run(self) -> None:
         from sdr.device import SdrDevice as _SdrDevice
 
         soapy: list[SdrDeviceInfo] = []
         if SOAPY_AVAILABLE:
             try:
-                soapy = _SdrDevice.enumerate()
+                # Use cached results by default; only force re-scan when the
+                # user clicks Rescan (avoids the Windows SoapySDR crash on 2nd call).
+                soapy = _SdrDevice.enumerate(force=self._force)
             except Exception:
                 logger.exception("SDR install dialog: soapy enumerate failed")
         try:
@@ -205,7 +211,7 @@ class SdrInstallDialog(QDialog):
         # -- Rescan + close --
         btn_row = QHBoxLayout()
         self._rescan_btn = QPushButton(_("🔍 Rescan Devices"))
-        self._rescan_btn.clicked.connect(self._refresh)
+        self._rescan_btn.clicked.connect(lambda: self._start_refresh(force=True))
         btn_row.addWidget(self._rescan_btn)
         btn_row.addStretch()
         close_btn = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -217,15 +223,18 @@ class SdrInstallDialog(QDialog):
     # Scan and populate
     # ------------------------------------------------------------------
 
-    def _start_refresh(self) -> None:
-        """Kick off an asynchronous device scan (does not block the UI thread)."""
+    def _start_refresh(self, force: bool = False) -> None:
+        """Kick off an asynchronous device scan (does not block the UI thread).
+
+        force=True bypasses the SoapySDR enumerate cache (used by Rescan button).
+        """
         if self._enum_thread is not None and self._enum_thread.isRunning():
             return
 
         self._rescan_btn.setEnabled(False)
         self._dev_placeholder.setText(_("Scanning…"))
 
-        obj = _EnumWorker()
+        obj = _EnumWorker(force=force)
         thread = QThread(self)
         obj.moveToThread(thread)
         obj.done.connect(self._on_enum_done)
@@ -237,8 +246,8 @@ class SdrInstallDialog(QDialog):
         self._enum_worker = obj
 
     def _refresh(self) -> None:
-        """Public alias kept for the Rescan button."""
-        self._start_refresh()
+        """Legacy alias — initial scan uses cache (force=False)."""
+        self._start_refresh(force=False)
 
     @Slot(object, object)
     def _on_enum_done(
