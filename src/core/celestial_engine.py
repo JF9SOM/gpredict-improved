@@ -14,6 +14,7 @@ import logging
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from skyfield import almanac
 from skyfield.api import Loader, wgs84
@@ -51,8 +52,8 @@ class CelestialEngine:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._eph: object | None = None
-        self._ts: object | None = None
+        self._eph: Any = None
+        self._ts: Any = None
 
     # ------------------------------------------------------------------
     # Initialisation
@@ -122,9 +123,9 @@ class CelestialEngine:
             return None
         try:
             t_dt = at if at is not None else datetime.now(UTC)
-            t = self._ts.from_datetime(t_dt)  # type: ignore[union-attr]
-            earth = self._eph["earth"]  # type: ignore[index]
-            moon = self._eph[_MOON_BODY]  # type: ignore[index]
+            t = self._ts.from_datetime(t_dt)
+            earth = self._eph["earth"]
+            moon = self._eph[_MOON_BODY]
             astrometric = earth.at(t).observe(moon)
             sub = wgs84.subpoint(astrometric)
             return float(sub.latitude.degrees), float(sub.longitude.degrees)
@@ -188,8 +189,8 @@ class CelestialEngine:
             # Search ±1 day around the window to catch in-progress rises/sets
             search_start = start - timedelta(days=1)
             search_end = end + timedelta(hours=1)
-            t0 = self._ts.from_datetime(search_start)  # type: ignore[union-attr]
-            t1 = self._ts.from_datetime(search_end)  # type: ignore[union-attr]
+            t0 = self._ts.from_datetime(search_start)
+            t1 = self._ts.from_datetime(search_end)
 
             f = almanac.risings_and_settings(self._eph, moon_body, observer)
             times, is_rise = almanac.find_discrete(t0, t1, f)
@@ -286,17 +287,17 @@ class CelestialEngine:
             return None
         try:
             t_dt = at if at is not None else datetime.now(UTC)
-            t = self._ts.from_datetime(t_dt)  # type: ignore[union-attr]
+            t = self._ts.from_datetime(t_dt)
 
-            earth = self._eph["earth"]  # type: ignore[index]
-            body = self._eph[body_name]  # type: ignore[index]
+            earth = self._eph["earth"]
+            body = self._eph[body_name]
             observer = earth + wgs84.latlon(observer_lat, observer_lon, elevation_m=observer_elev_m)
 
             apparent = observer.at(t).observe(body).apparent()
             alt, az, distance = apparent.altaz()
 
             # Range rate: finite-difference over 1 second (positive = receding)
-            t2 = self._ts.from_datetime(t_dt + timedelta(seconds=1))  # type: ignore[union-attr]
+            t2 = self._ts.from_datetime(t_dt + timedelta(seconds=1))
             apparent2 = observer.at(t2).observe(body).apparent()
             _, _, distance2 = apparent2.altaz()
             range_rate_km_s = float(distance2.km) - float(distance.km)

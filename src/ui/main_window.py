@@ -854,7 +854,7 @@ class MainWindow(QMainWindow):
 
             if amsat_status == "operational":
                 item.setForeground(QColor("#2ecc71"))
-                font: QFont = item.font()
+                font = item.font()
                 font.setBold(True)
                 item.setFont(font)
             elif amsat_status == "partial":
