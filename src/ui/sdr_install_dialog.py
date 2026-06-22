@@ -203,6 +203,33 @@ class SdrInstallDialog(QDialog):
         sdrplay_v.addWidget(sdrplay_note)
         layout.addWidget(sdrplay_grp)
 
+        # -- ADALM-Pluto note --
+        pluto_grp = QGroupBox(_("Note for ADALM-Pluto Users"))
+        pluto_v = QVBoxLayout(pluto_grp)
+        pluto_note = QLabel(
+            _(
+                "ADALM-Pluto (PlutoSDR) is not bundled in the Windows installer because "
+                "building SoapyPlutoSDR + libiio for CI proved unstable. "
+                "It can still be used via its built-in USB network interface.\n\n"
+                "How PlutoSDR networking works:\n"
+                "  When connected via USB, PlutoSDR creates a virtual Ethernet adapter.\n"
+                "  Windows installs this automatically — no Zadig / WinUSB needed.\n"
+                "  The device is reachable at IP address 192.168.2.1.\n\n"
+                "To use ADALM-Pluto:\n"
+                "  1. Connect PlutoSDR via USB.\n"
+                "  2. Install libiio (Windows installer) from\n"
+                "     https://github.com/analogdevicesinc/libiio/releases\n"
+                "  3. Install SoapyPlutoSDR from\n"
+                "     https://github.com/pothosware/SoapyPlutoSDR\n"
+                "     (build from source, or obtain a pre-built DLL via conda:\n"
+                "      conda install -c conda-forge soapysdr-module-plutosdr)\n"
+                "  4. Restart this software — PlutoSDR will be detected automatically."
+            )
+        )
+        pluto_note.setWordWrap(True)
+        pluto_v.addWidget(pluto_note)
+        layout.addWidget(pluto_grp)
+
         # -- Rescan + close --
         btn_row = QHBoxLayout()
         self._rescan_btn = QPushButton(_("🔍 Rescan Devices"))

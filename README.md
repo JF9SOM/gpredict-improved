@@ -191,6 +191,20 @@ brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy
 > 2. Install **SoapySDRPlay3** from [github.com/pothosware/SoapySDRPlay3](https://github.com/pothosware/SoapySDRPlay3)
 > 3. Restart this software — your device will be detected automatically via SoapySDR.
 
+> **ADALM-Pluto (PlutoSDR)** — Not bundled in the Windows installer (building SoapyPlutoSDR + libiio
+> in CI proved unstable). It can still be used via the device's built-in USB network interface.
+>
+> **How PlutoSDR networking works:** when connected via USB, PlutoSDR creates a virtual Ethernet
+> adapter. Windows installs this automatically — no Zadig / WinUSB needed. The device is reachable
+> at IP address **192.168.2.1**.
+>
+> To use ADALM-Pluto:
+> 1. Connect PlutoSDR via USB (Windows auto-installs the USB network adapter).
+> 2. Install **libiio** (Windows installer) from [github.com/analogdevicesinc/libiio/releases](https://github.com/analogdevicesinc/libiio/releases)
+> 3. Install **SoapyPlutoSDR** from [github.com/pothosware/SoapyPlutoSDR](https://github.com/pothosware/SoapyPlutoSDR)
+>    (build from source, or via conda: `conda install -c conda-forge soapysdr-module-plutosdr`)
+> 4. Restart this software — PlutoSDR will be detected automatically.
+
 ---
 
 ## Architecture
