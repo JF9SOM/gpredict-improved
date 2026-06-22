@@ -190,12 +190,17 @@ class SdrInstallDialog(QDialog):
         sdrplay_v = QVBoxLayout(sdrplay_grp)
         sdrplay_note = QLabel(
             _(
-                "SDRplay devices (RSP1, RSP2, RSPdx, etc.) are not bundled in the installer "
-                "because SoapySDRPlay3 depends on the proprietary SDRplay API library "
-                "(sdrplay_api.dll / libsdrplay_api.so), which cannot be redistributed.\n\n"
-                "To use an SDRplay device:\n"
-                "  1. Download and install the SDRplay API from https://www.sdrplay.com/downloads/\n"
-                "  2. Install SoapySDRPlay3 from https://github.com/pothosware/SoapySDRPlay3\n"
+                "SDRplay devices (RSP1, RSP2, RSPdx, etc.) are not bundled on any platform "
+                "because SoapySDRPlay3 depends on the proprietary SDRplay API library, "
+                "which cannot be redistributed.\n\n"
+                "To use an SDRplay device (all platforms):\n"
+                "  1. Install the SDRplay API from https://www.sdrplay.com/downloads/\n"
+                "     (Windows/macOS installer or Linux .run script)\n"
+                "  2. Install SoapySDRPlay3:\n"
+                "       Linux:   sudo apt install soapysdr-module-sdrplay3\n"
+                "       macOS:   conda install -c conda-forge soapysdr-module-sdrplay3\n"
+                "       Windows: conda install -c conda-forge soapysdr-module-sdrplay3\n"
+                "                or build from https://github.com/pothosware/SoapySDRPlay3\n"
                 "  3. Restart this software — your device will be detected automatically."
             )
         )
@@ -208,21 +213,25 @@ class SdrInstallDialog(QDialog):
         pluto_v = QVBoxLayout(pluto_grp)
         pluto_note = QLabel(
             _(
-                "ADALM-Pluto (PlutoSDR) is not bundled in the Windows installer because "
-                "building SoapyPlutoSDR + libiio for CI proved unstable. "
-                "It can still be used via its built-in USB network interface.\n\n"
+                "ADALM-Pluto (PlutoSDR) is not bundled on any platform and must be installed "
+                "manually. Linux and macOS users can use package managers; Windows users need "
+                "conda or a source build.\n\n"
                 "How PlutoSDR networking works:\n"
                 "  When connected via USB, PlutoSDR creates a virtual Ethernet adapter.\n"
-                "  Windows installs this automatically — no Zadig / WinUSB needed.\n"
+                "  No special driver (Zadig / WinUSB) is needed on any platform.\n"
                 "  The device is reachable at IP address 192.168.2.1.\n\n"
-                "To use ADALM-Pluto:\n"
-                "  1. Connect PlutoSDR via USB.\n"
-                "  2. Install libiio (Windows installer) from\n"
-                "     https://github.com/analogdevicesinc/libiio/releases\n"
-                "  3. Install SoapyPlutoSDR from\n"
-                "     https://github.com/pothosware/SoapyPlutoSDR\n"
-                "     (build from source, or obtain a pre-built DLL via conda:\n"
-                "      conda install -c conda-forge soapysdr-module-plutosdr)\n"
+                "To use ADALM-Pluto (all platforms):\n"
+                "  1. Connect PlutoSDR via USB (USB network adapter installs automatically).\n"
+                "  2. Install libiio:\n"
+                "       Linux:   sudo apt install libiio-dev\n"
+                "       macOS:   brew install libiio\n"
+                "       Windows: installer from https://github.com/analogdevicesinc/libiio/releases\n"
+                "  3. Install SoapyPlutoSDR:\n"
+                "       Linux:   sudo apt install soapysdr-module-plutosdr\n"
+                "       macOS:   brew install soapyplutosdr\n"
+                "                or conda install -c conda-forge soapysdr-module-plutosdr\n"
+                "       Windows: conda install -c conda-forge soapysdr-module-plutosdr\n"
+                "                or build from https://github.com/pothosware/SoapyPlutoSDR\n"
                 "  4. Restart this software — PlutoSDR will be detected automatically."
             )
         )

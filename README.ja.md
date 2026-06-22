@@ -182,25 +182,33 @@ brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy
 > LimeSDR など他の SoapySDR 対応デバイスは、Linux/macOS で対応モジュールを
 > インストールすれば動作する可能性がありますが、Windows 版インストーラーには同梱されていません。
 
-> **SDRplay（RSP1、RSP2、RSPdx 等）** — SDRplay デバイスはインストーラーに同梱されていません。
+> **SDRplay（RSP1、RSP2、RSPdx 等）** — 全プラットフォームで同梱されていません。
 > SoapySDRPlay3 が SDRplay 社の独自プロプライエタリ API ライブラリに依存しており、再配布できないためです。
-> SDRplay デバイスを使用するには：
-> 1. **SDRplay API** を [sdrplay.com/downloads](https://www.sdrplay.com/downloads/) からダウンロードしてインストール
-> 2. **SoapySDRPlay3** を [github.com/pothosware/SoapySDRPlay3](https://github.com/pothosware/SoapySDRPlay3) からインストール
+>
+> SDRplay デバイスを使用するには（全プラットフォーム共通）：
+> 1. **SDRplay API** を [sdrplay.com/downloads](https://www.sdrplay.com/downloads/) からインストール
+>    （Windows/macOS はインストーラー、Linux は `.run` スクリプト）
+> 2. **SoapySDRPlay3** をインストール：
+>    - Linux: `sudo apt install soapysdr-module-sdrplay3`
+>    - macOS: ソースビルドまたは `conda install -c conda-forge soapysdr-module-sdrplay3`
+>    - Windows: [github.com/pothosware/SoapySDRPlay3](https://github.com/pothosware/SoapySDRPlay3) からビルドまたは conda
 > 3. 本ソフトウェアを再起動 — SoapySDR 経由でデバイスが自動検出されます。
 
-> **ADALM-Pluto（PlutoSDR）** — Windows インストーラーには同梱されていません（SoapyPlutoSDR + libiio の CI ビルドが不安定なため）。
-> ただし、デバイス内蔵の USB ネットワーク機能を使って引き続き利用できます。
+> **ADALM-Pluto（PlutoSDR）** — 全プラットフォームで同梱されていません（Windows は CI ビルドが不安定、Linux/macOS はパッケージマネージャーで簡単にインストール可能）。
 >
 > **PlutoSDR ネットワーク接続の仕組み：** USB で接続すると、PlutoSDR は仮想 Ethernet アダプターを作成します。
-> Windows が自動的にドライバーをインストールするため、Zadig / WinUSB は不要です。
-> デバイスは IP アドレス **192.168.2.1** で通信できます。
+> どのプラットフォームでも特別なドライバー（Zadig / WinUSB）は不要で、IP アドレス **192.168.2.1** で通信できます。
 >
-> ADALM-Pluto を使用するには：
-> 1. PlutoSDR を USB で接続（Windows が USB ネットワークアダプターを自動インストール）
-> 2. **libiio**（Windows インストーラー）を [github.com/analogdevicesinc/libiio/releases](https://github.com/analogdevicesinc/libiio/releases) からインストール
-> 3. **SoapyPlutoSDR** を [github.com/pothosware/SoapyPlutoSDR](https://github.com/pothosware/SoapyPlutoSDR) からインストール
->    （ソースビルド、または conda 経由：`conda install -c conda-forge soapysdr-module-plutosdr`）
+> ADALM-Pluto を使用するには（全プラットフォーム共通）：
+> 1. PlutoSDR を USB で接続（USB ネットワークアダプターが自動インストールされます）
+> 2. **libiio** をインストール：
+>    - Linux: `sudo apt install libiio-dev`
+>    - macOS: `brew install libiio`
+>    - Windows: [github.com/analogdevicesinc/libiio/releases](https://github.com/analogdevicesinc/libiio/releases) からインストーラーを使用
+> 3. **SoapyPlutoSDR** をインストール：
+>    - Linux: `sudo apt install soapysdr-module-plutosdr`
+>    - macOS: `brew install soapyplutosdr` または `conda install -c conda-forge soapysdr-module-plutosdr`
+>    - Windows: `conda install -c conda-forge soapysdr-module-plutosdr` または [github.com/pothosware/SoapyPlutoSDR](https://github.com/pothosware/SoapyPlutoSDR) からビルド
 > 4. 本ソフトウェアを再起動 — PlutoSDR が自動検出されます。
 
 ---
