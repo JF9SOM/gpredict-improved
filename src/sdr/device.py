@@ -361,14 +361,20 @@ class SdrDevice:
         _MAX_ATTEMPTS = 3
         _RETRY_DELAY = 0.6  # seconds
 
-        # Minimal fallback: driver + device_index (bypasses serial matching).
-        # RTL-SDR with WinUSB cannot read USB serial strings, so SoapyRTLSDR's
-        # find() returns serial="" which won't match the stored serial in full
-        # args.  Opening by device_index works regardless of serial readability.
+        # Build fallback arg sets for drivers that fail serial/USB-string matching.
+        # RTL-SDR + WinUSB on Windows: rtlsdr_get_device_usb_strings() cannot
+        # read USB descriptors, so SoapyRTLSDR throws during make() even after
+        # successfully opening the device.  We try progressively simpler args:
+        #   1. Full args from enumerate() (serial, label, …)
+        #   2. driver + device_index (skips serial matching)
+        #   3. driver only (lets SoapyRTLSDR pick the first available device,
+        #      bypassing all string-based matching — most likely to succeed)
         minimal_args: dict[str, str] = {}
+        driver_only_args: dict[str, str] = {}
         if self._info.driver:
             idx = self._info.args.get("device_index", "0")
             minimal_args = {"driver": self._info.driver, "device_index": idx}
+            driver_only_args = {"driver": self._info.driver}
 
         with self._lock:
             if self._dev is not None:
@@ -378,6 +384,7 @@ class SdrDevice:
                 for args_label, args in [
                     ("full args", self._info.args),
                     ("minimal args", minimal_args),
+                    ("driver-only args", driver_only_args),
                 ]:
                     if not args:
                         continue
