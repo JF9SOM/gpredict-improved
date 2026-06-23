@@ -1,97 +1,69 @@
 """
-Patch SoapyRTLSDR/Registration.cpp: replace findRTLSDR() with a
-WinUSB-compatible version that does not require rtlsdr_get_device_usb_strings()
-to succeed.
+Patch SoapyRTLSDR/Registration.cpp for WinUSB compatibility.
 
-WinUSB cannot read USB string descriptors via libusb, so the original
-findRTLSDR() skips devices when that call fails, causing enumerate() to
-return [] and make() to fail with "no match".
+WinUSB cannot provide USB string descriptors via libusb, so
+rtlsdr_get_device_usb_strings() returns -1.  The original code does:
 
-The replacement always includes devices by index.  USB strings are
-best-effort; matching falls back to device_index when serial is empty.
+    if (rtlsdr_get_device_usb_strings(...) != 0) { continue; }
+
+which skips the device, leaving enumerate() empty and make() failing with
+"no match".
+
+This patch rewrites only that if-condition to always be false:
+
+    rtlsdr_get_device_usb_strings(...); /* WinUSB */ if (false) { continue; }
+
+The function is still called so its output buffers are filled with whatever
+WinUSB can provide.  The error branch is never taken, so the device is
+always kept in the results and matching falls back to device_index.
 """
 
+import re
 import sys
 
 with open("SoapyRTLSDR/Registration.cpp", "r") as f:
     content = f.read()
 
-# Find the DEFINITION of findRTLSDR (not the forward declaration).
-# A definition has '{' before the next ';'; a forward decl has ';' first.
-search_from = 0
-func_start = -1
-brace_open_abs = -1
+# ── Log the file so CI output shows exactly what we are patching ──────────
+print("=== Registration.cpp (lines mentioning key symbols) ===", file=sys.stderr)
+for i, line in enumerate(content.splitlines(), 1):
+    if any(kw in line for kw in (
+        "findRTLSDR", "rtlsdr_get_device_usb_strings", "get_tuner"
+    )):
+        print(f"  L{i}: {line}", file=sys.stderr)
+print("=== END ===", file=sys.stderr)
 
-while True:
-    idx = content.find("findRTLSDR", search_from)
-    if idx == -1:
-        print("ERROR: findRTLSDR not found in Registration.cpp", file=sys.stderr)
-        print(content[:500], file=sys.stderr)
-        sys.exit(1)
-
-    after = content[idx:]
-    next_brace = after.find("{")
-    next_semi  = after.find(";")
-
-    if next_brace != -1 and (next_semi == -1 or next_brace < next_semi):
-        # '{' comes before ';' → this is the function definition
-        brace_open_abs = idx + next_brace
-        func_start = content.rfind("\n", 0, idx) + 1
-        break
-
-    search_from = idx + 1  # forward declaration or other ref; keep searching
-
-# Use brace-counting to find the matching closing brace of the function body
-depth = 0
-pos = brace_open_abs
-while pos < len(content):
-    if content[pos] == "{":
-        depth += 1
-    elif content[pos] == "}":
-        depth -= 1
-        if depth == 0:
-            func_end = pos + 1
-            break
-    pos += 1
-
-# Preserve 'static' keyword if the original used it (avoid linkage mismatch)
-original_decl = content[func_start:brace_open_abs]
-static_kw = "static " if "static" in original_decl else ""
-
-print(f"Replacing findRTLSDR definition [{func_start}:{func_end}], "
-      f"static={bool(static_kw)}", file=sys.stderr)
-print(repr(content[func_start:func_start + 100]), file=sys.stderr)
-
-NEW_FUNC = (
-    f"{static_kw}SoapySDR::KwargsList findRTLSDR(const SoapySDR::Kwargs &args)\n"
-    "{\n"
-    "    SoapySDR::KwargsList results;\n"
-    "    const int count = rtlsdr_get_device_count();\n"
-    "    for (int i = 0; i < count; i++)\n"
-    "    {\n"
-    "        char manufact[256] = {}, product[256] = {}, serial[256] = {};\n"
-    "        // WinUSB cannot provide USB string descriptors; ignore return value.\n"
-    "        rtlsdr_get_device_usb_strings(i, manufact, product, serial);\n"
-    "        // Filter by device_index when caller specifies one.\n"
-    '        if (args.count("device_index") != 0 &&\n'
-    '            args.at("device_index") != std::to_string(i)) continue;\n'
-    "        // Filter by serial only when we actually read a non-empty serial.\n"
-    '        if (args.count("serial") != 0 && serial[0] != \'\\0\' &&\n'
-    '            args.at("serial") != serial) continue;\n'
-    "        SoapySDR::Kwargs devInfo;\n"
-    '        devInfo["device_index"] = std::to_string(i);\n'
-    '        devInfo["serial"]       = serial;\n'
-    '        devInfo["product"]      = product;\n'
-    '        devInfo["manufacturer"] = manufact;\n'
-    '        devInfo["label"]        = std::string(rtlsdr_get_device_name(i))\n'
-    '                                  + " :: " + serial;\n'
-    "        results.push_back(devInfo);\n"
-    "    }\n"
-    "    return results;\n"
-    "}"
+# ── Patch: neutralise the != 0 error check ───────────────────────────────
+# Matches single-line and multi-line variants:
+#   if (rtlsdr_get_device_usb_strings(i, m, p, s) != 0)
+# Replaces with:
+#   rtlsdr_get_device_usb_strings(i, m, p, s); /* WinUSB */ if (false)
+pattern = (
+    r'if\s*\(\s*'
+    r'(rtlsdr_get_device_usb_strings\([^)]+\))'
+    r'\s*!=\s*0\s*\)'
 )
+replacement = r'\1; /* WinUSB: ignore error */ if (false)'
 
-patched = content[:func_start] + NEW_FUNC + content[func_end:]
+patched, n = re.subn(pattern, replacement, content)
+print(f"Pattern replacements: {n}", file=sys.stderr)
+
+if n == 0:
+    print("ERROR: pattern not matched. Full Registration.cpp follows:", file=sys.stderr)
+    print(content, file=sys.stderr)
+    sys.exit(1)
+
 with open("SoapyRTLSDR/Registration.cpp", "w") as f:
     f.write(patched)
-print("findRTLSDR replaced with WinUSB-compatible version.")
+
+# ── Log the patched result ────────────────────────────────────────────────
+print("=== Patched Registration.cpp (lines mentioning key symbols) ===",
+      file=sys.stderr)
+for i, line in enumerate(patched.splitlines(), 1):
+    if any(kw in line for kw in (
+        "findRTLSDR", "rtlsdr_get_device_usb_strings", "get_tuner"
+    )):
+        print(f"  L{i}: {line}", file=sys.stderr)
+print("=== END ===", file=sys.stderr)
+
+print("Registration.cpp patched for WinUSB compatibility.")
