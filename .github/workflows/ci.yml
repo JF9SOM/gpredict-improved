@@ -382,8 +382,19 @@ jobs:
           # "no match".  Build from the Osmocom upstream source instead, which
           # handles rtlsdr_get_device_usb_strings() failures gracefully.
 
-          # conda env with SoapySDR dev headers/libs (same version as our bundle)
-          conda create --prefix rtlsdr-deps -c conda-forge "soapysdr=0.8.1" --yes --quiet
+          # conda env with SoapySDR dev headers/libs (same version as our bundle).
+          # Use the full path to conda.exe — the shell function is not initialized.
+          $condaExe = if ($env:CONDA) { "$env:CONDA\Scripts\conda.exe" } else { $null }
+          if (-not $condaExe -or -not (Test-Path $condaExe)) {
+            $condaExe = @(
+              "C:\Miniconda3\Scripts\conda.exe",
+              "C:\ProgramData\Miniconda3\Scripts\conda.exe",
+              "C:\Miniconda\Scripts\conda.exe"
+            ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $condaExe) { throw "conda.exe not found on runner" }
+          Write-Host "conda: $condaExe"
+          & $condaExe create --prefix rtlsdr-deps -c conda-forge "soapysdr=0.8.1" --yes --quiet
 
           # Find MSVC vcvarsall and activate x64 environment
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
