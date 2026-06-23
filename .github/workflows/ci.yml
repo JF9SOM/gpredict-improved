@@ -449,49 +449,67 @@ jobs:
           # --- Patch + Build SoapyRTLSDR linking against Osmocom librtlsdr + our SoapySDR ---
           git clone https://github.com/pothosware/SoapyRTLSDR --depth 1
 
-          # Patch Registration.cpp: WinUSB cannot provide USB string descriptors via libusb,
-          # so rtlsdr_get_device_usb_strings() returns -1.  The original code does
-          #   "if (rtlsdr_get_device_usb_strings(...) != 0) continue;"
-          # which skips the device entirely → findDevices() returns [] → make() "no match".
-          # Fix: call the function but ignore the return value so the device is always
-          # added to the results with empty strings.  SoapySDR then matches on device_index.
-          python -c @"
+          # Replace findRTLSDR() entirely with a WinUSB-compatible version that
+          # does NOT require rtlsdr_get_device_usb_strings() to succeed.
+          # WinUSB cannot read USB string descriptors, so the original function
+          # skips devices when that call fails → enumerate() returns [] → "no match".
+          # Our replacement always includes devices by index; USB strings are
+          # best-effort (ignored when empty).  Matching falls back to device_index.
+          $patchScript = @'
 import re, sys
-with open('SoapyRTLSDR/Registration.cpp', 'r') as f:
+
+with open("SoapyRTLSDR/Registration.cpp", "r") as f:
     content = f.read()
 
-# Debug: show context around rtlsdr_get_device_usb_strings for CI log
-lines = content.split('\n')
+# Log a few lines around the function for debugging
+lines = content.split("\n")
 for i, line in enumerate(lines):
-    if 'rtlsdr_get_device_usb_strings' in line:
-        s, e = max(0, i-3), min(len(lines), i+5)
-        print(f'[Registration.cpp line {i+1}]:', file=sys.stderr)
-        for j in range(s, e):
-            print(f'  {j+1}: {lines[j]}', file=sys.stderr)
+    if "findRTLSDR" in line or "rtlsdr_get_device_usb_strings" in line:
+        print(f"  L{i+1}: {line}", file=sys.stderr)
 
-# Pattern A: single-line  if (rtlsdr_get_device_usb_strings(...) != 0) continue;
-patched = re.sub(
-    r'if\s*\(\s*rtlsdr_get_device_usb_strings\s*\(([^)]+)\)\s*!=\s*0\s*\)\s*continue\s*;',
-    r'rtlsdr_get_device_usb_strings(\1); // WinUSB: ignore failure, proceed with empty strings',
-    content
-)
-# Pattern B: multi-line   if (...) { ... continue; ... }
-patched = re.sub(
-    r'if\s*\(\s*rtlsdr_get_device_usb_strings\s*\(([^)]+)\)\s*!=\s*0\s*\)\s*\{[^}]*continue\s*;[^}]*\}',
-    r'rtlsdr_get_device_usb_strings(\1); // WinUSB: ignore failure, proceed with empty strings',
-    patched, flags=re.DOTALL
-)
+REPLACEMENT = r"""SoapySDR::KwargsList findRTLSDR(const SoapySDR::Kwargs &args)
+{
+    SoapySDR::KwargsList results;
+    const int count = rtlsdr_get_device_count();
+    for (int i = 0; i < count; i++)
+    {
+        char manufact[256] = {}, product[256] = {}, serial[256] = {};
+        // Ignore return value: WinUSB cannot provide USB string descriptors.
+        rtlsdr_get_device_usb_strings(i, manufact, product, serial);
 
-changed = (patched != content)
-print(f'Patch applied: {changed}', file=sys.stderr)
-if not changed:
-    print('ERROR: no pattern matched! Full Registration.cpp:', file=sys.stderr)
+        // Filter by device_index when specified.
+        if (args.count("device_index") != 0 &&
+            args.at("device_index") != std::to_string(i)) continue;
+        // Filter by serial only when we actually obtained a non-empty serial.
+        if (args.count("serial") != 0 && serial[0] != '\0' &&
+            args.at("serial") != serial) continue;
+
+        SoapySDR::Kwargs devInfo;
+        devInfo["device_index"] = std::to_string(i);
+        devInfo["serial"]       = serial;
+        devInfo["product"]      = product;
+        devInfo["manufacturer"] = manufact;
+        devInfo["label"]        = std::string(rtlsdr_get_device_name(i))
+                                  + " :: " + serial;
+        results.push_back(devInfo);
+    }
+    return results;
+}"""
+
+pattern = r"SoapySDR::KwargsList\s+findRTLSDR\s*\(.*?\n\}"
+patched = re.sub(pattern, REPLACEMENT, content, flags=re.DOTALL)
+
+if patched == content:
+    print("ERROR: findRTLSDR not found in Registration.cpp!", file=sys.stderr)
     print(content, file=sys.stderr)
     sys.exit(1)
-with open('SoapyRTLSDR/Registration.cpp', 'w') as f:
+
+with open("SoapyRTLSDR/Registration.cpp", "w") as f:
     f.write(patched)
-print('Registration.cpp patched for WinUSB compatibility.')
-"@
+print("Registration.cpp: findRTLSDR replaced with WinUSB-compatible version.")
+'@
+          $patchScript | Out-File -FilePath "patch_registration.py" -Encoding utf8
+          python patch_registration.py
           if ($LASTEXITCODE -ne 0) { throw "SoapyRTLSDR Registration.cpp patch failed" }
 
           $rtlsdrLib = (Get-ChildItem rtlsdr-build -Recurse -Filter "rtlsdr.lib" | Select-Object -First 1).FullName
