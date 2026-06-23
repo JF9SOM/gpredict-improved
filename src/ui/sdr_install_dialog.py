@@ -57,7 +57,7 @@ _BREW_PACKAGES: dict[str, list[str]] = {
 }
 
 # Windows: SoapySDR is bundled in the installer (extracted from conda-forge in CI).
-# Zadig is still needed to switch RTL-SDR to the libusbK driver.
+# Zadig is still needed to switch RTL-SDR to the WinUSB driver.
 _ZADIG_URL = "https://zadig.akeo.ie/"
 
 
@@ -393,12 +393,12 @@ class SdrInstallDialog(QDialog):
                 self._action_label.setText(
                     _(
                         "SoapySDR is bundled in this installer — no separate install needed.\n\n"
-                        "For RTL-SDR only: the libusbK driver must be applied once with Zadig.\n"
+                        "For RTL-SDR only: the WinUSB driver must be applied once with Zadig.\n"
                         "1. Plug in your RTL-SDR dongle.\n"
                         "2. Click 'Open Zadig Website' below, download and run Zadig.\n"
                         "3. In Zadig: Options → List All Devices, select your RTL-SDR\n"
-                        "   (Bulk-In, Interface 0) → driver: libusbK → Install Driver.\n"
-                        "   (WinUSB may fail to read USB serial strings on some dongles.)\n"
+                        "   (Bulk-In, Interface 0) → driver: WinUSB → Install Driver.\n"
+                        "   Do NOT select libusbK — it causes a crash during device detection.\n"
                         "4. Restart GPredict-Improved."
                     )
                 )
@@ -422,9 +422,9 @@ class SdrInstallDialog(QDialog):
             self._install_btn.setVisible(False)
 
     def _add_windows_buttons(self, needs_zadig: bool) -> None:
-        """Add Zadig website button for RTL-SDR libusbK driver installation."""
+        """Add Zadig website button for RTL-SDR WinUSB driver installation."""
         if needs_zadig:
-            zadig_btn = QPushButton(_("Open Zadig Website (download libusbK driver for RTL-SDR)"))
+            zadig_btn = QPushButton(_("Open Zadig Website (install WinUSB driver for RTL-SDR)"))
             zadig_btn.clicked.connect(lambda: self._open_url(_ZADIG_URL))
             self._status_layout.addWidget(zadig_btn)
 
