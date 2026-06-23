@@ -60,6 +60,32 @@ if sys.platform == "win32" and getattr(sys, "frozen", False):
     if _soapy_modules.exists():
         os.environ.setdefault("SOAPY_SDR_PLUGIN_PATH", str(_soapy_modules))
 
+# Windows subprocess enumerate worker.
+# SdrDevice.enumerate() on Windows spawns this process with --_gpredict_soapy_enum
+# so that a C-level crash (e.g. RTL-SDR with libusbK driver) cannot kill the
+# main Qt application.  Must run before any Qt or heavy library import.
+if sys.platform == "win32" and len(sys.argv) >= 2 and sys.argv[1] == "--_gpredict_soapy_enum":
+    import contextlib
+    import json as _json
+
+    _mei = Path(getattr(sys, "_MEIPASS", ""))
+    if _mei.exists() and hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(str(_mei))
+    try:
+        import SoapySDR as _s_enum
+
+        _enum_out: list[dict] = []
+        for _kw in _s_enum.Device.enumerate():
+            _d: dict = {}
+            for _k in _kw:
+                with contextlib.suppress(Exception):
+                    _d[_k] = str(_kw[_k])
+            _enum_out.append(_d)
+        print(_json.dumps(_enum_out), flush=True)
+    except Exception:
+        print("[]", flush=True)
+    sys.exit(0)
+
 if sys.platform == "linux":
     _pyver = f"{sys.version_info.major}.{sys.version_info.minor}"
     _HAMLIB_SITE = f"/opt/hamlib/4.7/lib/python{_pyver}/site-packages"

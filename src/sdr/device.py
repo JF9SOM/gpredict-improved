@@ -18,9 +18,11 @@ USB fallback:
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -129,6 +131,10 @@ class SdrDevice:
         Results are cached after the first successful call.  Pass force=True to
         bypass the cache (e.g. when the user explicitly clicks the Enumerate
         button after plugging in a new device).
+
+        On Windows the enumeration runs in a subprocess so that a C-level crash
+        inside a SoapySDR plugin (e.g. SoapyRTLSDR with a libusbK driver) cannot
+        kill the main Qt process.  On Linux/macOS the direct path is used.
         """
         global _enumerate_cache
         if not SOAPY_AVAILABLE:
@@ -136,33 +142,103 @@ class SdrDevice:
         if not force and _enumerate_cache is not None:
             return list(_enumerate_cache)
         with _SOAPY_GLOBAL_LOCK:
-            try:
-                import SoapySDR
+            if sys.platform == "win32":
+                results = cls._enumerate_via_subprocess()
+            else:
+                results = cls._enumerate_direct()
+            _enumerate_cache = results
+            return list(results)
 
-                results: list[SdrDeviceInfo] = []
-                for kw in SoapySDR.Device.enumerate():
-                    d = dict(kw)  # SoapySDRKwargs has no .get(); convert first
-                    driver = str(d.get("driver") or "")
-                    # Skip non-hardware drivers (audio, null, remote, etc.)
-                    if driver.lower() in _NON_SDR_DRIVERS:
-                        continue
-                    label = str(d.get("label") or d.get("device") or driver)
-                    serial = str(d.get("serial") or "")
-                    hardware = str(d.get("hardware") or "")
-                    results.append(
-                        SdrDeviceInfo(
-                            driver=driver,
-                            label=label,
-                            serial=serial,
-                            hardware=hardware,
-                            args=dict(kw),
-                        )
+    @classmethod
+    def _enumerate_direct(cls) -> list[SdrDeviceInfo]:
+        """Enumerate SoapySDR devices in-process (Linux / macOS)."""
+        try:
+            import SoapySDR
+
+            results: list[SdrDeviceInfo] = []
+            for kw in SoapySDR.Device.enumerate():
+                d = dict(kw)
+                driver = str(d.get("driver") or "")
+                if driver.lower() in _NON_SDR_DRIVERS:
+                    continue
+                label = str(d.get("label") or d.get("device") or driver)
+                serial = str(d.get("serial") or "")
+                hardware = str(d.get("hardware") or "")
+                results.append(
+                    SdrDeviceInfo(
+                        driver=driver,
+                        label=label,
+                        serial=serial,
+                        hardware=hardware,
+                        args=d,
                     )
-                _enumerate_cache = results
-                return list(results)
-            except Exception:
-                logger.exception("SoapySDR enumerate failed")
-                return []
+                )
+            return results
+        except Exception:
+            logger.exception("SoapySDR enumerate failed")
+            return []
+
+    @classmethod
+    def _enumerate_via_subprocess(cls) -> list[SdrDeviceInfo]:
+        """Enumerate SoapySDR devices in a subprocess (Windows only).
+
+        Spawns the application executable with --_gpredict_soapy_enum so that
+        a crash inside a SoapySDR plugin DLL does not kill the main process.
+        The worker runs before any Qt/DB init and exits after printing JSON.
+        """
+        import json as _json
+        import subprocess
+
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--_gpredict_soapy_enum"]
+        else:
+            # Dev mode: run main.py with the special argument.
+            _main = Path(__file__).parent.parent / "main.py"
+            cmd = [sys.executable, str(_main), "--_gpredict_soapy_enum"]
+
+        logger.debug("SoapySDR enumerate: spawning subprocess %s", cmd)
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            stdout = proc.stdout.strip()
+            if stdout:
+                raw: list[dict] = _json.loads(stdout)
+                return cls._parse_raw_devices(raw)
+            if proc.returncode != 0:
+                logger.warning(
+                    "SoapySDR enumerate subprocess exited %d; stderr: %s",
+                    proc.returncode,
+                    proc.stderr.strip()[:200],
+                )
+        except Exception:
+            logger.exception("SoapySDR enumerate subprocess failed")
+        return []
+
+    @classmethod
+    def _parse_raw_devices(cls, raw: list[dict]) -> list[SdrDeviceInfo]:
+        """Convert the JSON dicts from the enumerate worker into SdrDeviceInfo."""
+        results: list[SdrDeviceInfo] = []
+        for d in raw:
+            driver = str(d.get("driver") or "")
+            if driver.lower() in _NON_SDR_DRIVERS:
+                continue
+            label = str(d.get("label") or d.get("device") or driver)
+            serial = str(d.get("serial") or "")
+            hardware = str(d.get("hardware") or "")
+            results.append(
+                SdrDeviceInfo(
+                    driver=driver,
+                    label=label,
+                    serial=serial,
+                    hardware=hardware,
+                    args=d,
+                )
+            )
+        return results
 
     @classmethod
     def enumerate_usb(cls) -> list[SdrDeviceInfo]:
