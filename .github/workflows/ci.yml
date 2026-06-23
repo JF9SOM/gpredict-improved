@@ -461,14 +461,19 @@ jobs:
           Get-ChildItem soapyrtlsdr-build -Recurse -File | Select-Object FullName
 
           # --- Copy DLLs into soapy-win64 bundle ---
-          $rtlsdrDll = Get-ChildItem rtlsdr-build -Recurse -Filter "rtlsdr.dll" | Select-Object -First 1
-          $soapyRtlDll = Get-ChildItem soapyrtlsdr-build -Recurse -Filter "SoapyRTLSDR.dll" | Select-Object -First 1
-          if (-not $rtlsdrDll) { throw "rtlsdr.dll not found after build" }
-          if (-not $soapyRtlDll) { throw "SoapyRTLSDR.dll not found after build" }
-          Write-Host "rtlsdr.dll: $($rtlsdrDll.FullName)"
-          Write-Host "SoapyRTLSDR.dll: $($soapyRtlDll.FullName)"
-          Copy-Item $rtlsdrDll.FullName "soapy-win64\bin\rtlsdr.dll" -Force
-          Copy-Item $soapyRtlDll.FullName "soapy-win64\modules\SoapyRTLSDR.dll" -Force
+          # SoapyRTLSDR plugin is named rtlsdrSupport.dll (not SoapyRTLSDR.dll)
+          $rtlsdrDll   = Get-ChildItem rtlsdr-build      -Recurse -Filter "rtlsdr.dll"        | Select-Object -First 1
+          $soapyRtlDll = Get-ChildItem soapyrtlsdr-build -Recurse -Filter "rtlsdrSupport.dll" | Select-Object -First 1
+          # libusb-1.0.dll is a runtime dependency of rtlsdr.dll
+          $libusbDll   = Get-ChildItem "$PWD\rtlsdr-deps\Library\bin" -Filter "libusb-1.0.dll" | Select-Object -First 1
+          if (-not $rtlsdrDll)   { throw "rtlsdr.dll not found after build" }
+          if (-not $soapyRtlDll) { throw "rtlsdrSupport.dll not found after build" }
+          Write-Host "rtlsdr.dll:        $($rtlsdrDll.FullName)"
+          Write-Host "rtlsdrSupport.dll: $($soapyRtlDll.FullName)"
+          Write-Host "libusb-1.0.dll:    $($libusbDll.FullName)"
+          Copy-Item $rtlsdrDll.FullName   "soapy-win64\bin\rtlsdr.dll"           -Force
+          Copy-Item $soapyRtlDll.FullName "soapy-win64\modules\rtlsdrSupport.dll" -Force
+          if ($libusbDll) { Copy-Item $libusbDll.FullName "soapy-win64\bin\libusb-1.0.dll" -Force }
           Write-Host "RTL-SDR Osmocom source build installed into soapy-win64."
 
       - name: Disable Windows Defender and install NSIS
