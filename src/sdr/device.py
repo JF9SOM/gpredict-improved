@@ -395,7 +395,7 @@ class SdrDevice:
                     except Exception as exc:
                         last_exc = exc
                         self._dev = None
-                        logger.debug(
+                        logger.warning(
                             "SDR open attempt %d/%d (%s) failed for %s: %s",
                             attempt,
                             _MAX_ATTEMPTS,
