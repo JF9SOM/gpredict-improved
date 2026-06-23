@@ -415,10 +415,23 @@ jobs:
 
           # --- Build Osmocom librtlsdr and install to local prefix ---
           git clone https://github.com/osmocom/rtl-sdr --depth 1
+          # conda-forge libusb puts headers in include/libusb-1.0/libusb.h.
+          # cmake's FindLibUSB.cmake finds the .lib but may not set INCLUDE_DIRS
+          # correctly without pkg-config (not available on Windows runners).
+          # Pass them explicitly so cl.exe gets the /I flag.
+          $libusbInc = "$PWD\rtlsdr-deps\Library\include\libusb-1.0"
+          $libusbLib = (Get-ChildItem "$PWD\rtlsdr-deps\Library\lib" -Filter "*usb*1*.lib" |
+                        Select-Object -First 1).FullName
+          if (-not $libusbLib) { $libusbLib = "$PWD\rtlsdr-deps\Library\lib\usb-1.0.lib" }
+          Write-Host "libusb include: $libusbInc"
+          Write-Host "libusb lib:     $libusbLib"
+
           & $CMAKE -G Ninja -B rtlsdr-build -S rtl-sdr `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$PWD\rtlsdr-install" `
             -DCMAKE_PREFIX_PATH="$PWD\rtlsdr-deps\Library" `
+            "-DLIBUSB_INCLUDE_DIRS=$libusbInc" `
+            "-DLIBUSB_LIBRARIES=$libusbLib" `
             -DINSTALL_UDEV_RULES=OFF `
             -DDETACH_KERNEL_DRIVER=OFF `
             -DBUILD_SHARED_LIBS=ON
