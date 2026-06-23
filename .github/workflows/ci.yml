@@ -451,62 +451,75 @@ jobs:
 
           # Replace findRTLSDR() entirely with a WinUSB-compatible version that
           # does NOT require rtlsdr_get_device_usb_strings() to succeed.
-          # WinUSB cannot read USB string descriptors, so the original function
-          # skips devices when that call fails → enumerate() returns [] → "no match".
-          # Our replacement always includes devices by index; USB strings are
-          # best-effort (ignored when empty).  Matching falls back to device_index.
+          # Use brace-counting to locate the function end robustly (regex \n} fails
+          # on inner braces like for-loop closing braces).
           $patchScript = @'
-import re, sys
+import sys
 
 with open("SoapyRTLSDR/Registration.cpp", "r") as f:
     content = f.read()
 
-# Log a few lines around the function for debugging
-lines = content.split("\n")
-for i, line in enumerate(lines):
-    if "findRTLSDR" in line or "rtlsdr_get_device_usb_strings" in line:
-        print(f"  L{i+1}: {line}", file=sys.stderr)
-
-REPLACEMENT = r"""SoapySDR::KwargsList findRTLSDR(const SoapySDR::Kwargs &args)
-{
-    SoapySDR::KwargsList results;
-    const int count = rtlsdr_get_device_count();
-    for (int i = 0; i < count; i++)
-    {
-        char manufact[256] = {}, product[256] = {}, serial[256] = {};
-        // Ignore return value: WinUSB cannot provide USB string descriptors.
-        rtlsdr_get_device_usb_strings(i, manufact, product, serial);
-
-        // Filter by device_index when specified.
-        if (args.count("device_index") != 0 &&
-            args.at("device_index") != std::to_string(i)) continue;
-        // Filter by serial only when we actually obtained a non-empty serial.
-        if (args.count("serial") != 0 && serial[0] != '\0' &&
-            args.at("serial") != serial) continue;
-
-        SoapySDR::Kwargs devInfo;
-        devInfo["device_index"] = std::to_string(i);
-        devInfo["serial"]       = serial;
-        devInfo["product"]      = product;
-        devInfo["manufacturer"] = manufact;
-        devInfo["label"]        = std::string(rtlsdr_get_device_name(i))
-                                  + " :: " + serial;
-        results.push_back(devInfo);
-    }
-    return results;
-}"""
-
-pattern = r"SoapySDR::KwargsList\s+findRTLSDR\s*\(.*?\n\}"
-patched = re.sub(pattern, REPLACEMENT, content, flags=re.DOTALL)
-
-if patched == content:
-    print("ERROR: findRTLSDR not found in Registration.cpp!", file=sys.stderr)
+# Locate findRTLSDR function using brace counting
+marker = "findRTLSDR"
+idx = content.find(marker)
+if idx == -1:
+    print("ERROR: findRTLSDR not found", file=sys.stderr)
     print(content, file=sys.stderr)
     sys.exit(1)
 
+# Walk back to start of return type on the same declaration line
+func_start = content.rfind("\n", 0, idx) + 1
+
+# Walk forward to find the opening brace of the function body
+brace_open = content.find("{", idx)
+depth = 0
+pos = brace_open
+while pos < len(content):
+    if content[pos] == "{":
+        depth += 1
+    elif content[pos] == "}":
+        depth -= 1
+        if depth == 0:
+            func_end = pos + 1
+            break
+    pos += 1
+
+print("Replacing function:", file=sys.stderr)
+print(content[func_start:func_start+120], file=sys.stderr)
+
+NEW_FUNC = (
+    "SoapySDR::KwargsList findRTLSDR(const SoapySDR::Kwargs &args)\n"
+    "{\n"
+    "    SoapySDR::KwargsList results;\n"
+    "    const int count = rtlsdr_get_device_count();\n"
+    "    for (int i = 0; i < count; i++)\n"
+    "    {\n"
+    "        char manufact[256] = {}, product[256] = {}, serial[256] = {};\n"
+    "        // WinUSB cannot provide USB string descriptors; ignore return value.\n"
+    "        rtlsdr_get_device_usb_strings(i, manufact, product, serial);\n"
+    "        // Filter by device_index when caller specifies one.\n"
+    "        if (args.count(\"device_index\") != 0 &&\n"
+    "            args.at(\"device_index\") != std::to_string(i)) continue;\n"
+    "        // Filter by serial only when we actually read a non-empty serial.\n"
+    "        if (args.count(\"serial\") != 0 && serial[0] != '\\0' &&\n"
+    "            args.at(\"serial\") != serial) continue;\n"
+    "        SoapySDR::Kwargs devInfo;\n"
+    "        devInfo[\"device_index\"] = std::to_string(i);\n"
+    "        devInfo[\"serial\"]       = serial;\n"
+    "        devInfo[\"product\"]      = product;\n"
+    "        devInfo[\"manufacturer\"] = manufact;\n"
+    "        devInfo[\"label\"]        = std::string(rtlsdr_get_device_name(i))\n"
+    "                                  + \" :: \" + serial;\n"
+    "        results.push_back(devInfo);\n"
+    "    }\n"
+    "    return results;\n"
+    "}"
+)
+
+patched = content[:func_start] + NEW_FUNC + content[func_end:]
 with open("SoapyRTLSDR/Registration.cpp", "w") as f:
     f.write(patched)
-print("Registration.cpp: findRTLSDR replaced with WinUSB-compatible version.")
+print("findRTLSDR replaced with WinUSB-compatible version.")
 '@
           $patchScript | Out-File -FilePath "patch_registration.py" -Encoding utf8
           python patch_registration.py
