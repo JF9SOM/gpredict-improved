@@ -436,19 +436,23 @@ jobs:
             -DDETACH_KERNEL_DRIVER=OFF `
             -DBUILD_SHARED_LIBS=ON
           if ($LASTEXITCODE -ne 0) { throw "cmake configure librtlsdr failed" }
-          & $CMAKE --build rtlsdr-build
+          # Build only the shared library — rtl_tcp/rtl_test utilities need
+          # pthread.h which is unavailable on MSVC Windows runners.
+          & $CMAKE --build rtlsdr-build --target rtlsdr
           if ($LASTEXITCODE -ne 0) { throw "cmake build librtlsdr failed" }
-          & $CMAKE --install rtlsdr-build
-          if ($LASTEXITCODE -ne 0) { throw "cmake install librtlsdr failed" }
 
-          Write-Host "=== rtlsdr-install contents ==="
-          Get-ChildItem rtlsdr-install -Recurse -File | Select-Object FullName
+          Write-Host "=== rtlsdr-build contents ==="
+          Get-ChildItem rtlsdr-build -Recurse -File | Select-Object FullName
 
           # --- Build SoapyRTLSDR linking against Osmocom librtlsdr + our SoapySDR ---
           git clone https://github.com/pothosware/SoapyRTLSDR --depth 1
+          $rtlsdrLib = (Get-ChildItem rtlsdr-build -Recurse -Filter "rtlsdr.lib" | Select-Object -First 1).FullName
+          Write-Host "rtlsdr.lib for SoapyRTLSDR: $rtlsdrLib"
           & $CMAKE -G Ninja -B soapyrtlsdr-build -S SoapyRTLSDR `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_PREFIX_PATH="$PWD\rtlsdr-install;$PWD\rtlsdr-deps\Library"
+            -DCMAKE_PREFIX_PATH="$PWD\rtlsdr-deps\Library" `
+            "-DRTLSDR_INCLUDE_DIR=$PWD\rtl-sdr\include" `
+            "-DRTLSDR_LIBRARY=$rtlsdrLib"
           if ($LASTEXITCODE -ne 0) { throw "cmake configure SoapyRTLSDR failed" }
           & $CMAKE --build soapyrtlsdr-build
           if ($LASTEXITCODE -ne 0) { throw "cmake build SoapyRTLSDR failed" }
@@ -457,7 +461,7 @@ jobs:
           Get-ChildItem soapyrtlsdr-build -Recurse -File | Select-Object FullName
 
           # --- Copy DLLs into soapy-win64 bundle ---
-          $rtlsdrDll = Get-ChildItem rtlsdr-install -Recurse -Filter "rtlsdr.dll" | Select-Object -First 1
+          $rtlsdrDll = Get-ChildItem rtlsdr-build -Recurse -Filter "rtlsdr.dll" | Select-Object -First 1
           $soapyRtlDll = Get-ChildItem soapyrtlsdr-build -Recurse -Filter "SoapyRTLSDR.dll" | Select-Object -First 1
           if (-not $rtlsdrDll) { throw "rtlsdr.dll not found after build" }
           if (-not $soapyRtlDll) { throw "SoapyRTLSDR.dll not found after build" }
