@@ -206,7 +206,7 @@ class SdrDevice:
             )
             stdout = proc.stdout.strip()
             if stdout:
-                raw: list[dict] = _json.loads(stdout)
+                raw: list[dict[str, str]] = _json.loads(stdout)
                 return cls._parse_raw_devices(raw)
             if proc.returncode != 0:
                 logger.warning(
@@ -219,7 +219,7 @@ class SdrDevice:
         return []
 
     @classmethod
-    def _parse_raw_devices(cls, raw: list[dict]) -> list[SdrDeviceInfo]:
+    def _parse_raw_devices(cls, raw: list[dict[str, str]]) -> list[SdrDeviceInfo]:
         """Convert the JSON dicts from the enumerate worker into SdrDeviceInfo."""
         results: list[SdrDeviceInfo] = []
         for d in raw:
