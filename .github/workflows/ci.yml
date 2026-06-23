@@ -394,7 +394,7 @@ jobs:
           }
           if (-not $condaExe) { throw "conda.exe not found on runner" }
           Write-Host "conda: $condaExe"
-          & $condaExe create --prefix rtlsdr-deps -c conda-forge "soapysdr=0.8.1" --yes --quiet
+          & $condaExe create --prefix rtlsdr-deps -c conda-forge "soapysdr=0.8.1" "libusb" --yes --quiet
 
           # Find MSVC vcvarsall and activate x64 environment
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -418,6 +418,7 @@ jobs:
           & $CMAKE -G Ninja -B rtlsdr-build -S rtl-sdr `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX="$PWD\rtlsdr-install" `
+            -DCMAKE_PREFIX_PATH="$PWD\rtlsdr-deps\Library" `
             -DINSTALL_UDEV_RULES=OFF `
             -DDETACH_KERNEL_DRIVER=OFF `
             -DBUILD_SHARED_LIBS=ON
