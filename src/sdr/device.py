@@ -361,10 +361,14 @@ class SdrDevice:
         _MAX_ATTEMPTS = 3
         _RETRY_DELAY = 0.6  # seconds
 
-        # Minimal fallback: driver only, no serial matching
+        # Minimal fallback: driver + device_index (bypasses serial matching).
+        # RTL-SDR with WinUSB cannot read USB serial strings, so SoapyRTLSDR's
+        # find() returns serial="" which won't match the stored serial in full
+        # args.  Opening by device_index works regardless of serial readability.
         minimal_args: dict[str, str] = {}
         if self._info.driver:
-            minimal_args = {"driver": self._info.driver}
+            idx = self._info.args.get("device_index", "0")
+            minimal_args = {"driver": self._info.driver, "device_index": idx}
 
         with self._lock:
             if self._dev is not None:
@@ -635,20 +639,35 @@ class SdrDevice:
     # ------------------------------------------------------------------
 
     def _apply_settings(self) -> None:
-        """Push stored settings to the freshly opened device."""
+        """Push stored settings to the freshly opened device.
+
+        Each setting is applied independently; failures are logged as warnings
+        rather than raised so that one unsupported setting does not prevent the
+        device from opening (e.g. RTL-SDR ignoring bandwidth setting).
+        """
         import SoapySDR
 
         if self._dev is None:
             return
-        self._dev.setSampleRate(SoapySDR.SOAPY_SDR_RX, 0, self._sample_rate)
-        self._dev.setFrequency(SoapySDR.SOAPY_SDR_RX, 0, self._center_freq)
+        try:
+            self._dev.setSampleRate(SoapySDR.SOAPY_SDR_RX, 0, self._sample_rate)
+        except Exception as exc:
+            logger.warning("setSampleRate failed: %s", exc)
+        try:
+            self._dev.setFrequency(SoapySDR.SOAPY_SDR_RX, 0, self._center_freq)
+        except Exception as exc:
+            logger.warning("setFrequency failed: %s", exc)
         if self._bandwidth > 0:
-            self._dev.setBandwidth(SoapySDR.SOAPY_SDR_RX, 0, self._bandwidth)
-        if self._gain_mode == "auto":
-            self._dev.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, True)
-        else:
-            self._dev.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, False)
-            self._dev.setGain(SoapySDR.SOAPY_SDR_RX, 0, self._gain_db)
+            with contextlib.suppress(Exception):
+                self._dev.setBandwidth(SoapySDR.SOAPY_SDR_RX, 0, self._bandwidth)
+        try:
+            if self._gain_mode == "auto":
+                self._dev.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, True)
+            else:
+                self._dev.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, False)
+                self._dev.setGain(SoapySDR.SOAPY_SDR_RX, 0, self._gain_db)
+        except Exception as exc:
+            logger.warning("setGain/GainMode failed: %s", exc)
         if self._ppm != 0.0:
             with contextlib.suppress(Exception):
                 self._dev.setFrequencyComponent(SoapySDR.SOAPY_SDR_RX, 0, "CORR", self._ppm)

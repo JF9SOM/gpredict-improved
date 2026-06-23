@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -142,7 +143,16 @@ class SdrInstallDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        # Wrap everything in a scroll area so the dialog is usable on small screens.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        content = QWidget()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        layout = QVBoxLayout(content)
 
         # -- Connected devices --
         dev_grp = QGroupBox(_("Connected USB Devices"))
