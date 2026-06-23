@@ -66,7 +66,13 @@ def find_function_definition(lines: list[str], func_name: str) -> tuple[int, int
         if func_name not in line:
             i += 1
             continue
-        # Candidate: line contains func_name.
+        # Skip occurrences inside // line comments
+        comment_pos = line.find("//")
+        func_pos = line.find(func_name)
+        if comment_pos != -1 and comment_pos < func_pos:
+            i += 1
+            continue
+        # Candidate: line contains func_name outside a comment.
         # Scan forward to determine if this is a definition ('{' before ';').
         sig_start = i
         j = i
