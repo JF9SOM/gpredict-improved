@@ -333,9 +333,7 @@ jobs:
           $packages = @(
             # SoapySDR core + Python 3.11 binding
             "https://conda.anaconda.org/conda-forge/win-64/soapysdr-0.8.1-py311haef1a59_6.conda",
-            # RTL-SDR
-            "https://conda.anaconda.org/conda-forge/win-64/rtl-sdr-2.0.2-h2466b09_3.conda",
-            "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-rtlsdr-0.3.3-h0644a59_3.conda",
+            # RTL-SDR: omitted here; built from Osmocom source in the next step
             # HackRF
             "https://conda.anaconda.org/conda-forge/win-64/libhackrf0-2026.01.3-hfd05255_0.conda",
             "https://conda.anaconda.org/conda-forge/win-64/soapysdr-module-hackrf-0.3.4-h23704b7_0.tar.bz2",
@@ -375,6 +373,74 @@ jobs:
           devs = SoapySDR.Device.enumerate()
           print('Detected devices:', len(devs))
           "
+
+      - name: Build SoapyRTLSDR from Osmocom source (Windows)
+        shell: pwsh
+        run: |
+          # The conda-forge RTL-SDR 2.0.2 (Blog fork) cannot read USB string
+          # descriptors under the WinUSB driver, causing make() to fail with
+          # "no match".  Build from the Osmocom upstream source instead, which
+          # handles rtlsdr_get_device_usb_strings() failures gracefully.
+
+          # conda env with SoapySDR dev headers/libs (same version as our bundle)
+          conda create --prefix rtlsdr-deps -c conda-forge "soapysdr=0.8.1" --yes --quiet
+
+          # Find MSVC vcvarsall and activate x64 environment
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * `
+                      -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                      -property installationPath
+          $vcvarsall = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
+          Write-Host "vcvarsall: $vcvarsall"
+          $vcEnv = cmd /c "`"$vcvarsall`" x64 && set" 2>&1
+          foreach ($line in $vcEnv) {
+            if ($line -match '^([^=]+)=(.*)$') {
+              [System.Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
+            }
+          }
+
+          # Use system cmake (NOT conda cmake, which breaks VS detection)
+          $CMAKE = "C:\Program Files\CMake\bin\cmake.exe"
+
+          # --- Build Osmocom librtlsdr and install to local prefix ---
+          git clone https://github.com/osmocom/rtl-sdr --depth 1
+          & $CMAKE -G Ninja -B rtlsdr-build -S rtl-sdr `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$PWD\rtlsdr-install" `
+            -DINSTALL_UDEV_RULES=OFF `
+            -DDETACH_KERNEL_DRIVER=OFF `
+            -DBUILD_SHARED_LIBS=ON
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure librtlsdr failed" }
+          & $CMAKE --build rtlsdr-build
+          if ($LASTEXITCODE -ne 0) { throw "cmake build librtlsdr failed" }
+          & $CMAKE --install rtlsdr-build
+          if ($LASTEXITCODE -ne 0) { throw "cmake install librtlsdr failed" }
+
+          Write-Host "=== rtlsdr-install contents ==="
+          Get-ChildItem rtlsdr-install -Recurse -File | Select-Object FullName
+
+          # --- Build SoapyRTLSDR linking against Osmocom librtlsdr + our SoapySDR ---
+          git clone https://github.com/pothosware/SoapyRTLSDR --depth 1
+          & $CMAKE -G Ninja -B soapyrtlsdr-build -S SoapyRTLSDR `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="$PWD\rtlsdr-install;$PWD\rtlsdr-deps\Library"
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure SoapyRTLSDR failed" }
+          & $CMAKE --build soapyrtlsdr-build
+          if ($LASTEXITCODE -ne 0) { throw "cmake build SoapyRTLSDR failed" }
+
+          Write-Host "=== soapyrtlsdr-build contents ==="
+          Get-ChildItem soapyrtlsdr-build -Recurse -File | Select-Object FullName
+
+          # --- Copy DLLs into soapy-win64 bundle ---
+          $rtlsdrDll = Get-ChildItem rtlsdr-install -Recurse -Filter "rtlsdr.dll" | Select-Object -First 1
+          $soapyRtlDll = Get-ChildItem soapyrtlsdr-build -Recurse -Filter "SoapyRTLSDR.dll" | Select-Object -First 1
+          if (-not $rtlsdrDll) { throw "rtlsdr.dll not found after build" }
+          if (-not $soapyRtlDll) { throw "SoapyRTLSDR.dll not found after build" }
+          Write-Host "rtlsdr.dll: $($rtlsdrDll.FullName)"
+          Write-Host "SoapyRTLSDR.dll: $($soapyRtlDll.FullName)"
+          Copy-Item $rtlsdrDll.FullName "soapy-win64\bin\rtlsdr.dll" -Force
+          Copy-Item $soapyRtlDll.FullName "soapy-win64\modules\SoapyRTLSDR.dll" -Force
+          Write-Host "RTL-SDR Osmocom source build installed into soapy-win64."
 
       - name: Disable Windows Defender and install NSIS
         shell: pwsh
