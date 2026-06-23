@@ -377,10 +377,12 @@ jobs:
       - name: Build SoapyRTLSDR from Osmocom source (Windows)
         shell: pwsh
         run: |
-          # The conda-forge RTL-SDR 2.0.2 (Blog fork) cannot read USB string
-          # descriptors under the WinUSB driver, causing make() to fail with
-          # "no match".  Build from the Osmocom upstream source instead, which
-          # handles rtlsdr_get_device_usb_strings() failures gracefully.
+          # Both conda-forge and Osmocom librtlsdr 2.0.2 fail to read USB string
+          # descriptors under WinUSB (libusb limitation).  SoapyRTLSDR's findDevices()
+          # skips such devices → enumerate() returns [] → make() "no match".
+          # We build SoapyRTLSDR from source and patch Registration.cpp to ignore
+          # the rtlsdr_get_device_usb_strings() return value so devices are always
+          # added with empty strings; matching then falls back to device_index.
 
           # conda env with SoapySDR dev headers/libs (same version as our bundle).
           # Use the full path to conda.exe — the shell function is not initialized.
@@ -444,8 +446,54 @@ jobs:
           Write-Host "=== rtlsdr-build contents ==="
           Get-ChildItem rtlsdr-build -Recurse -File | Select-Object FullName
 
-          # --- Build SoapyRTLSDR linking against Osmocom librtlsdr + our SoapySDR ---
+          # --- Patch + Build SoapyRTLSDR linking against Osmocom librtlsdr + our SoapySDR ---
           git clone https://github.com/pothosware/SoapyRTLSDR --depth 1
+
+          # Patch Registration.cpp: WinUSB cannot provide USB string descriptors via libusb,
+          # so rtlsdr_get_device_usb_strings() returns -1.  The original code does
+          #   "if (rtlsdr_get_device_usb_strings(...) != 0) continue;"
+          # which skips the device entirely → findDevices() returns [] → make() "no match".
+          # Fix: call the function but ignore the return value so the device is always
+          # added to the results with empty strings.  SoapySDR then matches on device_index.
+          python -c @"
+import re, sys
+with open('SoapyRTLSDR/Registration.cpp', 'r') as f:
+    content = f.read()
+
+# Debug: show context around rtlsdr_get_device_usb_strings for CI log
+lines = content.split('\n')
+for i, line in enumerate(lines):
+    if 'rtlsdr_get_device_usb_strings' in line:
+        s, e = max(0, i-3), min(len(lines), i+5)
+        print(f'[Registration.cpp line {i+1}]:', file=sys.stderr)
+        for j in range(s, e):
+            print(f'  {j+1}: {lines[j]}', file=sys.stderr)
+
+# Pattern A: single-line  if (rtlsdr_get_device_usb_strings(...) != 0) continue;
+patched = re.sub(
+    r'if\s*\(\s*rtlsdr_get_device_usb_strings\s*\(([^)]+)\)\s*!=\s*0\s*\)\s*continue\s*;',
+    r'rtlsdr_get_device_usb_strings(\1); // WinUSB: ignore failure, proceed with empty strings',
+    content
+)
+# Pattern B: multi-line   if (...) { ... continue; ... }
+patched = re.sub(
+    r'if\s*\(\s*rtlsdr_get_device_usb_strings\s*\(([^)]+)\)\s*!=\s*0\s*\)\s*\{[^}]*continue\s*;[^}]*\}',
+    r'rtlsdr_get_device_usb_strings(\1); // WinUSB: ignore failure, proceed with empty strings',
+    patched, flags=re.DOTALL
+)
+
+changed = (patched != content)
+print(f'Patch applied: {changed}', file=sys.stderr)
+if not changed:
+    print('ERROR: no pattern matched! Full Registration.cpp:', file=sys.stderr)
+    print(content, file=sys.stderr)
+    sys.exit(1)
+with open('SoapyRTLSDR/Registration.cpp', 'w') as f:
+    f.write(patched)
+print('Registration.cpp patched for WinUSB compatibility.')
+"@
+          if ($LASTEXITCODE -ne 0) { throw "SoapyRTLSDR Registration.cpp patch failed" }
+
           $rtlsdrLib = (Get-ChildItem rtlsdr-build -Recurse -Filter "rtlsdr.lib" | Select-Object -First 1).FullName
           Write-Host "rtlsdr.lib for SoapyRTLSDR: $rtlsdrLib"
           & $CMAKE -G Ninja -B soapyrtlsdr-build -S SoapyRTLSDR `
