@@ -64,6 +64,11 @@ Section "Install" SecMain
   ; Kill running instance gracefully before overwriting files
   ExecWait 'taskkill /IM "${APP_EXE}" /F' $0
 
+  ; Remove stale SoapySDR plugin directory so obsolete DLLs (e.g. libiio.dll,
+  ; PlutoSDRSupport.dll left by older installers) do not persist and cause
+  ; SoapySDR to crash when attempting to load them as plugins.
+  RMDir /r "$INSTDIR\_internal\soapy_modules"
+
   SetOutPath "$INSTDIR"
   File /r "..\dist\gpredict-improved\"
 
