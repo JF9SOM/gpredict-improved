@@ -138,16 +138,17 @@ static SoapySDR::KwargsList findRTLSDR(const SoapySDR::Kwargs &args)
     //   - Opening the device in findRTLSDR leaves a lingering libusb handle that
     //     blocks the subsequent makeRTLSDR() rtlsdr_open() → make() "no match".
     //
-    // This replacement enumerates devices by index only:
+    // This replacement enumerates ALL connected RTL-SDR devices by index.
+    // No filtering is performed here — SoapySDR::Device::make() matches the
+    // caller's args (driver, device_index, label) against the returned list
+    // using its own string-equality logic, so std::stoi is never needed.
     //   - No rtlsdr_get_device_usb_strings() call  → no descriptor issues
     //   - No device open                            → no handle leakage
-    //   - Filters only by device_index if provided → serial/label matching skipped
+    //   - No std::stoi()                            → no invalid_argument throw
     SoapySDR::KwargsList results;
     const int n = rtlsdr_get_device_count();
     for (int i = 0; i < n; i++)
     {
-        if (args.count("device_index") != 0 &&
-            std::stoi(args.at("device_index")) != i) continue;
         SoapySDR::Kwargs devInfo;
         devInfo["device_index"] = std::to_string(i);
         devInfo["driver"] = "rtlsdr";
