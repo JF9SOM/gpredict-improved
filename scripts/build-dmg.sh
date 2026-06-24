@@ -37,12 +37,20 @@ ln -s /Applications "$DMG_STAGING/Applications"
 # --------------------------------------------------------------------------- #
 rm -f "$DMG_PATH"
 
-hdiutil create \
-    -volname "GPredict-Improved" \
-    -srcfolder "$DMG_STAGING" \
-    -ov \
-    -format UDZO \
-    "$DMG_PATH"
+for attempt in 1 2 3; do
+    hdiutil create \
+        -volname "GPredict-Improved" \
+        -srcfolder "$DMG_STAGING" \
+        -ov \
+        -format UDZO \
+        "$DMG_PATH" && break
+    echo "hdiutil attempt $attempt failed (Resource busy?), retrying in 15s..."
+    sleep 15
+done
+if [[ ! -f "$DMG_PATH" ]]; then
+    echo "ERROR: hdiutil failed after 3 attempts" >&2
+    exit 1
+fi
 
 rm -rf "$DMG_STAGING"
 
