@@ -168,29 +168,27 @@ static SoapySDR::KwargsList findRTLSDR(const SoapySDR::Kwargs &args)
 {
     // WinUSB fix (patched by scripts/patch_soapyrtlsdr_winusb.py).
     //
-    // Calling rtlsdr_get_device_count() here (one libusb_init+exit cycle)
-    // is safe under WinUSB: confirmed by ctypes diagnostic (v0.1.53) that
-    // a single get_device_count() call does NOT prevent the subsequent
-    // rtlsdr_open() from succeeding.  Multiple libusb_init+exit cycles
-    // (e.g. in makeRTLSDR and the constructor) were the original culprit.
+    // Do NOT call rtlsdr_get_device_count() here.  Under Windows WinUSB,
+    // rtlsdr_get_device_count() performs libusb_init(&ctx) + libusb_exit(ctx)
+    // with a private context.  libusb_exit resets the WinUSB backend handle
+    // cache, causing the subsequent rtlsdr_open() inside SoapyRTLSDR() to
+    // time out (~1 second) and fail with "usb_open error -3" even when the
+    // device is physically present and ctypes can see it.
     //
-    // Benefits of restoring this call:
-    //   1. Returns empty list when no dongle is plugged in, so the SDR
-    //      Device Installation dialog no longer shows false "Ready" status.
-    //   2. Correctly enumerates multiple dongles (device_index 0..count-1).
+    // By returning a static single-device result here, the only libusb
+    // operation before rtlsdr_open() is the rtlsdr_open() call itself.
+    // WinUSB finds the device correctly on the first and only open attempt.
     //
-    // makeRTLSDR and the SoapyRTLSDR constructor must NOT call
-    // rtlsdr_get_device_count() — only findRTLSDR does so, exactly once.
+    // Trade-off: enumerate() always reports one RTL-SDR regardless of whether
+    // a dongle is actually connected.  rtlsdr_open() will fail (and report an
+    // error) if no dongle is present, so the UI will still show failure.
     (void)args;
-    uint32_t count = rtlsdr_get_device_count();
     SoapySDR::KwargsList results;
-    for (uint32_t i = 0; i < count; i++) {
-        SoapySDR::Kwargs devInfo;
-        devInfo["device_index"] = std::to_string(i);
-        devInfo["driver"]       = "rtlsdr";
-        devInfo["label"]        = "RTL-SDR";
-        results.push_back(devInfo);
-    }
+    SoapySDR::Kwargs devInfo;
+    devInfo["device_index"] = "0";
+    devInfo["driver"]       = "rtlsdr";
+    devInfo["label"]        = "RTL-SDR";
+    results.push_back(devInfo);
     return results;
 }
 """

@@ -519,17 +519,6 @@ class SdrDevice:
             if self._dev is not None:
                 return True
 
-            # ── SoapySDR module diagnostic (Windows/RTL-SDR only) ─────────────
-            # Verify that rtlsdrSupport.dll was actually loaded into the MAIN
-            # process by SoapySDR's plugin loader.  If the DLL fails to load
-            # (e.g. missing dependency: rtlsdr.dll / libusb-1.0.dll), SoapySDR
-            # silently returns empty results and make() throws "no match".
-            # We run this once per open() call so the log contains a definitive
-            # answer about plugin registration.
-            if sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr":
-                _soapy_rtlsdr_module_diagnostic(SoapySDR)
-            # ──────────────────────────────────────────────────────────────────
-
             # ── SoapySDR log handler: capture C++ error messages ──────────────
             # SoapySDR logs DLL load failures and constructor exceptions via its
             # internal log system.  Install a Python handler so these messages
@@ -605,6 +594,17 @@ class SdrDevice:
 
             with _contextlib.suppress(Exception):
                 SoapySDR.registerLogHandler(None)
+
+            # ── Post-failure SoapySDR module diagnostic (Windows/RTL-SDR) ────
+            # Run AFTER all open attempts to diagnose plugin registration.
+            # Running before open() would call enumerate(driver=rtlsdr) which
+            # triggers findRTLSDR → (previously) rtlsdr_get_device_count()
+            # and corrupt WinUSB state before rtlsdr_open().  Post-failure is
+            # safe: the device open already failed so WinUSB state doesn't matter.
+            if sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr":
+                _soapy_rtlsdr_module_diagnostic(SoapySDR)
+            # ──────────────────────────────────────────────────────────────────
+
             if _soapy_log_msgs:
                 logger.warning(
                     "[SoapySDR captured %d log message(s) during open attempts]",
