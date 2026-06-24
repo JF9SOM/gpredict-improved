@@ -130,29 +130,31 @@ static SoapySDR::KwargsList findRTLSDR(const SoapySDR::Kwargs &args)
 {
     // WinUSB-compatible implementation (patched by scripts/patch_soapyrtlsdr_winusb.py).
     //
-    // The original findRTLSDR called rtlsdr_get_device_usb_strings() for the
-    // serial number and opened the device inside get_device_label() to detect
-    // the tuner type.  Both operations cause failures under Windows WinUSB:
-    //   - USB string-descriptor reads via libusb may fail, leaving serial=""
-    //     so the serial-filter check skips the device → enumerate() returns [].
-    //   - Opening the device in findRTLSDR leaves a lingering libusb handle that
-    //     blocks the subsequent makeRTLSDR() rtlsdr_open() → make() "no match".
+    // Root cause of WinUSB connect failure:
+    //   rtlsdr_get_device_count() calls libusb_init(&ctx) then libusb_exit(ctx)
+    //   using a private libusb context.  rtlsdr_get_device_name() does the same.
+    //   Under Windows WinUSB, libusb_exit tears down the WinUSB backend state.
+    //   The subsequent rtlsdr_open() inside makeRTLSDR calls libusb_init(&dev->ctx)
+    //   and libusb_get_device_list(), but WinUSB can no longer find the device
+    //   because its handle cache was reset → "No RTL-SDR devices found!".
+    //   Under libusbK this is not an issue (kernel-mode filter driver persists).
     //
-    // This replacement enumerates ALL connected RTL-SDR devices by index.
-    // No filtering is performed here — SoapySDR::Device::make() matches the
-    // caller's args (driver, device_index, label) against the returned list
-    // using its own string-equality logic, so std::stoi is never needed.
-    //   - No rtlsdr_get_device_usb_strings() call  → no descriptor issues
-    //   - No device open                            → no handle leakage
-    //   - No std::stoi()                            → no invalid_argument throw
+    // Fix: do not call any librtlsdr or libusb function in findRTLSDR.
+    //   Return candidate entries for device_index 0..3 unconditionally.
+    //   SoapySDR::Device::make() selects the matching device_index entry and
+    //   calls makeRTLSDR, which calls rtlsdr_open() as the *first* libusb
+    //   operation — WinUSB finds the device successfully.
+    //
+    // Side-effect: enumerate() always returns 4 candidates regardless of
+    //   whether a device is physically present.  make() will fail cleanly
+    //   if no device is attached.
     SoapySDR::KwargsList results;
-    const int n = rtlsdr_get_device_count();
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < 4; i++)
     {
         SoapySDR::Kwargs devInfo;
         devInfo["device_index"] = std::to_string(i);
         devInfo["driver"] = "rtlsdr";
-        devInfo["label"] = std::string(rtlsdr_get_device_name(i));
+        devInfo["label"] = "RTL-SDR";
         results.push_back(devInfo);
     }
     return results;
