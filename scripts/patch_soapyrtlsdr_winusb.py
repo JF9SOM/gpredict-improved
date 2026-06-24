@@ -35,6 +35,7 @@ Patches applied:
                           WinUSB finds the device successfully.
 """
 
+import os
 import re
 import sys
 
@@ -254,64 +255,101 @@ if result_make:
 #
 # The deviceIndex = 0 / args.count("device_index") block is kept intact.
 
-CTOR_SRC = "SoapyRTLSDR/SoapyRTLSDR.cpp"
-with open(CTOR_SRC, encoding="utf-8", errors="replace") as f:
-    ctor_content = f.read()
+# The constructor lives in Settings.cpp in pothosware/SoapyRTLSDR.
+# Fall back to any .cpp that contains rtlsdr_get_device_count outside Registration.cpp.
+_candidates = ["SoapyRTLSDR/Settings.cpp", "SoapyRTLSDR/SoapyRTLSDR.cpp"]
+CTOR_SRC = next(
+    (p for p in _candidates if os.path.exists(p)),
+    None,
+)
+if CTOR_SRC is None:
+    # Search all .cpp files in SoapyRTLSDR/ for rtlsdr_get_device_count
+    for _fname in os.listdir("SoapyRTLSDR"):
+        if not _fname.endswith(".cpp") or _fname == "Registration.cpp":
+            continue
+        _fpath = f"SoapyRTLSDR/{_fname}"
+        with open(_fpath, encoding="utf-8", errors="replace") as _f:
+            if "rtlsdr_get_device_count" in _f.read():
+                CTOR_SRC = _fpath
+                break
 
-print("=== SoapyRTLSDR.cpp BEFORE patch (rtlsdr_get_device_count lines) ===", file=sys.stderr)
+if CTOR_SRC is None:
+    print(
+        "WARNING: could not find constructor source with rtlsdr_get_device_count"
+        " — skipping constructor patch",
+        file=sys.stderr,
+    )
+else:
+    print(f"Constructor source: {CTOR_SRC}", file=sys.stderr)
+
+if CTOR_SRC is not None:
+    with open(CTOR_SRC, encoding="utf-8", errors="replace") as f:
+        ctor_content = f.read()
+else:
+    ctor_content = ""
+
+print(
+    f"=== {CTOR_SRC or 'constructor'} BEFORE patch (rtlsdr_get_device_count lines) ===",
+    file=sys.stderr,
+)
 for i, line in enumerate(ctor_content.splitlines(), 1):
     if "rtlsdr_get_device_count" in line or "No RTL-SDR" in line or "device_index" in line.lower():
         print(f"  L{i:4d}: {line}", file=sys.stderr)
 print("=== END ===", file=sys.stderr)
 
-ctor_patched = ctor_content
+if CTOR_SRC is not None and ctor_content:
+    ctor_patched = ctor_content
 
-# Block A: remove "int deviceCount = rtlsdr_get_device_count();" and the
-# immediately following "if (deviceCount == 0) { throw ...; }" block.
-# Pattern is flexible about whitespace / brace placement.
-block_a = re.compile(
-    r"[ \t]+int deviceCount = rtlsdr_get_device_count\(\);\n"
-    r"(?:[ \t]*\n)*"  # optional blank lines between statements
-    r"[ \t]+if \(deviceCount == 0\) \{[^}]*\}\n",
-    re.DOTALL,
-)
-ctor_after_a = block_a.sub(
-    "    // WinUSB fix: removed rtlsdr_get_device_count() guard"
-    " (see scripts/patch_soapyrtlsdr_winusb.py)\n",
-    ctor_patched,
-    count=1,
-)
-if ctor_after_a == ctor_patched:
-    print(
-        "WARNING: SoapyRTLSDR.cpp block-A (deviceCount==0 guard) regex did not match"
-        " — skipping that removal",
-        file=sys.stderr,
+    # Block A: remove "int deviceCount = rtlsdr_get_device_count();" and the
+    # immediately following "if (deviceCount == 0) { throw ...; }" block.
+    # Pattern is flexible about whitespace / brace placement.
+    block_a = re.compile(
+        r"[ \t]+int deviceCount = rtlsdr_get_device_count\(\);\n"
+        r"(?:[ \t]*\n)*"  # optional blank lines between statements
+        r"[ \t]+if \(deviceCount == 0\) \{[^}]*\}\n",
+        re.DOTALL,
     )
-else:
-    ctor_patched = ctor_after_a
-    print("SoapyRTLSDR.cpp: removed rtlsdr_get_device_count()==0 guard (block A).")
-
-# Block B: remove "if (deviceIndex >= deviceCount) { throw ...; }"
-block_b = re.compile(
-    r"[ \t]+if \(deviceIndex >= deviceCount\) \{[^}]*\}\n",
-    re.DOTALL,
-)
-ctor_after_b = block_b.sub("", ctor_patched, count=1)
-if ctor_after_b == ctor_patched:
-    print(
-        "WARNING: SoapyRTLSDR.cpp block-B (deviceIndex>=deviceCount) regex did not match"
-        " — skipping that removal",
-        file=sys.stderr,
+    ctor_after_a = block_a.sub(
+        "    // WinUSB fix: removed rtlsdr_get_device_count() guard"
+        " (see scripts/patch_soapyrtlsdr_winusb.py)\n",
+        ctor_patched,
+        count=1,
     )
-else:
-    ctor_patched = ctor_after_b
-    print("SoapyRTLSDR.cpp: removed deviceIndex>=deviceCount bounds check (block B).")
+    if ctor_after_a == ctor_patched:
+        print(
+            f"WARNING: {CTOR_SRC} block-A (deviceCount==0 guard) regex did not match"
+            " — skipping that removal",
+            file=sys.stderr,
+        )
+    else:
+        ctor_patched = ctor_after_a
+        print(f"{CTOR_SRC}: removed rtlsdr_get_device_count()==0 guard (block A).")
 
-with open(CTOR_SRC, "w", encoding="utf-8") as f:
-    f.write(ctor_patched)
+    # Block B: remove "if (deviceIndex >= deviceCount) { throw ...; }"
+    block_b = re.compile(
+        r"[ \t]+if \(deviceIndex >= deviceCount\) \{[^}]*\}\n",
+        re.DOTALL,
+    )
+    ctor_after_b = block_b.sub("", ctor_patched, count=1)
+    if ctor_after_b == ctor_patched:
+        print(
+            f"WARNING: {CTOR_SRC} block-B (deviceIndex>=deviceCount) regex did not match"
+            " — skipping that removal",
+            file=sys.stderr,
+        )
+    else:
+        ctor_patched = ctor_after_b
+        print(f"{CTOR_SRC}: removed deviceIndex>=deviceCount bounds check (block B).")
 
-print("=== SoapyRTLSDR.cpp AFTER patch (rtlsdr_get_device_count lines) ===", file=sys.stderr)
-for i, line in enumerate(ctor_patched.splitlines(), 1):
-    if "rtlsdr_get_device_count" in line or "No RTL-SDR" in line or "device_index" in line.lower():
-        print(f"  L{i:4d}: {line}", file=sys.stderr)
-print("=== END ===", file=sys.stderr)
+    with open(CTOR_SRC, "w", encoding="utf-8") as f:
+        f.write(ctor_patched)
+
+    print(f"=== {CTOR_SRC} AFTER patch (rtlsdr_get_device_count lines) ===", file=sys.stderr)
+    for i, line in enumerate(ctor_patched.splitlines(), 1):
+        if (
+            "rtlsdr_get_device_count" in line
+            or "No RTL-SDR" in line
+            or "device_index" in line.lower()
+        ):
+            print(f"  L{i:4d}: {line}", file=sys.stderr)
+    print("=== END ===", file=sys.stderr)
