@@ -1,24 +1,27 @@
 """
 Patch SoapyRTLSDR/Registration.cpp for WinUSB compatibility.
 
-Strategy: replace the entire findRTLSDR() body with a minimal implementation
-that uses only rtlsdr_get_device_count() and rtlsdr_get_device_name() —
-no USB string-descriptor reading, no device open inside findRTLSDR.
+Root cause (confirmed by log analysis):
+  makeRTLSDR() calls rtlsdr_get_device_count() as a bounds check before
+  calling new SoapyRTLSDR(args).  rtlsdr_get_device_count() performs
+  libusb_init(&ctx) + libusb_exit(ctx) with a private libusb context.
+  Under Windows WinUSB, libusb_exit() resets the USB backend handle cache.
+  The subsequent rtlsdr_open() inside the SoapyRTLSDR constructor then calls
+  libusb_init(&dev->ctx) + libusb_get_device_list(), but WinUSB can no longer
+  enumerate the device → "No RTL-SDR devices found!".
+  Under libusbK this is not an issue (kernel-mode filter driver persists).
 
-This fixes two WinUSB-specific problems:
-  1. The original findRTLSDR calls rtlsdr_get_device_usb_strings() for serial.
-     Under WinUSB this may set serial="" (or garbage), causing the serial-filter
-     check to skip the device → enumerate() returns [].
-  2. The original findRTLSDR opens the device inside get_device_label() to
-     detect the tuner type.  On Windows/WinUSB the resulting libusb handle may
-     linger, preventing the subsequent makeRTLSDR() rtlsdr_open() from
-     succeeding → make() "no match".
+Patches applied (both in Registration.cpp):
 
-The replacement findRTLSDR:
-  - Never calls rtlsdr_get_device_usb_strings()  → no descriptor issues
-  - Never opens the device                        → no handle leakage
-  - Filters only by device_index (if in args)    → serial/label matching skipped
-  - Returns {device_index, driver, label} kwargs → makeRTLSDR opens by index
+  1. findRTLSDR  — return a single device_index=0 candidate without calling
+                   any libusb/librtlsdr function.  This also fixes the
+                   "4 phantom entries" in the SDR dropdown.
+
+  2. makeRTLSDR  — skip rtlsdr_get_device_count() entirely.  rtlsdr_open()
+                   inside the SoapyRTLSDR constructor handles out-of-range
+                   indices with its own error path.  With no libusb init/exit
+                   before rtlsdr_open(), WinUSB enumerates the device
+                   successfully.
 """
 
 import sys
@@ -35,18 +38,15 @@ for i, line in enumerate(content.splitlines(), 1):
         kw in line
         for kw in (
             "findRTLSDR",
+            "makeRTLSDR",
+            "rtlsdr_get_device_count",
             "rtlsdr_get_device_usb_strings",
-            "get_tuner",
             "get_device_label",
             "#include",
         )
     ):
         print(f"  L{i:4d}: {line}", file=sys.stderr)
 print("=== END ===", file=sys.stderr)
-
-# ── Find findRTLSDR definition using brace-counting ──────────────────────────
-# We look for the DEFINITION (has '{' before ';' on/after the signature line),
-# not the forward declaration (ends with ';').
 
 lines = content.splitlines(keepends=True)
 
@@ -112,57 +112,91 @@ def find_function_definition(lines: list[str], func_name: str) -> tuple[int, int
     return None
 
 
-result = find_function_definition(lines, "findRTLSDR")
-if result is None:
+# ── Locate both functions ─────────────────────────────────────────────────────
+result_find = find_function_definition(lines, "findRTLSDR")
+if result_find is None:
     print("ERROR: could not find findRTLSDR definition in Registration.cpp", file=sys.stderr)
     print(content, file=sys.stderr)
     sys.exit(1)
 
-sig_start, body_open, body_close = result
+result_make = find_function_definition(lines, "makeRTLSDR")
+if result_make is None:
+    print("WARNING: could not find makeRTLSDR definition — skipping that patch", file=sys.stderr)
+
+find_sig, find_open, find_close = result_find
 print(
-    f"Found findRTLSDR: sig L{sig_start + 1}, open L{body_open + 1}, close L{body_close + 1}",
+    f"Found findRTLSDR: sig L{find_sig + 1}, open L{find_open + 1}, close L{find_close + 1}",
     file=sys.stderr,
 )
+if result_make:
+    make_sig, make_open, make_close = result_make
+    print(
+        f"Found makeRTLSDR: sig L{make_sig + 1}, open L{make_open + 1}, close L{make_close + 1}",
+        file=sys.stderr,
+    )
 
-# ── Replacement function ──────────────────────────────────────────────────────
-REPLACEMENT = """\
+# ── Replacement for findRTLSDR ────────────────────────────────────────────────
+FIND_REPLACEMENT = """\
 static SoapySDR::KwargsList findRTLSDR(const SoapySDR::Kwargs &args)
 {
-    // WinUSB-compatible implementation (patched by scripts/patch_soapyrtlsdr_winusb.py).
+    // WinUSB fix (patched by scripts/patch_soapyrtlsdr_winusb.py).
     //
-    // Root cause of WinUSB connect failure:
-    //   rtlsdr_get_device_count() calls libusb_init(&ctx) then libusb_exit(ctx)
-    //   using a private libusb context.  rtlsdr_get_device_name() does the same.
-    //   Under Windows WinUSB, libusb_exit tears down the WinUSB backend state.
-    //   The subsequent rtlsdr_open() inside makeRTLSDR calls libusb_init(&dev->ctx)
-    //   and libusb_get_device_list(), but WinUSB can no longer find the device
-    //   because its handle cache was reset → "No RTL-SDR devices found!".
-    //   Under libusbK this is not an issue (kernel-mode filter driver persists).
+    // Do NOT call rtlsdr_get_device_count() or any other libusb/librtlsdr
+    // function here.  Any libusb_init(&ctx)+libusb_exit(ctx) cycle resets
+    // the WinUSB backend handle cache; the subsequent rtlsdr_open() inside
+    // makeRTLSDR then fails to enumerate the device ("No RTL-SDR devices
+    // found!").  Under libusbK this is not an issue.
     //
-    // Fix: do not call any librtlsdr or libusb function in findRTLSDR.
-    //   Return candidate entries for device_index 0..3 unconditionally.
-    //   SoapySDR::Device::make() selects the matching device_index entry and
-    //   calls makeRTLSDR, which calls rtlsdr_open() as the *first* libusb
-    //   operation — WinUSB finds the device successfully.
+    // Return a single device_index=0 candidate unconditionally.
+    // SoapySDR::Device::make() will select it and call makeRTLSDR (see
+    // below), which opens the device directly via rtlsdr_open() as the
+    // first libusb operation — WinUSB finds it successfully.
     //
-    // Side-effect: enumerate() always returns 4 candidates regardless of
-    //   whether a device is physically present.  make() will fail cleanly
-    //   if no device is attached.
+    // Users with multiple RTL-SDR dongles: only device 0 appears in the
+    // dropdown.  This is an acceptable limitation of the WinUSB driver path.
+    (void)args;
     SoapySDR::KwargsList results;
-    for (int i = 0; i < 4; i++)
-    {
-        SoapySDR::Kwargs devInfo;
-        devInfo["device_index"] = std::to_string(i);
-        devInfo["driver"] = "rtlsdr";
-        devInfo["label"] = "RTL-SDR";
-        results.push_back(devInfo);
-    }
+    SoapySDR::Kwargs devInfo;
+    devInfo["device_index"] = "0";
+    devInfo["driver"]       = "rtlsdr";
+    devInfo["label"]        = "RTL-SDR";
+    results.push_back(devInfo);
     return results;
 }
 """
 
-# Replace from sig_start through body_close (inclusive) with new implementation
-patched_lines = lines[:sig_start] + [REPLACEMENT] + lines[body_close + 1 :]
+# ── Replacement for makeRTLSDR ────────────────────────────────────────────────
+MAKE_REPLACEMENT = """\
+static SoapySDR::Device *makeRTLSDR(const SoapySDR::Kwargs &args)
+{
+    // WinUSB fix (patched by scripts/patch_soapyrtlsdr_winusb.py).
+    //
+    // The original makeRTLSDR called rtlsdr_get_device_count() before
+    // constructing SoapyRTLSDR.  That function performs
+    // libusb_init(&ctx) + libusb_exit(ctx) with a private context.
+    // Under Windows WinUSB, libusb_exit resets the USB backend state so the
+    // subsequent rtlsdr_open() inside SoapyRTLSDR::SoapyRTLSDR() fails with
+    // "No RTL-SDR devices found!".
+    //
+    // Fix: construct SoapyRTLSDR directly.  rtlsdr_open() becomes the first
+    // libusb operation and WinUSB finds the device without interference.
+    // Out-of-range device indices are handled by rtlsdr_open()'s own error
+    // path, which throws an appropriate exception.
+    return new SoapyRTLSDR(args);
+}
+"""
+
+# ── Apply patches (bottom-up to preserve line indices) ───────────────────────
+# makeRTLSDR appears after findRTLSDR in the file, so patch it first.
+patched_lines = list(lines)
+
+if result_make:
+    patched_lines = patched_lines[:make_sig] + [MAKE_REPLACEMENT] + patched_lines[make_close + 1 :]
+    # Recalculate findRTLSDR indices: the replacement may have different line
+    # count, but findRTLSDR is BEFORE makeRTLSDR so its indices are unchanged.
+
+patched_lines = patched_lines[:find_sig] + [FIND_REPLACEMENT] + patched_lines[find_close + 1 :]
+
 patched = "".join(patched_lines)
 
 with open(SRC, "w", encoding="utf-8") as f:
@@ -175,19 +209,22 @@ for i, line in enumerate(patched.splitlines(), 1):
         kw in line
         for kw in (
             "findRTLSDR",
-            "rtlsdr_get_device_usb_strings",
-            "_rtlsdr_usb_strings_safe",
-            "get_tuner",
-            "get_device_label",
-            "device_index",
+            "makeRTLSDR",
             "rtlsdr_get_device_count",
-            "rtlsdr_get_device_name",
+            "rtlsdr_get_device_usb_strings",
+            "device_index",
+            "new SoapyRTLSDR",
         )
     ):
         print(f"  L{i:4d}: {line}", file=sys.stderr)
 print("=== END ===", file=sys.stderr)
 
 print(
-    f"Replaced findRTLSDR (L{sig_start + 1}–L{body_close + 1}) "
-    f"with WinUSB-compatible minimal implementation."
+    f"Patched findRTLSDR (L{find_sig + 1}–L{find_close + 1}): "
+    f"returns single device_index=0 candidate, no libusb calls."
 )
+if result_make:
+    print(
+        f"Patched makeRTLSDR (L{make_sig + 1}–L{make_close + 1}): "
+        f"removed rtlsdr_get_device_count() bounds check."
+    )
