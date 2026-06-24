@@ -415,8 +415,12 @@ jobs:
           # Use system cmake (NOT conda cmake, which breaks VS detection)
           $CMAKE = "C:\Program Files\CMake\bin\cmake.exe"
 
-          # --- Build Osmocom librtlsdr and install to local prefix ---
-          git clone https://github.com/osmocom/rtl-sdr --depth 1
+          # --- Build librtlsdr and install to local prefix ---
+          # Use RTL-SDR Blog fork: it contains WinUSB-specific fixes that
+          # allow rtlsdr_open() to succeed under the WinUSB driver on Windows.
+          # Osmocom HEAD fails because libusb_get_device_list returns 0 devices
+          # on the first real open attempt under WinUSB.
+          git clone https://github.com/rtlsdrblog/rtl-sdr-blog --depth 1 rtl-sdr
           # conda-forge libusb puts headers in include/libusb-1.0/libusb.h.
           # cmake's FindLibUSB.cmake finds the .lib but may not set INCLUDE_DIRS
           # correctly without pkg-config (not available on Windows runners).
