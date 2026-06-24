@@ -349,38 +349,39 @@ if CTOR_SRC is not None and ctor_content:
     #   3. neither               → throw as before
 
     SERIAL_BLOCK_FIND = (
-        "    //if a serial is not present, then findRTLSDR had zero devices enumerated\n"
-        '    if (args.count("serial") == 0) throw std::runtime_error("No RTL-SDR devices found!");\n'  # noqa: E501
+        "//if a serial is not present, then findRTLSDR had zero devices enumerated\n"
+        'if (args.count("serial") == 0) throw std::runtime_error("No RTL-SDR devices found!");\n'  # noqa: E501
         "\n"
-        '    const auto serial = args.at("serial");\n'
-        "    deviceId = rtlsdr_get_index_by_serial(serial.c_str());\n"
-        '    if (deviceId < 0) throw std::runtime_error("rtlsdr_get_index_by_serial("+serial+") - " + std::to_string(deviceId));\n'  # noqa: E501
+        'const auto serial = args.at("serial");\n'
+        "deviceId = rtlsdr_get_index_by_serial(serial.c_str());\n"
+        'if (deviceId < 0) throw std::runtime_error("rtlsdr_get_index_by_serial("+serial+") - " + std::to_string(deviceId));\n'  # noqa: E501
     )
 
     SERIAL_BLOCK_REPLACE = (
-        "    // WinUSB fix (patched by scripts/patch_soapyrtlsdr_winusb.py):\n"
-        "    // Use device_index from args directly to avoid rtlsdr_get_index_by_serial(),\n"
-        "    // which internally calls rtlsdr_get_device_count()+rtlsdr_get_usb_strings().\n"
-        "    // Those functions perform libusb_init+exit cycles that reset WinUSB backend\n"
-        '    // state, causing the subsequent rtlsdr_open() to fail ("No RTL-SDR devices\n'
-        '    // found!") even when the device is physically present.\n'
-        '    if (args.count("device_index") != 0) {\n'
-        '        deviceId = std::stoi(args.at("device_index"));\n'
-        '    } else if (args.count("serial") != 0) {\n'
-        "        // Fallback for non-WinUSB systems (libusbK / Linux / macOS).\n"
-        '        const auto serial = args.at("serial");\n'
-        "        deviceId = rtlsdr_get_index_by_serial(serial.c_str());\n"
-        '        if (deviceId < 0) throw std::runtime_error("No RTL-SDR device with serial: " + serial);\n'  # noqa: E501
-        "    } else {\n"
-        '        throw std::runtime_error("No RTL-SDR devices found!");\n'
-        "    }\n"
+        "// WinUSB fix (patched by scripts/patch_soapyrtlsdr_winusb.py):\n"
+        "// Use device_index from args directly to avoid rtlsdr_get_index_by_serial(),\n"
+        "// which internally calls rtlsdr_get_device_count()+rtlsdr_get_usb_strings().\n"
+        "// Those functions perform libusb_init+exit cycles that reset WinUSB backend\n"
+        '// state, causing the subsequent rtlsdr_open() to fail ("No RTL-SDR devices\n'
+        '// found!") even when the device is physically present.\n'
+        'if (args.count("device_index") != 0) {\n'
+        '    deviceId = std::stoi(args.at("device_index"));\n'
+        '} else if (args.count("serial") != 0) {\n'
+        "    // Fallback for non-WinUSB systems (libusbK / Linux / macOS).\n"
+        '    const auto serial = args.at("serial");\n'
+        "    deviceId = rtlsdr_get_index_by_serial(serial.c_str());\n"
+        '    if (deviceId < 0) throw std::runtime_error("No RTL-SDR device with serial: " + serial);\n'  # noqa: E501
+        "} else {\n"
+        '    throw std::runtime_error("No RTL-SDR devices found!");\n'
+        "}\n"
     )
 
     if SERIAL_BLOCK_FIND in ctor_patched:
         ctor_patched = ctor_patched.replace(SERIAL_BLOCK_FIND, SERIAL_BLOCK_REPLACE, 1)
         print(
             f"{CTOR_SRC}: replaced serial-check + rtlsdr_get_index_by_serial() with"
-            " direct device_index parse (WinUSB fix)."
+            " direct device_index parse (WinUSB fix).",
+            file=sys.stderr,
         )
     else:
         print(
@@ -389,23 +390,24 @@ if CTOR_SRC is not None and ctor_content:
         )
         # Regex fallback: match the block loosely in case whitespace differs
         serial_block_re = re.compile(
-            r"[ \t]+//if a serial is not present.*?\n"
-            r'[ \t]+if \(args\.count\("serial"\) == 0\) throw[^\n]+\n'
+            r"[ \t]*//if a serial is not present.*?\n"
+            r'[ \t]*if \(args\.count\("serial"\) == 0\) throw[^\n]+\n'
             r"(?:[ \t]*\n)?"
-            r'[ \t]+const auto serial = args\.at\("serial"\);\n'
-            r"[ \t]+deviceId = rtlsdr_get_index_by_serial[^\n]+\n"
-            r"[ \t]+if \(deviceId < 0\) throw[^\n]+\n",
+            r'[ \t]*const auto serial = args\.at\("serial"\);\n'
+            r"[ \t]*deviceId = rtlsdr_get_index_by_serial[^\n]+\n"
+            r"[ \t]*if \(deviceId < 0\) throw[^\n]+\n",
             re.DOTALL,
         )
         ctor_after = serial_block_re.sub(SERIAL_BLOCK_REPLACE, ctor_patched, count=1)
         if ctor_after == ctor_patched:
             print(
-                f"WARNING: {CTOR_SRC} serial-block regex also did not match — skipping",
+                f"ERROR: {CTOR_SRC} serial-block regex also did not match — patch failed",
                 file=sys.stderr,
             )
+            sys.exit(1)
         else:
             ctor_patched = ctor_after
-            print(f"{CTOR_SRC}: replaced serial-block via regex fallback.")
+            print(f"{CTOR_SRC}: replaced serial-block via regex fallback.", file=sys.stderr)
 
     with open(CTOR_SRC, "w", encoding="utf-8") as f:
         f.write(ctor_patched)
