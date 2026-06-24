@@ -300,6 +300,7 @@ else:
 if CTOR_SRC is not None:
     with open(CTOR_SRC, encoding="utf-8", errors="replace") as f:
         ctor_content = f.read()
+    ctor_content = ctor_content.replace("\r\n", "\n")  # normalize CRLF → LF (Windows git clone)
 else:
     ctor_content = ""
 
@@ -409,7 +410,7 @@ if CTOR_SRC is not None and ctor_content:
             ctor_patched = ctor_after
             print(f"{CTOR_SRC}: replaced serial-block via regex fallback.", file=sys.stderr)
 
-    with open(CTOR_SRC, "w", encoding="utf-8") as f:
+    with open(CTOR_SRC, "w", encoding="utf-8", newline="") as f:
         f.write(ctor_patched)
 
     print(f"=== {CTOR_SRC} AFTER patch (rtlsdr_get_device_count lines) ===", file=sys.stderr)
