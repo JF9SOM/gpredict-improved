@@ -184,26 +184,35 @@ def _soapy_rtlsdr_module_diagnostic(soapy_module: object) -> None:
     Both results are logged so the failure point is unambiguous.
     """
     try:
+
+        def _kwargs_str(d: object) -> str:
+            """Convert SoapySDRKwargs (SWIG proxy) to a readable string."""
+            try:
+                return str(soapy_module.KwargsToString(d))  # type: ignore[attr-defined]
+            except Exception:
+                return str(d)
+
         # List ALL drivers SoapySDR knows about in this process.
         all_results = list(soapy_module.Device.enumerate())  # type: ignore[attr-defined]
-        drivers_seen = sorted({str(d.get("driver", "?")) for d in all_results})
-        logger.info(
-            "[RTL-SDR diag] SoapySDR.enumerate() in main process: %d device(s), drivers=%s",
+        all_strs = [_kwargs_str(d) for d in all_results]
+        logger.warning(
+            "[RTL-SDR diag] SoapySDR.enumerate() in main process: %d device(s): %s",
             len(all_results),
-            drivers_seen,
+            all_strs,
         )
         # Now enumerate with driver filter.
         rtl_results = list(soapy_module.Device.enumerate({"driver": "rtlsdr"}))  # type: ignore[attr-defined]
-        logger.info(
+        rtl_strs = [_kwargs_str(r) for r in rtl_results]
+        logger.warning(
             "[RTL-SDR diag] SoapySDR.enumerate(driver=rtlsdr) in main process: %s",
-            rtl_results,
+            rtl_strs,
         )
         if not rtl_results:
             logger.warning(
                 "[RTL-SDR diag] 'rtlsdr' driver NOT found by SoapySDR in main process! "
                 "rtlsdrSupport.dll may have failed to load (missing dependency?). "
-                "All drivers seen: %s",
-                drivers_seen,
+                "All results seen: %s",
+                all_strs,
             )
     except Exception as exc:
         logger.warning("[RTL-SDR diag] SoapySDR module diagnostic failed: %s", exc)
@@ -521,11 +530,12 @@ class SdrDevice:
 
             def _soapy_log_cb(level: int, msg: str) -> None:
                 _soapy_log_msgs.append((level, msg))
-                # Forward errors/warnings to Python logger immediately.
-                if level <= 2:  # SOAPY_SDR_ERROR=1, SOAPY_SDR_WARNING=2
-                    logger.warning("[SoapySDR] %s", msg)
-                else:
-                    logger.debug("[SoapySDR] %s", msg)
+                # Log ALL SoapySDR messages at WARNING so they appear in the log
+                # regardless of the Python log level (DEBUG messages were invisible
+                # before and hid the root cause).
+                # Level meanings: 1=FATAL, 2=CRITICAL, 3=ERROR, 4=WARNING,
+                #                 5=NOTICE, 6=INFO, 7=DEBUG, 8=TRACE
+                logger.warning("[SoapySDR L%d] %s", level, msg)
 
             import contextlib as _contextlib
 
@@ -544,12 +554,20 @@ class SdrDevice:
                         continue
                     try:
                         with _SOAPY_GLOBAL_LOCK:
-                            # Pre-enumerate to see what SoapySDR finds in main process
+                            # Pre-enumerate to see what SoapySDR finds in main process.
+                            # Log Kwargs contents via KwargsToString so we can tell
+                            # whether the patched or original findRTLSDR is running:
+                            # patched has {device_index, driver, label} only;
+                            # original adds {serial, product, manufacturer, tuner}.
                             _pre = list(SoapySDR.Device.enumerate(args))
-                            logger.info(
+                            try:
+                                _pre_str = [SoapySDR.KwargsToString(r) for r in _pre]
+                            except Exception:
+                                _pre_str = [str(r) for r in _pre]
+                            logger.warning(
                                 "[RTL-SDR diag] SoapySDR.enumerate(%s) = %s",
                                 {k: v for k, v in args.items()},
-                                _pre,
+                                _pre_str,
                             )
                             self._dev = SoapySDR.Device(args)
                         self._apply_settings()
@@ -590,6 +608,8 @@ class SdrDevice:
                     "[SoapySDR captured %d log message(s) during open attempts]",
                     len(_soapy_log_msgs),
                 )
+                for _lvl, _msg in _soapy_log_msgs:
+                    logger.warning("[SoapySDR captured msg L%d] %s", _lvl, _msg)
             logger.exception(
                 "Failed to open SDR device %s after %d attempts",
                 self._info.display_name,
