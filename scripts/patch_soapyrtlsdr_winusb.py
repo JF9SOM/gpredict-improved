@@ -1,29 +1,41 @@
 """
-Patch SoapyRTLSDR/Registration.cpp for WinUSB compatibility.
+Patch SoapyRTLSDR source for WinUSB compatibility.
 
 Root cause (confirmed by log analysis):
-  makeRTLSDR() calls rtlsdr_get_device_count() as a bounds check before
-  calling new SoapyRTLSDR(args).  rtlsdr_get_device_count() performs
-  libusb_init(&ctx) + libusb_exit(ctx) with a private libusb context.
-  Under Windows WinUSB, libusb_exit() resets the USB backend handle cache.
-  The subsequent rtlsdr_open() inside the SoapyRTLSDR constructor then calls
-  libusb_init(&dev->ctx) + libusb_get_device_list(), but WinUSB can no longer
-  enumerate the device → "No RTL-SDR devices found!".
-  Under libusbK this is not an issue (kernel-mode filter driver persists).
+  rtlsdr_get_device_count() performs libusb_init(&ctx)+libusb_exit(ctx) with
+  a private libusb context.  Under Windows WinUSB, libusb_exit() resets the
+  USB backend handle cache.  Any subsequent libusb_init() + device enumeration
+  fails to find the device.  Under libusbK a kernel-mode filter driver
+  maintains state independently, so this is not an issue there.
 
-Patches applied (both in Registration.cpp):
+  rtlsdr_get_device_count() is called in THREE places:
+    (a) Registration.cpp  makeRTLSDR()         — bounds check before make
+    (b) SoapyRTLSDR.cpp   SoapyRTLSDR ctor     — bounds check + "no devices" guard
+    (c) Registration.cpp  findRTLSDR()          — device enumeration loop
 
-  1. findRTLSDR  — return a single device_index=0 candidate without calling
-                   any libusb/librtlsdr function.  This also fixes the
-                   "4 phantom entries" in the SDR dropdown.
+  Under WinUSB the call chain for one SoapySDR Device::make() attempt is:
+    1. findRTLSDR (patched: no libusb calls)
+    2. makeRTLSDR (patched: no libusb calls) → new SoapyRTLSDR(args)
+    3. SoapyRTLSDR ctor:
+         SoapySDR_log("Opening RTL-SDR...")    ← first log line
+         rtlsdr_get_device_count()             ← libusb_init+exit, WinUSB broken
+         if (count==0) throw "No RTL-SDR..."  ← FAILS HERE (count now 0)
+         rtlsdr_open(...)                      ← never reached
 
-  2. makeRTLSDR  — skip rtlsdr_get_device_count() entirely.  rtlsdr_open()
-                   inside the SoapyRTLSDR constructor handles out-of-range
-                   indices with its own error path.  With no libusb init/exit
-                   before rtlsdr_open(), WinUSB enumerates the device
-                   successfully.
+Patches applied:
+
+  Registration.cpp
+    1. findRTLSDR  — return a single device_index=0 candidate with no libusb
+                     calls.  Also fixes the "4 phantom entries" in SDR dropdown.
+    2. makeRTLSDR  — skip rtlsdr_get_device_count() bounds check entirely.
+
+  SoapyRTLSDR.cpp
+    3. SoapyRTLSDR ctor — remove the rtlsdr_get_device_count() guard block so
+                          that rtlsdr_open() is the FIRST libusb operation.
+                          WinUSB finds the device successfully.
 """
 
+import re
 import sys
 
 SRC = "SoapyRTLSDR/Registration.cpp"
@@ -228,3 +240,78 @@ if result_make:
         f"Patched makeRTLSDR (L{make_sig + 1}–L{make_close + 1}): "
         f"removed rtlsdr_get_device_count() bounds check."
     )
+
+# ── Patch SoapyRTLSDR.cpp constructor ────────────────────────────────────────
+# The SoapyRTLSDR constructor calls rtlsdr_get_device_count() as a guard
+# before rtlsdr_open().  Under WinUSB, this libusb_init+exit breaks the
+# backend state so rtlsdr_open() then fails with "No RTL-SDR devices found!".
+#
+# We remove two blocks:
+#   (A) int deviceCount = rtlsdr_get_device_count();
+#       if (deviceCount == 0) { throw ...; }
+#
+#   (B) if (deviceIndex >= deviceCount) { throw ...; }
+#
+# The deviceIndex = 0 / args.count("device_index") block is kept intact.
+
+CTOR_SRC = "SoapyRTLSDR/SoapyRTLSDR.cpp"
+with open(CTOR_SRC, encoding="utf-8", errors="replace") as f:
+    ctor_content = f.read()
+
+print("=== SoapyRTLSDR.cpp BEFORE patch (rtlsdr_get_device_count lines) ===", file=sys.stderr)
+for i, line in enumerate(ctor_content.splitlines(), 1):
+    if "rtlsdr_get_device_count" in line or "No RTL-SDR" in line or "device_index" in line.lower():
+        print(f"  L{i:4d}: {line}", file=sys.stderr)
+print("=== END ===", file=sys.stderr)
+
+ctor_patched = ctor_content
+
+# Block A: remove "int deviceCount = rtlsdr_get_device_count();" and the
+# immediately following "if (deviceCount == 0) { throw ...; }" block.
+# Pattern is flexible about whitespace / brace placement.
+block_a = re.compile(
+    r"[ \t]+int deviceCount = rtlsdr_get_device_count\(\);\n"
+    r"(?:[ \t]*\n)*"  # optional blank lines between statements
+    r"[ \t]+if \(deviceCount == 0\) \{[^}]*\}\n",
+    re.DOTALL,
+)
+ctor_after_a = block_a.sub(
+    "    // WinUSB fix: removed rtlsdr_get_device_count() guard"
+    " (see scripts/patch_soapyrtlsdr_winusb.py)\n",
+    ctor_patched,
+    count=1,
+)
+if ctor_after_a == ctor_patched:
+    print(
+        "WARNING: SoapyRTLSDR.cpp block-A (deviceCount==0 guard) regex did not match"
+        " — skipping that removal",
+        file=sys.stderr,
+    )
+else:
+    ctor_patched = ctor_after_a
+    print("SoapyRTLSDR.cpp: removed rtlsdr_get_device_count()==0 guard (block A).")
+
+# Block B: remove "if (deviceIndex >= deviceCount) { throw ...; }"
+block_b = re.compile(
+    r"[ \t]+if \(deviceIndex >= deviceCount\) \{[^}]*\}\n",
+    re.DOTALL,
+)
+ctor_after_b = block_b.sub("", ctor_patched, count=1)
+if ctor_after_b == ctor_patched:
+    print(
+        "WARNING: SoapyRTLSDR.cpp block-B (deviceIndex>=deviceCount) regex did not match"
+        " — skipping that removal",
+        file=sys.stderr,
+    )
+else:
+    ctor_patched = ctor_after_b
+    print("SoapyRTLSDR.cpp: removed deviceIndex>=deviceCount bounds check (block B).")
+
+with open(CTOR_SRC, "w", encoding="utf-8") as f:
+    f.write(ctor_patched)
+
+print("=== SoapyRTLSDR.cpp AFTER patch (rtlsdr_get_device_count lines) ===", file=sys.stderr)
+for i, line in enumerate(ctor_patched.splitlines(), 1):
+    if "rtlsdr_get_device_count" in line or "No RTL-SDR" in line or "device_index" in line.lower():
+        print(f"  L{i:4d}: {line}", file=sys.stderr)
+print("=== END ===", file=sys.stderr)
