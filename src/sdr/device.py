@@ -166,23 +166,12 @@ def _rtlsdr_ctypes_diagnostic() -> None:
         except Exception as exc:
             logger.warning("[RTL-SDR diag] rtlsdr_get_device_name() call failed: %s", exc)
 
-        # Try opening the device directly via ctypes to see if rtlsdr_open() itself works.
-        try:
-            open_fn = lib.rtlsdr_open
-            open_fn.restype = ctypes.c_int
-            open_fn.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint32]
-            dev_ptr = ctypes.c_void_p(None)
-            r = open_fn(ctypes.byref(dev_ptr), ctypes.c_uint32(0))
-            logger.info("[RTL-SDR diag] rtlsdr_open(0) via ctypes returned %d (dev=%s)", r, dev_ptr)
-            if r == 0 and dev_ptr.value:
-                # Close it immediately so SoapySDR can open it
-                close_fn = lib.rtlsdr_close
-                close_fn.restype = ctypes.c_int
-                close_fn.argtypes = [ctypes.c_void_p]
-                close_fn(dev_ptr)
-                logger.info("[RTL-SDR diag] rtlsdr_close() called after successful open")
-        except Exception as exc:
-            logger.warning("[RTL-SDR diag] rtlsdr_open() ctypes call failed: %s", exc)
+        # NOTE: Do NOT call rtlsdr_open()+rtlsdr_close() here.
+        # rtlsdr_close() calls libusb_exit() which resets WinUSB backend state;
+        # any subsequent rtlsdr_open() (from SoapyRTLSDR) then fails with
+        # "No RTL-SDR devices found!" even though the device is physically present.
+        # (Confirmed by v0.1.53 diagnostic: ctypes open succeeded but SoapySDR
+        # always failed because our close() broke WinUSB before SoapySDR tried.)
 
 
 class SdrDevice:

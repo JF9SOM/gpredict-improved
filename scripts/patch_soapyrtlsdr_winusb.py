@@ -297,6 +297,13 @@ for i, line in enumerate(ctor_content.splitlines(), 1):
         print(f"  L{i:4d}: {line}", file=sys.stderr)
 print("=== END ===", file=sys.stderr)
 
+# Dump the full constructor source so we can see what runs after rtlsdr_open().
+# This is essential to understand the "No RTL-SDR devices found!" failure path.
+print(f"=== {CTOR_SRC or 'constructor'} FULL CONTENT ===", file=sys.stderr)
+for i, line in enumerate(ctor_content.splitlines(), 1):
+    print(f"  {i:4d}: {line}", file=sys.stderr)
+print("=== END FULL CONTENT ===", file=sys.stderr)
+
 if CTOR_SRC is not None and ctor_content:
     ctor_patched = ctor_content
 
