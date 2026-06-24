@@ -174,6 +174,41 @@ def _rtlsdr_ctypes_diagnostic() -> None:
         # always failed because our close() broke WinUSB before SoapySDR tried.)
 
 
+def _soapy_rtlsdr_module_diagnostic(soapy_module: object) -> None:
+    """Check whether SoapySDR has the 'rtlsdr' driver registered in the main process.
+
+    If rtlsdrSupport.dll failed to load (e.g. missing dependency), SoapySDR
+    won't have the 'rtlsdr' factory registered and will throw "no match" from
+    Device::make().  This diagnostic runs enumerate() with no filters to list
+    all known drivers, then with driver='rtlsdr' to confirm RTL-SDR is visible.
+    Both results are logged so the failure point is unambiguous.
+    """
+    try:
+        # List ALL drivers SoapySDR knows about in this process.
+        all_results = list(soapy_module.Device.enumerate())  # type: ignore[attr-defined]
+        drivers_seen = sorted({str(d.get("driver", "?")) for d in all_results})
+        logger.info(
+            "[RTL-SDR diag] SoapySDR.enumerate() in main process: %d device(s), drivers=%s",
+            len(all_results),
+            drivers_seen,
+        )
+        # Now enumerate with driver filter.
+        rtl_results = list(soapy_module.Device.enumerate({"driver": "rtlsdr"}))  # type: ignore[attr-defined]
+        logger.info(
+            "[RTL-SDR diag] SoapySDR.enumerate(driver=rtlsdr) in main process: %s",
+            rtl_results,
+        )
+        if not rtl_results:
+            logger.warning(
+                "[RTL-SDR diag] 'rtlsdr' driver NOT found by SoapySDR in main process! "
+                "rtlsdrSupport.dll may have failed to load (missing dependency?). "
+                "All drivers seen: %s",
+                drivers_seen,
+            )
+    except Exception as exc:
+        logger.warning("[RTL-SDR diag] SoapySDR module diagnostic failed: %s", exc)
+
+
 class SdrDevice:
     """
     Wrapper around a SoapySDR.Device.
@@ -466,6 +501,38 @@ class SdrDevice:
         with self._lock:
             if self._dev is not None:
                 return True
+
+            # ── SoapySDR module diagnostic (Windows/RTL-SDR only) ─────────────
+            # Verify that rtlsdrSupport.dll was actually loaded into the MAIN
+            # process by SoapySDR's plugin loader.  If the DLL fails to load
+            # (e.g. missing dependency: rtlsdr.dll / libusb-1.0.dll), SoapySDR
+            # silently returns empty results and make() throws "no match".
+            # We run this once per open() call so the log contains a definitive
+            # answer about plugin registration.
+            if sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr":
+                _soapy_rtlsdr_module_diagnostic(SoapySDR)
+            # ──────────────────────────────────────────────────────────────────
+
+            # ── SoapySDR log handler: capture C++ error messages ──────────────
+            # SoapySDR logs DLL load failures and constructor exceptions via its
+            # internal log system.  Install a Python handler so these messages
+            # appear in our application log (especially SOAPY_SDR_ERROR level).
+            _soapy_log_msgs: list[tuple[int, str]] = []
+
+            def _soapy_log_cb(level: int, msg: str) -> None:
+                _soapy_log_msgs.append((level, msg))
+                # Forward errors/warnings to Python logger immediately.
+                if level <= 2:  # SOAPY_SDR_ERROR=1, SOAPY_SDR_WARNING=2
+                    logger.warning("[SoapySDR] %s", msg)
+                else:
+                    logger.debug("[SoapySDR] %s", msg)
+
+            import contextlib as _contextlib
+
+            with _contextlib.suppress(Exception):
+                SoapySDR.registerLogHandler(_soapy_log_cb)
+            # ──────────────────────────────────────────────────────────────────
+
             last_exc: Exception | None = None
             for attempt in range(1, _MAX_ATTEMPTS + 1):
                 for args_label, args in [
@@ -477,6 +544,13 @@ class SdrDevice:
                         continue
                     try:
                         with _SOAPY_GLOBAL_LOCK:
+                            # Pre-enumerate to see what SoapySDR finds in main process
+                            _pre = list(SoapySDR.Device.enumerate(args))
+                            logger.info(
+                                "[RTL-SDR diag] SoapySDR.enumerate(%s) = %s",
+                                {k: v for k, v in args.items()},
+                                _pre,
+                            )
                             self._dev = SoapySDR.Device(args)
                         self._apply_settings()
                         logger.info(
@@ -490,7 +564,7 @@ class SdrDevice:
                         last_exc = exc
                         self._dev = None
                         logger.warning(
-                            "SDR open attempt %d/%d (%s) failed for %s: %s",
+                            "SDR open attempt %d/%d (%s) failed for %s: %r",
                             attempt,
                             _MAX_ATTEMPTS,
                             args_label,
@@ -506,6 +580,16 @@ class SdrDevice:
                         _RETRY_DELAY,
                     )
                     time.sleep(_RETRY_DELAY)
+            # Restore default SoapySDR log handler.
+            import contextlib as _contextlib
+
+            with _contextlib.suppress(Exception):
+                SoapySDR.registerLogHandler(None)
+            if _soapy_log_msgs:
+                logger.warning(
+                    "[SoapySDR captured %d log message(s) during open attempts]",
+                    len(_soapy_log_msgs),
+                )
             logger.exception(
                 "Failed to open SDR device %s after %d attempts",
                 self._info.display_name,
