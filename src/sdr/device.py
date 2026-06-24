@@ -179,9 +179,15 @@ def _soapy_rtlsdr_module_diagnostic(soapy_module: object) -> None:
 
     If rtlsdrSupport.dll failed to load (e.g. missing dependency), SoapySDR
     won't have the 'rtlsdr' factory registered and will throw "no match" from
-    Device::make().  This diagnostic runs enumerate() with no filters to list
-    all known drivers, then with driver='rtlsdr' to confirm RTL-SDR is visible.
-    Both results are logged so the failure point is unambiguous.
+    Device::make().  This diagnostic enumerates with driver='rtlsdr' to confirm
+    RTL-SDR is visible in the main process.
+
+    IMPORTANT: do NOT call Device.enumerate() with no args here.  An unfiltered
+    enumerate uses std::launch::async so SoapySDR spawns a background thread that
+    calls rtlsdr_get_device_count() (libusb_init+exit).  Under WinUSB that
+    concurrent libusb_exit() corrupts the USB backend state before our main
+    Device::make() call can run rtlsdr_open().  Enumerating with driver='rtlsdr'
+    uses std::launch::deferred (synchronous) and avoids the race.
     """
     try:
 
@@ -192,15 +198,9 @@ def _soapy_rtlsdr_module_diagnostic(soapy_module: object) -> None:
             except Exception:
                 return str(d)
 
-        # List ALL drivers SoapySDR knows about in this process.
-        all_results = list(soapy_module.Device.enumerate())  # type: ignore[attr-defined]
-        all_strs = [_kwargs_str(d) for d in all_results]
-        logger.warning(
-            "[RTL-SDR diag] SoapySDR.enumerate() in main process: %d device(s): %s",
-            len(all_results),
-            all_strs,
-        )
-        # Now enumerate with driver filter.
+        # Enumerate with driver filter only (deferred/synchronous — no background thread).
+        # This tells us whether rtlsdrSupport.dll was loaded without triggering
+        # concurrent libusb_init+exit that would break WinUSB state.
         rtl_results = list(soapy_module.Device.enumerate({"driver": "rtlsdr"}))  # type: ignore[attr-defined]
         rtl_strs = [_kwargs_str(r) for r in rtl_results]
         logger.warning(
@@ -210,9 +210,7 @@ def _soapy_rtlsdr_module_diagnostic(soapy_module: object) -> None:
         if not rtl_results:
             logger.warning(
                 "[RTL-SDR diag] 'rtlsdr' driver NOT found by SoapySDR in main process! "
-                "rtlsdrSupport.dll may have failed to load (missing dependency?). "
-                "All results seen: %s",
-                all_strs,
+                "rtlsdrSupport.dll may have failed to load (missing dependency?)."
             )
     except Exception as exc:
         logger.warning("[RTL-SDR diag] SoapySDR module diagnostic failed: %s", exc)
@@ -472,12 +470,22 @@ class SdrDevice:
     def open(self) -> bool:
         """Open the device. Returns True on success.
 
-        On Windows, librtlsdr may fail to read USB descriptor strings via
-        WinUSB, causing Device.make() to reject the serial-number-based args
-        with "no match".  We therefore try two arg sets per attempt:
-          1. Full args from enumerate() (includes serial, label, …)
-          2. Minimal args {driver: <driver>} — lets SoapySDR pick device 0
-        Each pair is tried up to 3 times with a short delay.
+        On Windows with WinUSB, each call to rtlsdr_get_device_count() performs
+        a libusb_init()+libusb_exit() that resets the USB backend state.  Multiple
+        such calls before rtlsdr_open() (e.g. from concurrent async enumerate threads
+        or redundant pre-enumerate calls) can corrupt the WinUSB handle cache so that
+        rtlsdr_open() fails with "No RTL-SDR devices found!" or "usb_open error -3".
+
+        To avoid this we do NOT pre-enumerate before Device::make().  The single
+        internal enumerate inside Device::make() (one deferred/synchronous call to
+        findRTLSDR → rtlsdr_get_device_count()) is the only libusb operation before
+        rtlsdr_open(), which is sufficient for WinUSB to succeed.
+
+        We try three arg sets per attempt:
+          1. Full args from enumerate() (device_index, driver, label)
+          2. Minimal args {driver, device_index}
+          3. Driver-only args {driver} — last-resort fallback
+        Each set is tried up to 3 times with a short delay.
         """
         import SoapySDR
 
@@ -554,21 +562,15 @@ class SdrDevice:
                         continue
                     try:
                         with _SOAPY_GLOBAL_LOCK:
-                            # Pre-enumerate to see what SoapySDR finds in main process.
-                            # Log Kwargs contents via KwargsToString so we can tell
-                            # whether the patched or original findRTLSDR is running:
-                            # patched has {device_index, driver, label} only;
-                            # original adds {serial, product, manufacturer, tuner}.
-                            _pre = list(SoapySDR.Device.enumerate(args))
-                            try:
-                                _pre_str = [SoapySDR.KwargsToString(r) for r in _pre]
-                            except Exception:
-                                _pre_str = [str(r) for r in _pre]
-                            logger.warning(
-                                "[RTL-SDR diag] SoapySDR.enumerate(%s) = %s",
-                                {k: v for k, v in args.items()},
-                                _pre_str,
-                            )
+                            # Do NOT call Device.enumerate() here before Device().
+                            # Under WinUSB each enumerate(driver=rtlsdr) triggers
+                            # one deferred findRTLSDR → rtlsdr_get_device_count()
+                            # (libusb_init+exit) in the calling thread.  Device::make()
+                            # internally calls enumerate() once more, so a pre-enumerate
+                            # here would produce two libusb_init+exit cycles before
+                            # rtlsdr_open(), corrupting WinUSB backend state.
+                            # Device::make()'s single internal enumerate is the only
+                            # allowed libusb call before rtlsdr_open().
                             self._dev = SoapySDR.Device(args)
                         self._apply_settings()
                         logger.info(

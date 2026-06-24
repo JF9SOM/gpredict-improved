@@ -1,38 +1,52 @@
 """
 Patch SoapyRTLSDR source for WinUSB compatibility.
 
-Root cause (confirmed by log analysis):
+Root cause (confirmed by v0.1.57 log analysis):
   rtlsdr_get_device_count() performs libusb_init(&ctx)+libusb_exit(ctx) with
   a private libusb context.  Under Windows WinUSB, libusb_exit() resets the
-  USB backend handle cache.  Any subsequent libusb_init() + device enumeration
-  fails to find the device.  Under libusbK a kernel-mode filter driver
-  maintains state independently, so this is not an issue there.
+  USB backend handle cache so subsequent rtlsdr_open() calls can fail.
 
-  rtlsdr_get_device_count() is called in THREE places:
-    (a) Registration.cpp  makeRTLSDR()         — bounds check before make
-    (b) SoapyRTLSDR.cpp   SoapyRTLSDR ctor     — bounds check + "no devices" guard
-    (c) Registration.cpp  findRTLSDR()          — device enumeration loop
+  A SINGLE rtlsdr_get_device_count() call before rtlsdr_open() is tolerated by
+  WinUSB (confirmed by v0.1.53 ctypes diagnostic).  The problem arises when
+  MULTIPLE libusb_init+exit cycles occur before rtlsdr_open():
 
-  Under WinUSB the call chain for one SoapySDR Device::make() attempt is:
-    1. findRTLSDR (patched: no libusb calls)
-    2. makeRTLSDR (patched: no libusb calls) → new SoapyRTLSDR(args)
-    3. SoapyRTLSDR ctor:
-         SoapySDR_log("Opening RTL-SDR...")    ← first log line
-         rtlsdr_get_device_count()             ← libusb_init+exit, WinUSB broken
-         if (count==0) throw "No RTL-SDR..."  ← FAILS HERE (count now 0)
-         rtlsdr_open(...)                      ← never reached
+    - SoapySDR::Device::enumerate() called with no driver filter uses
+      std::launch::async, spawning a background thread that runs findRTLSDR
+      → rtlsdr_get_device_count() CONCURRENTLY with the main open attempt.
+    - makeRTLSDR() in the original source calls rtlsdr_get_device_count() again.
+    - The SoapyRTLSDR constructor calls rtlsdr_get_device_count() again.
+
+  Multiple concurrent/sequential libusb_init+exit cycles corrupt WinUSB
+  backend state so rtlsdr_open() fails with "usb_open error -3" or
+  "No RTL-SDR devices found!".
 
 Patches applied:
 
   Registration.cpp
-    1. findRTLSDR  — return a single device_index=0 candidate with no libusb
-                     calls.  Also fixes the "4 phantom entries" in SDR dropdown.
-    2. makeRTLSDR  — skip rtlsdr_get_device_count() bounds check entirely.
+    1. findRTLSDR  — return device_index-keyed results (no serial/product/
+                     manufacturer strings that WinUSB cannot read).  Still calls
+                     rtlsdr_get_device_count() ONCE for correct plug-detection.
+                     This single call is the ONLY libusb operation before
+                     rtlsdr_open() when Device::make() is invoked correctly.
+    2. makeRTLSDR  — skip the extra rtlsdr_get_device_count() bounds check.
 
-  SoapyRTLSDR.cpp
-    3. SoapyRTLSDR ctor — remove the rtlsdr_get_device_count() guard block so
-                          that rtlsdr_open() is the FIRST libusb operation.
-                          WinUSB finds the device successfully.
+  Settings.cpp (SoapyRTLSDR constructor)
+    3. Replace serial-based device lookup with device_index-based lookup.
+       The original constructor throws "No RTL-SDR devices found!" when no
+       "serial" key is present in args (our findRTLSDR doesn't provide one
+       because WinUSB cannot read USB descriptor strings).  With this patch
+       the constructor uses args["device_index"] directly and calls rtlsdr_open()
+       without any intermediate libusb calls.
+
+Python-side requirement (src/sdr/device.py):
+  - Do NOT call Device.enumerate() with no driver filter before Device::make().
+    An unfiltered enumerate launches findRTLSDR asynchronously (background thread)
+    which races with the main Device::make() enumerate, causing concurrent
+    libusb_init+exit and WinUSB corruption.
+  - Do NOT pre-enumerate with driver=rtlsdr inside the Device::make() call either;
+    that adds one more libusb_init+exit cycle before rtlsdr_open().
+  Device::make() calls enumerate() exactly once internally (deferred/synchronous)
+  which is the correct single libusb_init+exit that WinUSB tolerates.
 """
 
 import os
