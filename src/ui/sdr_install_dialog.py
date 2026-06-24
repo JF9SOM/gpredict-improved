@@ -99,14 +99,19 @@ class _EnumWorker(QObject):
 
     def run(self) -> None:
         from sdr.device import SdrDevice as _SdrDevice
-        from sdr.device import _enumerate_cache
 
-        # Never call SoapySDR.Device.enumerate() from here.
-        # On Windows, calling enumerate() can crash the process (segfault in
-        # the native DLL loader).  Instead, use the process-level cache
-        # populated by Rig Settings.  If the cache is empty (Rig Settings was
-        # never opened this session) we just show USB-detected devices only.
-        soapy: list[SdrDeviceInfo] = list(_enumerate_cache) if _enumerate_cache is not None else []
+        # Run a real enumerate so Rescan always reflects current state.
+        # On Windows we use the subprocess path (same as Rig Settings) to
+        # avoid segfaults in the native DLL loader.  On other platforms we
+        # call enumerate() directly.  force=True bypasses the process-level
+        # cache so the result is always fresh.
+        try:
+            soapy: list[SdrDeviceInfo] = _SdrDevice.enumerate(force=True)
+        except Exception:
+            logger.exception("SDR install dialog: SoapySDR enumerate failed")
+            from sdr.device import _enumerate_cache
+
+            soapy = list(_enumerate_cache) if _enumerate_cache is not None else []
         try:
             usb = _SdrDevice.enumerate_usb()
         except Exception:
