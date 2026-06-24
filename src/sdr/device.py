@@ -95,6 +95,96 @@ _SOAPY_GLOBAL_LOCK: threading.Lock = threading.Lock()
 _enumerate_cache: list[SdrDeviceInfo] | None = None
 
 
+def _rtlsdr_ctypes_diagnostic() -> None:
+    """Call rtlsdr_get_device_count() via ctypes and log the result.
+
+    This runs BEFORE SoapySDR.Device() so we can confirm whether librtlsdr.dll
+    itself can see the device through WinUSB at the Python level.  If count > 0
+    here but SoapySDR still fails, the problem is inside SoapyRTLSDR's C++ code.
+    If count == 0 here, libusb/WinUSB is the problem regardless of SoapyRTLSDR patches.
+    """
+    import ctypes
+    import ctypes.util
+    import os
+    from pathlib import Path as _Path
+
+    # Locate rtlsdr.dll — check bundle dirs first, then system PATH.
+    search_dirs: list[str] = []
+    if getattr(sys, "frozen", False):
+        search_dirs.append(sys._MEIPASS)  # type: ignore[attr-defined]
+    for env_var in ("SOAPY_SDR_ROOT", "SOAPY_SDR_PLUGIN_PATH"):
+        val = os.environ.get(env_var, "")
+        if val:
+            search_dirs.append(str(_Path(val).parent))
+    # Also check parent of soapy_modules dir that we set via env
+    plugin_path = os.environ.get("SOAPY_SDR_PLUGIN_PATH", "")
+    if plugin_path:
+        search_dirs.append(str(_Path(plugin_path).parent.parent / "bin"))
+
+    dll_path: str | None = None
+    for d in search_dirs:
+        candidate = _Path(d) / "rtlsdr.dll"
+        if candidate.exists():
+            dll_path = str(candidate)
+            break
+    if dll_path is None:
+        # Try ctypes.util.find_library as last resort
+        found = ctypes.util.find_library("rtlsdr")
+        if found:
+            dll_path = found
+
+    logger.info("[RTL-SDR diag] rtlsdr.dll search dirs: %s", search_dirs)
+    logger.info("[RTL-SDR diag] rtlsdr.dll resolved path: %s", dll_path)
+
+    if dll_path is None:
+        logger.warning("[RTL-SDR diag] rtlsdr.dll not found — cannot run ctypes diagnostic")
+        return
+
+    try:
+        lib = ctypes.CDLL(dll_path)
+    except OSError as exc:
+        logger.warning("[RTL-SDR diag] Failed to load rtlsdr.dll via ctypes: %s", exc)
+        return
+
+    try:
+        get_count = lib.rtlsdr_get_device_count
+        get_count.restype = ctypes.c_uint32
+        get_count.argtypes = []
+        count = get_count()
+        logger.info("[RTL-SDR diag] rtlsdr_get_device_count() via ctypes = %d", count)
+    except Exception as exc:
+        logger.warning("[RTL-SDR diag] rtlsdr_get_device_count() call failed: %s", exc)
+        return
+
+    if count > 0:
+        try:
+            get_name = lib.rtlsdr_get_device_name
+            get_name.restype = ctypes.c_char_p
+            get_name.argtypes = [ctypes.c_uint32]
+            name = get_name(0)
+            logger.info("[RTL-SDR diag] rtlsdr_get_device_name(0) = %s", name)
+        except Exception as exc:
+            logger.warning("[RTL-SDR diag] rtlsdr_get_device_name() call failed: %s", exc)
+
+        # Try opening the device directly via ctypes to see if rtlsdr_open() itself works.
+        try:
+            open_fn = lib.rtlsdr_open
+            open_fn.restype = ctypes.c_int
+            open_fn.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint32]
+            dev_ptr = ctypes.c_void_p(None)
+            r = open_fn(ctypes.byref(dev_ptr), ctypes.c_uint32(0))
+            logger.info("[RTL-SDR diag] rtlsdr_open(0) via ctypes returned %d (dev=%s)", r, dev_ptr)
+            if r == 0 and dev_ptr.value:
+                # Close it immediately so SoapySDR can open it
+                close_fn = lib.rtlsdr_close
+                close_fn.restype = ctypes.c_int
+                close_fn.argtypes = [ctypes.c_void_p]
+                close_fn(dev_ptr)
+                logger.info("[RTL-SDR diag] rtlsdr_close() called after successful open")
+        except Exception as exc:
+            logger.warning("[RTL-SDR diag] rtlsdr_open() ctypes call failed: %s", exc)
+
+
 class SdrDevice:
     """
     Wrapper around a SoapySDR.Device.
@@ -357,6 +447,14 @@ class SdrDevice:
         Each pair is tried up to 3 times with a short delay.
         """
         import SoapySDR
+
+        # ── Windows / RTL-SDR diagnostic ──────────────────────────────────
+        # Log rtlsdr_get_device_count() via ctypes BEFORE calling SoapySDR.
+        # This tells us whether librtlsdr + WinUSB can see the device at the
+        # Python level, independently of SoapyRTLSDR's C++ code.
+        if sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr":
+            _rtlsdr_ctypes_diagnostic()
+        # ──────────────────────────────────────────────────────────────────
 
         _MAX_ATTEMPTS = 3
         _RETRY_DELAY = 0.6  # seconds
