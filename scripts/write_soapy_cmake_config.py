@@ -65,23 +65,30 @@ def main() -> int:
         "# which is absent from the Python-binding conda package.\n"
         "# Define a minimal version that is sufficient for SoapyRTLSDR's\n"
         "# CMakeLists.txt to compile rtlsdrSupport.dll.\n"
+        "# SoapyRTLSDR's CMakeLists.txt calls SOAPY_SDR_MODULE_UTIL with TARGET=,\n"
+        "# not NAME=.  The real SoapySDRUtil.cmake also uses TARGET.\n"
         "macro(SOAPY_SDR_MODULE_UTIL)\n"
         "  cmake_parse_arguments(MODULE\n"
         '    ""\n'
-        '    "NAME;DESTINATION"\n'
+        '    "TARGET;NAME;DESTINATION"\n'
         '    "SOURCES;LIBRARIES;REGISTRY"\n'
         "    ${ARGN})\n"
-        "  add_library(${MODULE_NAME} MODULE ${MODULE_SOURCES})\n"
-        "  target_link_libraries(${MODULE_NAME} PRIVATE\n"
+        "  if(MODULE_TARGET)\n"
+        "    set(_soapy_mod_name ${MODULE_TARGET})\n"
+        "  else()\n"
+        "    set(_soapy_mod_name ${MODULE_NAME})\n"
+        "  endif()\n"
+        "  add_library(${_soapy_mod_name} MODULE ${MODULE_SOURCES})\n"
+        "  target_link_libraries(${_soapy_mod_name} PRIVATE\n"
         "    SoapySDR::SoapySDR ${MODULE_LIBRARIES})\n"
-        "  set_target_properties(${MODULE_NAME} PROPERTIES\n"
+        "  set_target_properties(${_soapy_mod_name} PROPERTIES\n"
         '    DEBUG_POSTFIX ""\n'
         '    PREFIX "")\n'
         "  if(NOT MODULE_DESTINATION)\n"
         "    set(MODULE_DESTINATION\n"
         '      "lib/SoapySDR/modules${SOAPY_SDR_ABI_VERSION}")\n'
         "  endif()\n"
-        "  install(TARGETS ${MODULE_NAME}\n"
+        "  install(TARGETS ${_soapy_mod_name}\n"
         "    DESTINATION ${MODULE_DESTINATION})\n"
         "endmacro()\n"
     )
