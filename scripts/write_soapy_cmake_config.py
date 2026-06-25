@@ -60,6 +60,30 @@ def main() -> int:
         f'    INTERFACE_INCLUDE_DIRECTORIES "{inc}"\n'
         "  )\n"
         "endif()\n"
+        "\n"
+        "# SOAPY_SDR_MODULE_UTIL is normally provided by SoapySDRUtil.cmake\n"
+        "# which is absent from the Python-binding conda package.\n"
+        "# Define a minimal version that is sufficient for SoapyRTLSDR's\n"
+        "# CMakeLists.txt to compile rtlsdrSupport.dll.\n"
+        "macro(SOAPY_SDR_MODULE_UTIL)\n"
+        "  cmake_parse_arguments(MODULE\n"
+        '    ""\n'
+        '    "NAME;DESTINATION"\n'
+        '    "SOURCES;LIBRARIES;REGISTRY"\n'
+        "    ${ARGN})\n"
+        "  add_library(${MODULE_NAME} MODULE ${MODULE_SOURCES})\n"
+        "  target_link_libraries(${MODULE_NAME} PRIVATE\n"
+        "    SoapySDR::SoapySDR ${MODULE_LIBRARIES})\n"
+        "  set_target_properties(${MODULE_NAME} PROPERTIES\n"
+        '    DEBUG_POSTFIX ""\n'
+        '    PREFIX "")\n'
+        "  if(NOT MODULE_DESTINATION)\n"
+        "    set(MODULE_DESTINATION\n"
+        '      "lib/SoapySDR/modules${SOAPY_SDR_ABI_VERSION}")\n'
+        "  endif()\n"
+        "  install(TARGETS ${MODULE_NAME}\n"
+        "    DESTINATION ${MODULE_DESTINATION})\n"
+        "endmacro()\n"
     )
 
     out = cmake_dir / "SoapySDRConfig.cmake"
