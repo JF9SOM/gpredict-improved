@@ -28,6 +28,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import logging
+import queue
 import sys
 import threading
 import time
@@ -134,6 +135,32 @@ def _find_rtlsdr_dll() -> str | None:
     return found
 
 
+def _find_hackrf_dll() -> str | None:
+    """Locate hackrf.dll on Windows, returning the full path or None."""
+    import os as _os
+
+    search_dirs: list[str] = []
+    if getattr(sys, "frozen", False):
+        search_dirs.append(sys._MEIPASS)  # type: ignore[attr-defined]
+    for env_var in ("SOAPY_SDR_ROOT", "SOAPY_SDR_PLUGIN_PATH"):
+        val = _os.environ.get(env_var, "")
+        if val:
+            search_dirs.append(str(Path(val).parent))
+    plugin_path = _os.environ.get("SOAPY_SDR_PLUGIN_PATH", "")
+    if plugin_path:
+        search_dirs.append(str(Path(plugin_path).parent.parent / "bin"))
+
+    logger.info("[HackRF direct] hackrf.dll search dirs: %s", search_dirs)
+    for d in search_dirs:
+        candidate = Path(d) / "hackrf.dll"
+        if candidate.exists():
+            logger.info("[HackRF direct] hackrf.dll found: %s", candidate)
+            return str(candidate)
+    found = ctypes.util.find_library("hackrf")
+    logger.info("[HackRF direct] hackrf.dll search result: %s", found)
+    return found
+
+
 def _rtlsdr_ctypes_diagnostic() -> None:
     """Call rtlsdr_get_device_count() via ctypes and log the result.
 
@@ -225,8 +252,31 @@ def _soapy_rtlsdr_module_diagnostic(soapy_module: object) -> None:
 
 
 # ---------------------------------------------------------------------------
-# RTL-SDR ctypes direct device — duck-type compatible with SoapySDR.Device
+# RTL-SDR / HackRF ctypes direct devices — duck-type compatible with SoapySDR.Device
+#
+# On Windows, SoapySDR::Device::make() fails for both RTL-SDR and HackRF with
+# "no match" because multiple hackrf_init()+hackrf_exit() / libusb_init()+exit()
+# calls during SoapySDR's async enumerate corrupt the WinUSB backend handle cache.
+# These classes call librtlsdr.dll / hackrf.dll directly via ctypes, making exactly
+# ONE init call at open time and holding the context open until close, so WinUSB
+# state is never corrupted.
 # ---------------------------------------------------------------------------
+
+
+class _HackRfTransfer(ctypes.Structure):
+    """hackrf_transfer struct layout from libhackrf/hackrf.h (64-bit)."""
+
+    _fields_ = [
+        ("device", ctypes.c_void_p),
+        ("buffer", ctypes.c_void_p),  # uint8_t* — accessed via ctypes.cast in callback
+        ("buffer_length", ctypes.c_int),
+        ("valid_length", ctypes.c_int),
+        ("rx_ctx", ctypes.c_void_p),
+        ("tx_ctx", ctypes.c_void_p),
+    ]
+
+
+_HACKRF_CB_TYPE = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(_HackRfTransfer))
 
 
 class _SrResult:
@@ -401,6 +451,251 @@ class RtlSdrDirectDevice:
 
     def getGainRange(self, direction: int, channel: int) -> _RangeResult:
         return _RangeResult(0.0, 49.6)
+
+
+# ---------------------------------------------------------------------------
+# HackRF ctypes direct device — duck-type compatible with SoapySDR.Device
+# ---------------------------------------------------------------------------
+
+
+class HackRfDirectDevice:
+    """ctypes-based HackRF device for Windows, bypassing SoapySDR.Device::make().
+
+    SoapyHackRF's Device::make() fails on Windows with "no match" because
+    multiple hackrf_init()+hackrf_exit() calls during SoapySDR's async enumerate
+    corrupt the WinUSB backend handle cache, causing the subsequent hackrf_open()
+    to fail with "Could not Open HackRF Device".
+
+    This class calls hackrf.dll directly via ctypes: one hackrf_init() at open
+    time, the context held open until close_device(), so WinUSB state is never
+    corrupted.  RX uses hackrf_start_rx() with a ctypes CFUNCTYPE callback that
+    enqueues numpy chunks; readStream() drains the queue.
+
+    Used only on Windows + driver=="hackrf".  All other SDR devices and
+    Linux/macOS continue to use the SoapySDR path.
+    """
+
+    def __init__(self, serial: str, lib: ctypes.CDLL) -> None:
+        self._serial = serial  # empty string → open first available device
+        self._lib = lib
+        self._handle: ctypes.c_void_p | None = None
+        self._sample_queue: queue.SimpleQueue[np.ndarray] = queue.SimpleQueue()
+        self._sample_buf = np.zeros(0, dtype=np.complex64)  # leftover from last chunk
+        self._cb_func: Any = None  # MUST keep reference — GC would crash libhackrf
+        self._setup_cfuncs()
+
+    def _setup_cfuncs(self) -> None:
+        lib = self._lib
+        lib.hackrf_init.restype = ctypes.c_int
+        lib.hackrf_init.argtypes = []
+        lib.hackrf_exit.restype = ctypes.c_int
+        lib.hackrf_exit.argtypes = []
+        lib.hackrf_open.restype = ctypes.c_int
+        lib.hackrf_open.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        lib.hackrf_open_by_serial.restype = ctypes.c_int
+        lib.hackrf_open_by_serial.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
+        lib.hackrf_close.restype = ctypes.c_int
+        lib.hackrf_close.argtypes = [ctypes.c_void_p]
+        lib.hackrf_set_sample_rate.restype = ctypes.c_int
+        lib.hackrf_set_sample_rate.argtypes = [ctypes.c_void_p, ctypes.c_double]
+        lib.hackrf_set_freq.restype = ctypes.c_int
+        lib.hackrf_set_freq.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        lib.hackrf_set_lna_gain.restype = ctypes.c_int
+        lib.hackrf_set_lna_gain.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        lib.hackrf_set_vga_gain.restype = ctypes.c_int
+        lib.hackrf_set_vga_gain.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        lib.hackrf_set_amp_enable.restype = ctypes.c_int
+        lib.hackrf_set_amp_enable.argtypes = [ctypes.c_void_p, ctypes.c_uint8]
+        lib.hackrf_set_antenna_enable.restype = ctypes.c_int  # Bias-T
+        lib.hackrf_set_antenna_enable.argtypes = [ctypes.c_void_p, ctypes.c_uint8]
+        lib.hackrf_set_baseband_filter_bandwidth.restype = ctypes.c_int
+        lib.hackrf_set_baseband_filter_bandwidth.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        lib.hackrf_start_rx.restype = ctypes.c_int
+        lib.hackrf_start_rx.argtypes = [ctypes.c_void_p, _HACKRF_CB_TYPE, ctypes.c_void_p]
+        lib.hackrf_stop_rx.restype = ctypes.c_int
+        lib.hackrf_stop_rx.argtypes = [ctypes.c_void_p]
+
+    def open_device(self) -> bool:
+        """Call hackrf_init() once, then hackrf_open[_by_serial]()."""
+        ret = self._lib.hackrf_init()
+        if ret != 0:
+            logger.error("[HackRF direct] hackrf_init() failed: %d", ret)
+            return False
+
+        handle = ctypes.c_void_p()
+        if self._serial:
+            ret = self._lib.hackrf_open_by_serial(
+                self._serial.encode("ascii"), ctypes.byref(handle)
+            )
+        else:
+            ret = self._lib.hackrf_open(ctypes.byref(handle))
+
+        if ret != 0:
+            logger.error("[HackRF direct] hackrf_open failed: %d (serial=%r)", ret, self._serial)
+            self._lib.hackrf_exit()
+            return False
+
+        self._handle = handle
+        logger.info(
+            "[HackRF direct] hackrf_open OK, serial=%r handle=%s", self._serial, self._handle
+        )
+        return True
+
+    def close_device(self) -> None:
+        """Stop RX, close device, and call hackrf_exit() to release libusb context."""
+        if self._handle is not None:
+            with contextlib.suppress(Exception):
+                self._lib.hackrf_stop_rx(self._handle)
+            self._lib.hackrf_close(self._handle)
+            self._handle = None
+        self._cb_func = None  # allow GC after streaming has stopped
+        with contextlib.suppress(Exception):
+            self._lib.hackrf_exit()
+        logger.info("[HackRF direct] device closed")
+
+    # -- SoapySDR.Device duck-type interface ----------------------------------
+
+    def setSampleRate(self, direction: int, channel: int, rate: float) -> None:
+        if self._handle is not None:
+            ret = self._lib.hackrf_set_sample_rate(self._handle, ctypes.c_double(rate))
+            if ret != 0:
+                logger.warning("[HackRF direct] hackrf_set_sample_rate(%.0f) = %d", rate, ret)
+
+    def setFrequency(self, direction: int, channel: int, freq: float) -> None:
+        if self._handle is not None:
+            ret = self._lib.hackrf_set_freq(self._handle, ctypes.c_uint64(int(freq)))
+            if ret != 0:
+                logger.warning("[HackRF direct] hackrf_set_freq(%d) = %d", int(freq), ret)
+
+    def setBandwidth(self, direction: int, channel: int, bw: float) -> None:
+        if self._handle is not None and bw > 0:
+            self._lib.hackrf_set_baseband_filter_bandwidth(self._handle, ctypes.c_uint32(int(bw)))
+
+    def setGainMode(self, direction: int, channel: int, auto_gain: bool) -> None:
+        # HackRF has no AGC; apply a sensible default when "auto" is requested.
+        if auto_gain and self._handle is not None:
+            self._lib.hackrf_set_lna_gain(self._handle, ctypes.c_uint32(16))
+            self._lib.hackrf_set_vga_gain(self._handle, ctypes.c_uint32(20))
+
+    def setGain(self, direction: int, channel: int, gain_db: float) -> None:
+        if self._handle is None:
+            return
+        # Distribute across LNA (0-40 dB, step 8) and VGA (0-62 dB, step 2).
+        lna = min(40, max(0, int(gain_db / 2.0 / 8) * 8))
+        vga = min(62, max(0, int((gain_db - lna) / 2) * 2))
+        self._lib.hackrf_set_lna_gain(self._handle, ctypes.c_uint32(lna))
+        self._lib.hackrf_set_vga_gain(self._handle, ctypes.c_uint32(vga))
+
+    def setFrequencyComponent(self, direction: int, channel: int, name: str, value: float) -> None:
+        pass  # HackRF does not support software PPM correction
+
+    def writeSetting(self, key: str, value: str) -> None:
+        if self._handle is None:
+            return
+        if key == "bias_tx":
+            enabled = value in ("1", "true", "True")
+            self._lib.hackrf_set_antenna_enable(self._handle, ctypes.c_uint8(1 if enabled else 0))
+
+    def setupStream(self, direction: int, fmt: str) -> HackRfDirectDevice:
+        return self  # stream token is self; hardware streaming starts in activateStream
+
+    def activateStream(self, stream: object) -> int:
+        """Start HackRF RX via hackrf_start_rx() with a ctypes CFUNCTYPE callback."""
+        if self._handle is None:
+            return -1
+
+        # Flush stale data from a previous run.
+        while True:
+            try:
+                self._sample_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._sample_buf = np.zeros(0, dtype=np.complex64)
+
+        def _rx_cb(transfer_ptr: Any) -> int:
+            try:
+                t = transfer_ptr.contents
+                n_bytes = t.valid_length & ~1  # ensure even (I+Q pairs)
+                if n_bytes > 0 and t.buffer:
+                    buf_ptr = ctypes.cast(t.buffer, ctypes.POINTER(ctypes.c_uint8))
+                    raw = bytes(buf_ptr[:n_bytes])
+                    # HackRF delivers signed int8 I/Q; normalise to [-1, +1].
+                    arr = np.frombuffer(raw, dtype=np.int8).astype(np.float32)
+                    arr /= 128.0
+                    cf32 = (arr[0::2] + 1j * arr[1::2]).astype(np.complex64)
+                    self._sample_queue.put(cf32)
+            except Exception:
+                pass
+            return 0  # returning non-0 stops streaming
+
+        self._cb_func = _HACKRF_CB_TYPE(_rx_cb)
+        ret = self._lib.hackrf_start_rx(self._handle, self._cb_func, None)
+        if ret != 0:
+            logger.error("[HackRF direct] hackrf_start_rx() failed: %d", ret)
+            self._cb_func = None
+            return -1
+        logger.info("[HackRF direct] RX streaming started")
+        return 0
+
+    def deactivateStream(self, stream: object) -> int:
+        """Stop HackRF RX streaming."""
+        if self._handle is not None:
+            ret = self._lib.hackrf_stop_rx(self._handle)
+            if ret != 0:
+                logger.warning("[HackRF direct] hackrf_stop_rx() = %d", ret)
+        self._cb_func = None
+        return 0
+
+    def closeStream(self, stream: object) -> int:
+        return 0
+
+    def readStream(
+        self,
+        stream: object,
+        buffers: list[Any],
+        numElems: int,
+        **kwargs: Any,
+    ) -> _SrResult:
+        """Drain the callback queue and return up to numElems complex64 samples.
+
+        HackRF delivers samples in large async chunks (~65 K samples each).
+        An internal leftover buffer accumulates excess samples between calls so
+        no data is dropped.  Returns _SrResult(-1) only on actual timeout/error,
+        matching the SoapySDR.Device.readStream() convention.
+        """
+        timeout_s = kwargs.get("timeoutUs", 50_000) / 1_000_000
+        buf_cf32 = buffers[0]
+
+        # Serve from leftover buffer first (fast path, no queue access).
+        if len(self._sample_buf) >= numElems:
+            buf_cf32[:numElems] = self._sample_buf[:numElems]
+            self._sample_buf = self._sample_buf[numElems:]
+            return _SrResult(numElems)
+
+        # Wait for a new chunk from the libhackrf callback thread.
+        try:
+            chunk = self._sample_queue.get(timeout=timeout_s)
+        except queue.Empty:
+            n = len(self._sample_buf)
+            if n > 0:
+                buf_cf32[:n] = self._sample_buf
+                self._sample_buf = np.zeros(0, dtype=np.complex64)
+                return _SrResult(n)
+            return _SrResult(-1)
+
+        if len(self._sample_buf) > 0:
+            chunk = np.concatenate([self._sample_buf, chunk])
+
+        n = min(len(chunk), numElems)
+        buf_cf32[:n] = chunk[:n]
+        self._sample_buf = chunk[n:] if len(chunk) > n else np.zeros(0, dtype=np.complex64)
+        return _SrResult(n)
+
+    def getSampleRateRange(self, direction: int, channel: int) -> list[_RangeResult]:
+        return [_RangeResult(2e6, 20e6)]  # HackRF One: 2 MHz – 20 MHz
+
+    def getGainRange(self, direction: int, channel: int) -> _RangeResult:
+        return _RangeResult(0.0, 102.0)  # LNA (0-40) + VGA (0-62)
 
 
 # ---------------------------------------------------------------------------
@@ -713,7 +1008,9 @@ class SdrDevice:
         """
         import os as _os
 
-        is_win_rtlsdr = sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr"
+        _driver = (self._info.driver or "").lower()
+        is_win_rtlsdr = sys.platform == "win32" and _driver == "rtlsdr"
+        is_win_hackrf = sys.platform == "win32" and _driver == "hackrf"
 
         # ── Windows / RTL-SDR diagnostic (always run for visibility) ─────────
         if is_win_rtlsdr:
@@ -731,9 +1028,13 @@ class SdrDevice:
                 logger.info("[SDR diag] SOAPY_SDR_PLUGIN_PATH is not set")
         # ─────────────────────────────────────────────────────────────────────
 
-        # On Windows + RTL-SDR: use ctypes direct path, skip SoapySDR entirely.
+        # On Windows, bypass SoapySDR::Device::make() for both RTL-SDR and HackRF.
+        # Both fail with "no match" because multiple hackrf_init()/libusb_init()
+        # cycles during SoapySDR's async enumerate corrupt the WinUSB handle cache.
         if is_win_rtlsdr:
             return self._open_rtlsdr_direct()
+        if is_win_hackrf:
+            return self._open_hackrf_direct()
 
         # ── SoapySDR path (all other drivers / platforms) ─────────────────────
         import SoapySDR
@@ -860,12 +1161,40 @@ class SdrDevice:
             )
         return True
 
+    def _open_hackrf_direct(self) -> bool:
+        """Open HackRF via ctypes on Windows, storing a HackRfDirectDevice in self._dev.
+
+        Bypasses SoapySDR::Device::make() which fails with "no match" on Windows
+        because multiple hackrf_init()+hackrf_exit() calls during SoapySDR's async
+        enumerate corrupt the WinUSB backend handle cache.
+        """
+        dll_path = _find_hackrf_dll()
+        if dll_path is None:
+            logger.error("[HackRF direct] hackrf.dll not found — cannot open device")
+            return False
+        try:
+            lib = ctypes.CDLL(dll_path)
+        except OSError as exc:
+            logger.error("[HackRF direct] Failed to load hackrf.dll: %s", exc)
+            return False
+
+        serial = self._info.serial or ""
+        hackrfdev = HackRfDirectDevice(serial, lib)
+        if not hackrfdev.open_device():
+            return False
+
+        with self._lock:
+            self._dev = hackrfdev
+            self._apply_settings()
+            logger.info("[HackRF direct] opened serial=%r via ctypes (SoapySDR bypassed)", serial)
+        return True
+
     def close(self) -> None:
         """Close the device and release resources."""
         with self._lock:
             self._stop_stream_locked()
             if self._dev is not None:
-                if isinstance(self._dev, RtlSdrDirectDevice):
+                if isinstance(self._dev, (RtlSdrDirectDevice, HackRfDirectDevice)):
                     self._dev.close_device()
                 self._dev = None
                 logger.info("SDR closed: %s", self._info.display_name)
