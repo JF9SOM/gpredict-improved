@@ -13,10 +13,20 @@ USB fallback:
   SDR VID/PID pairs and returns a list of SdrDeviceInfo with driver=None.
   This is used by the SDR Device Installation dialog to identify devices
   even before the driver is installed.
+
+Windows RTL-SDR direct path:
+  On Windows, SoapyRTLSDR's C++ constructor succeeds but
+  SoapySDR::Device::make() rejects it at the ABI check layer, resulting in
+  "no match".  When driver=="rtlsdr" on win32 we bypass SoapySDR entirely
+  and call librtlsdr.dll via ctypes through RtlSdrDirectDevice, which is
+  duck-type compatible with SoapySDR.Device so the rest of SdrDevice is
+  unchanged.
 """
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import logging
 import sys
 import threading
@@ -95,6 +105,35 @@ _SOAPY_GLOBAL_LOCK: threading.Lock = threading.Lock()
 _enumerate_cache: list[SdrDeviceInfo] | None = None
 
 
+# ---------------------------------------------------------------------------
+# RTL-SDR ctypes helpers
+# ---------------------------------------------------------------------------
+
+
+def _find_rtlsdr_dll() -> str | None:
+    """Locate rtlsdr.dll on Windows, returning the full path or None."""
+    search_dirs: list[str] = []
+    if getattr(sys, "frozen", False):
+        search_dirs.append(sys._MEIPASS)  # type: ignore[attr-defined]
+    for env_var in ("SOAPY_SDR_ROOT", "SOAPY_SDR_PLUGIN_PATH"):
+        val = __import__("os").environ.get(env_var, "")
+        if val:
+            search_dirs.append(str(Path(val).parent))
+    plugin_path = __import__("os").environ.get("SOAPY_SDR_PLUGIN_PATH", "")
+    if plugin_path:
+        search_dirs.append(str(Path(plugin_path).parent.parent / "bin"))
+
+    logger.info("[RTL-SDR diag] rtlsdr.dll search dirs: %s", search_dirs)
+    for d in search_dirs:
+        candidate = Path(d) / "rtlsdr.dll"
+        if candidate.exists():
+            logger.info("[RTL-SDR diag] rtlsdr.dll resolved path: %s", candidate)
+            return str(candidate)
+    found = ctypes.util.find_library("rtlsdr")
+    logger.info("[RTL-SDR diag] rtlsdr.dll resolved path: %s", found)
+    return found
+
+
 def _rtlsdr_ctypes_diagnostic() -> None:
     """Call rtlsdr_get_device_count() via ctypes and log the result.
 
@@ -103,38 +142,7 @@ def _rtlsdr_ctypes_diagnostic() -> None:
     here but SoapySDR still fails, the problem is inside SoapyRTLSDR's C++ code.
     If count == 0 here, libusb/WinUSB is the problem regardless of SoapyRTLSDR patches.
     """
-    import ctypes
-    import ctypes.util
-    import os
-    from pathlib import Path as _Path
-
-    # Locate rtlsdr.dll — check bundle dirs first, then system PATH.
-    search_dirs: list[str] = []
-    if getattr(sys, "frozen", False):
-        search_dirs.append(sys._MEIPASS)  # type: ignore[attr-defined]
-    for env_var in ("SOAPY_SDR_ROOT", "SOAPY_SDR_PLUGIN_PATH"):
-        val = os.environ.get(env_var, "")
-        if val:
-            search_dirs.append(str(_Path(val).parent))
-    # Also check parent of soapy_modules dir that we set via env
-    plugin_path = os.environ.get("SOAPY_SDR_PLUGIN_PATH", "")
-    if plugin_path:
-        search_dirs.append(str(_Path(plugin_path).parent.parent / "bin"))
-
-    dll_path: str | None = None
-    for d in search_dirs:
-        candidate = _Path(d) / "rtlsdr.dll"
-        if candidate.exists():
-            dll_path = str(candidate)
-            break
-    if dll_path is None:
-        # Try ctypes.util.find_library as last resort
-        found = ctypes.util.find_library("rtlsdr")
-        if found:
-            dll_path = found
-
-    logger.info("[RTL-SDR diag] rtlsdr.dll search dirs: %s", search_dirs)
-    logger.info("[RTL-SDR diag] rtlsdr.dll resolved path: %s", dll_path)
+    dll_path = _find_rtlsdr_dll()
 
     if dll_path is None:
         logger.warning("[RTL-SDR diag] rtlsdr.dll not found — cannot run ctypes diagnostic")
@@ -216,12 +224,199 @@ def _soapy_rtlsdr_module_diagnostic(soapy_module: object) -> None:
         logger.warning("[RTL-SDR diag] SoapySDR module diagnostic failed: %s", exc)
 
 
+# ---------------------------------------------------------------------------
+# RTL-SDR ctypes direct device — duck-type compatible with SoapySDR.Device
+# ---------------------------------------------------------------------------
+
+
+class _SrResult:
+    """Minimal readStream return value compatible with SoapySDR.StreamResult."""
+
+    __slots__ = ("ret",)
+
+    def __init__(self, ret: int) -> None:
+        self.ret = ret
+
+
+class _RangeResult:
+    """Minimal range value compatible with SoapySDR.Range."""
+
+    __slots__ = ("_lo", "_hi")
+
+    def __init__(self, lo: float, hi: float) -> None:
+        self._lo = lo
+        self._hi = hi
+
+    def minimum(self) -> float:
+        return self._lo
+
+    def maximum(self) -> float:
+        return self._hi
+
+
+class RtlSdrDirectDevice:
+    """
+    ctypes-based RTL-SDR device for Windows, bypassing SoapySDR.Device::make().
+
+    SoapyRTLSDR's C++ constructor succeeds but SoapySDR rejects it at the ABI
+    check layer ("no match").  This class calls librtlsdr.dll directly via
+    ctypes and exposes a duck-type interface matching SoapySDR.Device so that
+    SdrDevice can store it in self._dev without changing any other code path.
+
+    Used only on Windows + driver=="rtlsdr".  All other SDR devices and
+    Linux/macOS continue to use the SoapySDR path.
+    """
+
+    def __init__(self, device_index: int, lib: ctypes.CDLL) -> None:
+        self._dev_index = device_index
+        self._lib = lib
+        self._handle: ctypes.c_void_p | None = None
+        self._setup_cfuncs()
+
+    def _setup_cfuncs(self) -> None:
+        lib = self._lib
+        lib.rtlsdr_open.restype = ctypes.c_int
+        lib.rtlsdr_open.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint32]
+        lib.rtlsdr_close.restype = ctypes.c_int
+        lib.rtlsdr_close.argtypes = [ctypes.c_void_p]
+        lib.rtlsdr_set_center_freq.restype = ctypes.c_int
+        lib.rtlsdr_set_center_freq.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        lib.rtlsdr_set_sample_rate.restype = ctypes.c_int
+        lib.rtlsdr_set_sample_rate.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        lib.rtlsdr_set_tuner_gain_mode.restype = ctypes.c_int
+        lib.rtlsdr_set_tuner_gain_mode.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.rtlsdr_set_tuner_gain.restype = ctypes.c_int
+        lib.rtlsdr_set_tuner_gain.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.rtlsdr_set_freq_correction.restype = ctypes.c_int
+        lib.rtlsdr_set_freq_correction.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.rtlsdr_set_bias_tee.restype = ctypes.c_int
+        lib.rtlsdr_set_bias_tee.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.rtlsdr_read_sync.restype = ctypes.c_int
+        lib.rtlsdr_read_sync.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int),
+        ]
+        lib.rtlsdr_reset_buffer.restype = ctypes.c_int
+        lib.rtlsdr_reset_buffer.argtypes = [ctypes.c_void_p]
+
+    def open_device(self) -> bool:
+        """Open the RTL-SDR device via rtlsdr_open()."""
+        handle = ctypes.c_void_p()
+        ret = self._lib.rtlsdr_open(ctypes.byref(handle), ctypes.c_uint32(self._dev_index))
+        if ret != 0:
+            logger.error("[RTL-SDR direct] rtlsdr_open(index=%d) failed: %d", self._dev_index, ret)
+            return False
+        self._handle = handle
+        self._lib.rtlsdr_reset_buffer(self._handle)
+        logger.info(
+            "[RTL-SDR direct] rtlsdr_open(index=%d) OK, handle=%s",
+            self._dev_index,
+            self._handle,
+        )
+        return True
+
+    def close_device(self) -> None:
+        """Close the RTL-SDR device via rtlsdr_close()."""
+        if self._handle is not None:
+            self._lib.rtlsdr_close(self._handle)
+            self._handle = None
+            logger.info("[RTL-SDR direct] device closed")
+
+    # -- SoapySDR.Device duck-type interface ----------------------------------
+
+    def setSampleRate(self, direction: int, channel: int, rate: float) -> None:
+        if self._handle is not None:
+            self._lib.rtlsdr_set_sample_rate(self._handle, ctypes.c_uint32(int(rate)))
+
+    def setFrequency(self, direction: int, channel: int, freq: float) -> None:
+        if self._handle is not None:
+            self._lib.rtlsdr_set_center_freq(self._handle, ctypes.c_uint32(int(freq)))
+
+    def setBandwidth(self, direction: int, channel: int, bw: float) -> None:
+        pass  # RTL-SDR has no programmable IF bandwidth via librtlsdr
+
+    def setGainMode(self, direction: int, channel: int, auto_gain: bool) -> None:
+        if self._handle is not None:
+            self._lib.rtlsdr_set_tuner_gain_mode(self._handle, 0 if auto_gain else 1)
+
+    def setGain(self, direction: int, channel: int, gain_db: float) -> None:
+        if self._handle is not None:
+            # rtlsdr_set_tuner_gain takes tenths of dB as integer
+            self._lib.rtlsdr_set_tuner_gain(self._handle, ctypes.c_int(int(gain_db * 10)))
+
+    def setFrequencyComponent(self, direction: int, channel: int, name: str, value: float) -> None:
+        if name == "CORR" and self._handle is not None:
+            self._lib.rtlsdr_set_freq_correction(self._handle, ctypes.c_int(int(value)))
+
+    def writeSetting(self, key: str, value: str) -> None:
+        if "biastee" in key.lower() and self._handle is not None:
+            enabled = value in ("1", "true", "True")
+            self._lib.rtlsdr_set_bias_tee(self._handle, 1 if enabled else 0)
+
+    def setupStream(self, direction: int, fmt: str) -> RtlSdrDirectDevice:
+        return self  # stream token is self; no setup needed for sync reads
+
+    def activateStream(self, stream: object) -> int:
+        return 0
+
+    def deactivateStream(self, stream: object) -> int:
+        return 0
+
+    def closeStream(self, stream: object) -> int:
+        return 0
+
+    def readStream(
+        self,
+        stream: object,
+        buffers: list[Any],
+        numElems: int,
+        **kwargs: Any,
+    ) -> _SrResult:
+        """Read numElems complex64 samples via rtlsdr_read_sync().
+
+        Converts the uint8 interleaved I/Q bytes from librtlsdr into complex64
+        by normalising to [-1, +1]: (sample - 127.5) / 127.5.
+        """
+        if self._handle is None:
+            return _SrResult(-1)
+        num_bytes = numElems * 2  # each sample = 1 byte I + 1 byte Q
+        raw = (ctypes.c_uint8 * num_bytes)()
+        n_read = ctypes.c_int(0)
+        ret = self._lib.rtlsdr_read_sync(
+            self._handle, raw, ctypes.c_int(num_bytes), ctypes.byref(n_read)
+        )
+        if ret != 0 or n_read.value < 2:
+            return _SrResult(-1)
+        n_samples = n_read.value // 2
+        arr = np.frombuffer(raw, dtype=np.uint8)[: n_samples * 2].astype(np.float32)
+        arr = (arr - 127.5) / 127.5
+        buf_cf32 = buffers[0]
+        buf_cf32[:n_samples] = arr[0::2] + 1j * arr[1::2]
+        return _SrResult(n_samples)
+
+    def getSampleRateRange(self, direction: int, channel: int) -> list[_RangeResult]:
+        return [_RangeResult(225e3, 3.2e6)]
+
+    def getGainRange(self, direction: int, channel: int) -> _RangeResult:
+        return _RangeResult(0.0, 49.6)
+
+
+# ---------------------------------------------------------------------------
+# Main SdrDevice class
+# ---------------------------------------------------------------------------
+
+
 class SdrDevice:
     """
     Wrapper around a SoapySDR.Device.
 
     Instantiate with an SdrDeviceInfo (from enumerate()) or a raw kwargs dict.
     Call open() before streaming, close() when done.
+
+    On Windows + driver=="rtlsdr", open() uses RtlSdrDirectDevice (ctypes) instead
+    of SoapySDR.Device to bypass the ABI-check "no match" rejection.
     """
 
     def __init__(self, info: SdrDeviceInfo) -> None:
@@ -470,37 +665,24 @@ class SdrDevice:
     def open(self) -> bool:
         """Open the device. Returns True on success.
 
-        On Windows with WinUSB, each call to rtlsdr_get_device_count() performs
-        a libusb_init()+libusb_exit() that resets the USB backend state.  Multiple
-        such calls before rtlsdr_open() (e.g. from concurrent async enumerate threads
-        or redundant pre-enumerate calls) can corrupt the WinUSB handle cache so that
-        rtlsdr_open() fails with "No RTL-SDR devices found!" or "usb_open error -3".
+        On Windows + driver=="rtlsdr", uses RtlSdrDirectDevice (ctypes) instead of
+        SoapySDR.Device to bypass the ABI-check "no match" rejection that occurs
+        even when SoapyRTLSDR's C++ constructor succeeds.
 
-        To avoid this we do NOT pre-enumerate before Device::make().  The single
-        internal enumerate inside Device::make() (one deferred/synchronous call to
-        findRTLSDR → rtlsdr_get_device_count()) is the only libusb operation before
-        rtlsdr_open(), which is sufficient for WinUSB to succeed.
-
-        We try three arg sets per attempt:
-          1. Full args from enumerate() (device_index, driver, label)
-          2. Minimal args {driver, device_index}
-          3. Driver-only args {driver} — last-resort fallback
-        Each set is tried up to 3 times with a short delay.
+        For all other drivers / platforms, uses the SoapySDR path with three arg
+        sets per attempt (full / minimal / driver-only) and up to 3 retries.
         """
-        import SoapySDR
+        import os as _os
 
-        # ── Windows / RTL-SDR diagnostic ──────────────────────────────────
-        # Log rtlsdr_get_device_count() via ctypes BEFORE calling SoapySDR.
-        # This tells us whether librtlsdr + WinUSB can see the device at the
-        # Python level, independently of SoapyRTLSDR's C++ code.
-        if sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr":
+        is_win_rtlsdr = sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr"
+
+        # ── Windows / RTL-SDR diagnostic (always run for visibility) ─────────
+        if is_win_rtlsdr:
             _rtlsdr_ctypes_diagnostic()
 
         # Log all DLLs present in soapy_modules/ so we can detect duplicate
         # plugin files (e.g. two rtlsdrSupport.dll from conda + custom build).
         if sys.platform == "win32":
-            import os as _os
-
             _plugin_path = _os.environ.get("SOAPY_SDR_PLUGIN_PATH", "")
             if _plugin_path:
                 _dlls = sorted(Path(_plugin_path).glob("*.dll"))
@@ -508,19 +690,19 @@ class SdrDevice:
                 logger.info("[SDR diag] soapy_modules DLLs: %s", [p.name for p in _dlls])
             else:
                 logger.info("[SDR diag] SOAPY_SDR_PLUGIN_PATH is not set")
-        # ──────────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+
+        # On Windows + RTL-SDR: use ctypes direct path, skip SoapySDR entirely.
+        if is_win_rtlsdr:
+            return self._open_rtlsdr_direct()
+
+        # ── SoapySDR path (all other drivers / platforms) ─────────────────────
+        import SoapySDR
 
         _MAX_ATTEMPTS = 3
         _RETRY_DELAY = 0.6  # seconds
 
         # Build fallback arg sets for drivers that fail serial/USB-string matching.
-        # RTL-SDR + WinUSB on Windows: rtlsdr_get_device_usb_strings() cannot
-        # read USB descriptors, so SoapyRTLSDR throws during make() even after
-        # successfully opening the device.  We try progressively simpler args:
-        #   1. Full args from enumerate() (serial, label, …)
-        #   2. driver + device_index (skips serial matching)
-        #   3. driver only (lets SoapyRTLSDR pick the first available device,
-        #      bypassing all string-based matching — most likely to succeed)
         minimal_args: dict[str, str] = {}
         driver_only_args: dict[str, str] = {}
         if self._info.driver:
@@ -533,18 +715,10 @@ class SdrDevice:
                 return True
 
             # ── SoapySDR log handler: capture C++ error messages ──────────────
-            # SoapySDR logs DLL load failures and constructor exceptions via its
-            # internal log system.  Install a Python handler so these messages
-            # appear in our application log (especially SOAPY_SDR_ERROR level).
             _soapy_log_msgs: list[tuple[int, str]] = []
 
             def _soapy_log_cb(level: int, msg: str) -> None:
                 _soapy_log_msgs.append((level, msg))
-                # Log ALL SoapySDR messages at WARNING so they appear in the log
-                # regardless of the Python log level (DEBUG messages were invisible
-                # before and hid the root cause).
-                # Level meanings: 1=FATAL, 2=CRITICAL, 3=ERROR, 4=WARNING,
-                #                 5=NOTICE, 6=INFO, 7=DEBUG, 8=TRACE
                 logger.warning("[SoapySDR L%d] %s", level, msg)
 
             import contextlib as _contextlib
@@ -564,15 +738,6 @@ class SdrDevice:
                         continue
                     try:
                         with _SOAPY_GLOBAL_LOCK:
-                            # Do NOT call Device.enumerate() here before Device().
-                            # Under WinUSB each enumerate(driver=rtlsdr) triggers
-                            # one deferred findRTLSDR → rtlsdr_get_device_count()
-                            # (libusb_init+exit) in the calling thread.  Device::make()
-                            # internally calls enumerate() once more, so a pre-enumerate
-                            # here would produce two libusb_init+exit cycles before
-                            # rtlsdr_open(), corrupting WinUSB backend state.
-                            # Device::make()'s single internal enumerate is the only
-                            # allowed libusb call before rtlsdr_open().
                             self._dev = SoapySDR.Device(args)
                         self._apply_settings()
                         logger.info(
@@ -603,17 +768,10 @@ class SdrDevice:
                     )
                     time.sleep(_RETRY_DELAY)
             # Restore default SoapySDR log handler.
-            import contextlib as _contextlib
-
             with _contextlib.suppress(Exception):
                 SoapySDR.registerLogHandler(None)
 
             # ── Post-failure SoapySDR module diagnostic (Windows/RTL-SDR) ────
-            # Run AFTER all open attempts to diagnose plugin registration.
-            # Running before open() would call enumerate(driver=rtlsdr) which
-            # triggers findRTLSDR → (previously) rtlsdr_get_device_count()
-            # and corrupt WinUSB state before rtlsdr_open().  Post-failure is
-            # safe: the device open already failed so WinUSB state doesn't matter.
             if sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr":
                 _soapy_rtlsdr_module_diagnostic(SoapySDR)
             # ──────────────────────────────────────────────────────────────────
@@ -633,11 +791,43 @@ class SdrDevice:
             )
             return False
 
+    def _open_rtlsdr_direct(self) -> bool:
+        """Open RTL-SDR via ctypes on Windows, storing an RtlSdrDirectDevice in self._dev.
+
+        Bypasses SoapySDR::Device::make() which rejects the device at the ABI
+        check layer despite SoapyRTLSDR's C++ constructor succeeding.
+        """
+        dll_path = _find_rtlsdr_dll()
+        if dll_path is None:
+            logger.error("[RTL-SDR direct] rtlsdr.dll not found — cannot open device")
+            return False
+        try:
+            lib = ctypes.CDLL(dll_path)
+        except OSError as exc:
+            logger.error("[RTL-SDR direct] Failed to load rtlsdr.dll: %s", exc)
+            return False
+
+        dev_index = int(self._info.args.get("device_index", "0"))
+        rtldev = RtlSdrDirectDevice(dev_index, lib)
+        if not rtldev.open_device():
+            return False
+
+        with self._lock:
+            self._dev = rtldev
+            self._apply_settings()
+            logger.info(
+                "[RTL-SDR direct] opened device index=%d via ctypes (SoapySDR bypassed)",
+                dev_index,
+            )
+        return True
+
     def close(self) -> None:
         """Close the device and release resources."""
         with self._lock:
             self._stop_stream_locked()
             if self._dev is not None:
+                if isinstance(self._dev, RtlSdrDirectDevice):
+                    self._dev.close_device()
                 self._dev = None
                 logger.info("SDR closed: %s", self._info.display_name)
 
