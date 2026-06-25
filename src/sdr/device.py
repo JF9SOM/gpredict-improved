@@ -495,6 +495,19 @@ class SdrDevice:
         # Python level, independently of SoapyRTLSDR's C++ code.
         if sys.platform == "win32" and (self._info.driver or "").lower() == "rtlsdr":
             _rtlsdr_ctypes_diagnostic()
+
+        # Log all DLLs present in soapy_modules/ so we can detect duplicate
+        # plugin files (e.g. two rtlsdrSupport.dll from conda + custom build).
+        if sys.platform == "win32":
+            import os as _os
+
+            _plugin_path = _os.environ.get("SOAPY_SDR_PLUGIN_PATH", "")
+            if _plugin_path:
+                _dlls = sorted(Path(_plugin_path).glob("*.dll"))
+                logger.info("[SDR diag] SOAPY_SDR_PLUGIN_PATH=%s", _plugin_path)
+                logger.info("[SDR diag] soapy_modules DLLs: %s", [p.name for p in _dlls])
+            else:
+                logger.info("[SDR diag] SOAPY_SDR_PLUGIN_PATH is not set")
         # ──────────────────────────────────────────────────────────────────
 
         _MAX_ATTEMPTS = 3

@@ -55,10 +55,14 @@ if _hamlib_user_dir.exists():
 
 # Windows frozen bundle: tell SoapySDR where to find device-module DLLs.
 # Must be set before any 'import SoapySDR' occurs.
+# Force-override any pre-existing SOAPY_SDR_PLUGIN_PATH (e.g. from PothosSDR
+# or a system-level environment variable) so that only our bundled modules are
+# loaded — a user's path may contain an unpatched rtlsdrSupport.dll that would
+# cause Device::make() to register a second factory and fail.
 if sys.platform == "win32" and getattr(sys, "frozen", False):
     _soapy_modules = Path(getattr(sys, "_MEIPASS", "")) / "soapy_modules"
     if _soapy_modules.exists():
-        os.environ.setdefault("SOAPY_SDR_PLUGIN_PATH", str(_soapy_modules))
+        os.environ["SOAPY_SDR_PLUGIN_PATH"] = str(_soapy_modules)
     # Add _internal/ to DLL search path so rtlsdrSupport.dll (in soapy_modules/)
     # can find SoapySDR.dll and rtlsdr.dll at load time.
     _mei = Path(getattr(sys, "_MEIPASS", ""))

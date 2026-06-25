@@ -30,16 +30,15 @@ def extract_conda(fname: str, bin_dir: str, py_dir: str, mod_dir: str) -> None:
                 _extract_members(tf, bin_dir, py_dir, mod_dir)
         return
     else:  # .tar.bz2
-        with open(fname, "rb") as f, tarfile.open(
-            fileobj=io.BytesIO(bz2.decompress(f.read()))
-        ) as tf:
+        with (
+            open(fname, "rb") as f,
+            tarfile.open(fileobj=io.BytesIO(bz2.decompress(f.read()))) as tf,
+        ):
             _extract_members(tf, bin_dir, py_dir, mod_dir)
         return
 
 
-def _extract_members(
-    tf: tarfile.TarFile, bin_dir: str, py_dir: str, mod_dir: str
-) -> None:
+def _extract_members(tf: tarfile.TarFile, bin_dir: str, py_dir: str, mod_dir: str) -> None:
     for m in tf.getmembers():
         name = m.name
         if not (name.endswith(".dll") or name.endswith(".pyd") or name.endswith(".py")):
@@ -49,6 +48,14 @@ def _extract_members(
             continue
         base = os.path.basename(name)
         if "modules" in name and name.endswith(".dll"):
+            # Skip SoapyRTLSDR — we build our own WinUSB-patched version from
+            # Osmocom source in the CI "Build SoapyRTLSDR" step.  The conda-forge
+            # rtlsdrSupport.dll would create a second factory inside SoapySDR and
+            # cause Device::make() to fail with "no match".
+            if base.lower() == "rtlsdrsupport.dll":
+                print(f"  [skip] {base} (using custom WinUSB-patched build)")
+                fobj.close()
+                continue
             dest = os.path.join(mod_dir, base)
         elif name.endswith(".pyd") or (name.endswith(".py") and "SoapySDR" in base):
             dest = os.path.join(py_dir, base)
