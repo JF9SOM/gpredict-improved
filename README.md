@@ -364,23 +364,7 @@ Each decoder will run as a subprocess with results displayed in a dedicated plug
 - Real-world Doppler tests with TS-2000, FT-817ND, etc. (IC-9100/IC-9700 confirmed in v0.1.27)
 - WSJT-X / JS8Call frequency & mode sync
 
-Contributions and feedback are welcome — see the mailing list below.
-
----
-
-## Community & Support
-
-Questions, ideas, and feedback are welcome on the mailing list:
-
-**📧 [gpredict-improved@googlegroups.com](mailto:gpredict-improved@googlegroups.com)**
-
-> *Support and discussion group for GPredict-Improved — amateur satellite tracking software.*
-
-Feel free to post about:
-- Questions on setup or operation
-- Feature requests and ideas
-- Bug reports (or open a [GitHub Issue](https://github.com/JF9SOM/gpredict-improved/issues))
-- Operating reports from the field — which satellites and rigs you've used
+Contributions and feedback are welcome — open a [GitHub Issue](https://github.com/JF9SOM/gpredict-improved/issues) or submit a pull request.
 
 ---
 

@@ -338,23 +338,7 @@ HackRF / RTL-SDR + 適切な LNA・フィルターで受信可能な業務用衛
 - TS-2000・FT-817ND 等での実機ドップラー制御テスト（IC-9100・IC-9700 は v0.1.27 で確認済み）
 - WSJT-X / JS8Call との周波数・モード同期
 
-ご意見・ご要望は下記メーリングリストまでお気軽にどうぞ。
-
----
-
-## コミュニティ・サポート
-
-質問・機能要望・バグ報告・運用報告など、お気軽にメーリングリストへどうぞ：
-
-**📧 [gpredict-improved@googlegroups.com](mailto:gpredict-improved@googlegroups.com)**
-
-> *GPredict-Improved（アマチュア衛星追尾ソフト）のサポート・議論グループです。*
-
-投稿歓迎なトピック例：
-- セットアップ・操作に関する質問
-- 機能要望・アイデア
-- バグ報告（[GitHub Issues](https://github.com/JF9SOM/gpredict-improved/issues) でも受け付けています）
-- 実際に使ってみた衛星・無線機の運用報告
+ご意見・ご要望は [GitHub Issues](https://github.com/JF9SOM/gpredict-improved/issues) またはプルリクエストでお寄せください。
 
 ---
 
