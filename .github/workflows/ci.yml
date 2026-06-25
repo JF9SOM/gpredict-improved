@@ -396,7 +396,16 @@ jobs:
           }
           if (-not $condaExe) { throw "conda.exe not found on runner" }
           Write-Host "conda: $condaExe"
-          & $condaExe create --prefix rtlsdr-deps -c conda-forge "soapysdr=0.8.1" "libusb" --yes --quiet
+          # SoapySDR is intentionally excluded here.  rtlsdrSupport.dll must be
+          # compiled against the same SoapySDR build that is bundled as SoapySDR.dll
+          # (soapysdr-0.8.1-py311haef1a59_6.conda).  Using a different conda build
+          # of soapysdr embeds a different SOAPY_SDR_ABI_VERSION in rtlsdrSupport.dll
+          # which causes a "failed ABI check" at runtime → plugin is silently rejected
+          # → Device::make() throws "no match".
+          # The correct SoapySDR SDK (headers + .lib + cmake) is extracted from the
+          # pinned conda package by extract_soapy_conda.py in the Bundle step above
+          # into soapy-win64/sdk/, and passed via CMAKE_PREFIX_PATH below.
+          & $condaExe create --prefix rtlsdr-deps -c conda-forge "libusb" --yes --quiet
 
           # Find MSVC vcvarsall and activate x64 environment
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -460,9 +469,13 @@ jobs:
 
           $rtlsdrLib = (Get-ChildItem rtlsdr-build -Recurse -Filter "rtlsdr.lib" | Select-Object -First 1).FullName
           Write-Host "rtlsdr.lib for SoapyRTLSDR: $rtlsdrLib"
+          # Point CMAKE_PREFIX_PATH at the SDK extracted from the pinned
+          # soapysdr-0.8.1-py311haef1a59_6.conda package (headers + .lib + cmake).
+          # This guarantees SOAPY_SDR_ABI_VERSION in rtlsdrSupport.dll matches
+          # the bundled SoapySDR.dll and prevents the ABI check failure at load time.
           & $CMAKE -G Ninja -B soapyrtlsdr-build -S SoapyRTLSDR `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_PREFIX_PATH="$PWD\rtlsdr-deps\Library" `
+            "-DCMAKE_PREFIX_PATH=$PWD\soapy-win64\sdk;$PWD\rtlsdr-deps\Library" `
             "-DRTLSDR_INCLUDE_DIR=$PWD\rtl-sdr\include" `
             "-DRTLSDR_LIBRARY=$rtlsdrLib"
           if ($LASTEXITCODE -ne 0) { throw "cmake configure SoapyRTLSDR failed" }
