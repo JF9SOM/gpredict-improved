@@ -157,18 +157,41 @@ python -m src.main
 5. Click **Connect** — the **SDR Control** tab becomes active
 6. Select a satellite and transponder — mode is set automatically
 
-### SoapySDR — Platform Notes
+### SDR — Platform Support
 
-| Platform | SoapySDR | Bundled device modules |
-|----------|----------|------------------------|
-| **Windows** | ✅ Bundled in installer | RTL-SDR, HackRF One, Airspy, Airspy HF+ |
-| **Linux** | Requires system package | — |
-| **macOS** | Requires Homebrew | — |
+| Platform | SDR support |
+|----------|-------------|
+| **Windows** | ✅ RTL-SDR, HackRF One (ctypes direct — WinUSB driver via Zadig required) |
+| **Linux** | ✅ All SoapySDR-compatible devices (system package install) |
+| **macOS** | ✅ All SoapySDR-compatible devices (Homebrew install) |
 
-**Windows** — SoapySDR and the device modules listed above are included in the installer.
-For RTL-SDR you still need to apply the WinUSB driver once with **Zadig** (one-time, free).
-ADALM-Pluto is not bundled; use it over the network (192.168.2.1) with a separately installed SoapySDR + SoapyPlutoSDR.
-Use **Help → SDR Device Installation** for step-by-step instructions.
+**Windows** — On Windows, SoapySDR is fundamentally incompatible with WinUSB drivers
+and cannot open devices reliably. RTL-SDR and HackRF bypass SoapySDR entirely and
+communicate directly with the device DLL (`librtlsdr.dll` / `hackrf.dll`) via ctypes.
+**Both RTL-SDR and HackRF require a one-time WinUSB driver setup with Zadig.**
+Airspy, Airspy HF+, and ADALM-Pluto are **not supported on Windows**.
+
+> ⚠️ **Windows Zadig setup (RTL-SDR and HackRF)**
+> 1. Plug in your device.
+> 2. Download and run [Zadig](https://zadig.akeo.ie/) (free).
+> 3. In Zadig: **Options → List All Devices**, select your device
+>    (RTL-SDR: *Bulk-In, Interface 0* / HackRF: *Hackrf One*).
+>    Set driver to **WinUSB** → click **Install Driver**.
+>    **Do NOT select libusbK** — it causes device detection failures.
+> 4. Restart GPredict-Improved.
+>
+> See also **Help → SDR Device Installation** for step-by-step guidance.
+
+**Linux** — install via apt:
+```bash
+sudo apt install python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf \
+                 soapysdr-module-airspy
+```
+
+**macOS** — install via Homebrew:
+```bash
+brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy
+```
 
 **Linux** — install via apt:
 ```bash
@@ -275,15 +298,15 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture reference used during devel
 |--------|------|---------|-------------|-------|
 | Yaesu FTX-1F | Transceiver | ✓ | ✓ | Hamlib 4.7.1 model 1051, NET Control, Doppler |
 | Yaesu FT-991AM | Transceiver | ✓ | ✓ | Hamlib 4.7.1 model 1036, NET Control, Doppler |
-| RTL-SDR | SDR | ✓ bundled* | ✓ | SoapyRTLSDR, spectrum, NFM demod |
-| HackRF One | SDR | ✓ bundled | ✓ | SoapyHackRF, NFM/USB/CW, Spectrum, Bias-T |
-| Airspy R2 / Mini | SDR | ✓ bundled | ✓ | SoapyAirspy, spectrum, demod |
-| Airspy HF+ | SDR | ✓ bundled | ✓ | SoapyAirspyHF, HF/VHF spectrum, demod |
-| ADALM-Pluto | SDR | — (not bundled) | — | SoapyPlutoSDR via network (192.168.2.1) |
+| RTL-SDR | SDR | ✓ (WinUSB/Zadig)* | ✓ | ctypes direct on Windows, SoapyRTLSDR on Linux/macOS |
+| HackRF One | SDR | ✓ (WinUSB/Zadig)* | ✓ | ctypes direct on Windows, SoapyHackRF on Linux/macOS |
+| Airspy R2 / Mini | SDR | ❌ not supported | ✓ | SoapyAirspy (Linux/macOS only) |
+| Airspy HF+ | SDR | ❌ not supported | ✓ | SoapyAirspyHF (Linux/macOS only) |
+| ADALM-Pluto | SDR | ❌ not supported | ✓ | SoapyPlutoSDR (Linux/macOS only) |
 | FTX-1F + RTL-SDR | Dual-rig | ✓ | ✓ | Passband Tune + Lock verified |
 
-\* RTL-SDR on Windows requires a one-time WinUSB driver install via Zadig (see **Help → SDR Device Installation**).
-† ADALM-Pluto is not included in the Windows installer. It can be used over the network (192.168.2.1) if SoapySDR and SoapyPlutoSDR are installed separately.
+\* Windows: both RTL-SDR and HackRF require a one-time WinUSB driver install via Zadig.
+SoapySDR is incompatible with WinUSB on Windows; RTL-SDR and HackRF bypass it via ctypes.
 
 ---
 

@@ -403,29 +403,32 @@ class SdrInstallDialog(QDialog):
 
         elif os_name == "Windows":
             self._pending_cmd = []
-            needs_rtl = any("RTLSDR" in m for m in needed_modules)
-            if needs_rtl:
-                self._action_label.setText(
-                    _(
-                        "SoapySDR is bundled in this installer — no separate install needed.\n\n"
-                        "For RTL-SDR only: the WinUSB driver must be applied once with Zadig.\n"
-                        "1. Plug in your RTL-SDR dongle.\n"
-                        "2. Click 'Open Zadig Website' below, download and run Zadig.\n"
-                        "3. In Zadig: Options → List All Devices, select your RTL-SDR\n"
-                        "   (Bulk-In, Interface 0) → driver: WinUSB → Install Driver.\n"
-                        "   Do NOT select libusbK — it causes a crash during device detection.\n"
-                        "4. Restart GPredict-Improved."
-                    )
+            self._action_label.setText(
+                _(
+                    "Windows — Supported SDR Devices\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "✅  RTL-SDR      — Supported  (WinUSB driver required → Zadig)\n"
+                    "✅  HackRF One   — Supported  (WinUSB driver required → Zadig)\n"
+                    "❌  Airspy / Airspy HF+  — Not supported on Windows\n"
+                    "❌  ADALM-Pluto  — Not supported on Windows\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "On Windows, RTL-SDR and HackRF bypass SoapySDR entirely and\n"
+                    "communicate directly with the device DLL via ctypes.\n"
+                    "SoapySDR on Windows is fundamentally incompatible with WinUSB\n"
+                    "drivers and cannot be used reliably — other device types\n"
+                    "(Airspy, Airspy HF+, ADALM-Pluto) are therefore not supported.\n\n"
+                    "WinUSB Driver Setup — required once for BOTH RTL-SDR and HackRF:\n"
+                    "  1. Plug in your device.\n"
+                    "  2. Click 'Open Zadig Website' below, download and run Zadig.\n"
+                    "  3. In Zadig: Options → List All Devices, select your device\n"
+                    "     (RTL-SDR: Bulk-In Interface 0 / HackRF: Hackrf One)\n"
+                    "     → set driver to WinUSB → click Install Driver.\n"
+                    "  ⚠️  Do NOT select libusbK — it causes device detection failures.\n"
+                    "  4. Restart GPredict-Improved."
                 )
-            else:
-                self._action_label.setText(
-                    _(
-                        "SoapySDR is bundled in this installer — no separate install needed.\n"
-                        "If your device is not detected, check that its USB driver is installed."
-                    )
-                )
+            )
             self._install_btn.setVisible(False)
-            self._add_windows_buttons(needs_rtl)
+            self._add_windows_buttons()
         else:
             self._pending_cmd = []
             self._action_label.setText(
@@ -436,12 +439,11 @@ class SdrInstallDialog(QDialog):
             )
             self._install_btn.setVisible(False)
 
-    def _add_windows_buttons(self, needs_zadig: bool) -> None:
-        """Add Zadig website button for RTL-SDR WinUSB driver installation."""
-        if needs_zadig:
-            zadig_btn = QPushButton(_("Open Zadig Website (install WinUSB driver for RTL-SDR)"))
-            zadig_btn.clicked.connect(lambda: self._open_url(_ZADIG_URL))
-            self._status_layout.addWidget(zadig_btn)
+    def _add_windows_buttons(self) -> None:
+        """Add Zadig website button for WinUSB driver installation (RTL-SDR and HackRF)."""
+        zadig_btn = QPushButton(_("Open Zadig Website (WinUSB driver for RTL-SDR / HackRF)"))
+        zadig_btn.clicked.connect(lambda: self._open_url(_ZADIG_URL))
+        self._status_layout.addWidget(zadig_btn)
 
     # ------------------------------------------------------------------
     # Installation

@@ -729,7 +729,10 @@ sudo usermod -aG dialout $USER
 
 - **SoapySDR バックエンド**（`src/sdr/`）: device・pipeline・demodulator・recorder
   - SdrDevice: SoapySDR デバイス列挙（audio/null/remote ドライバ除外）・オープン・ストリーミング
-  - **Windows RTL-SDR ctypes直接実装**（`RtlSdrDirectDevice` in `src/sdr/device.py`）: `SoapySDR::Device::make()` がABIチェック層でデバイスを拒否するため（コンストラクタは成功するのに "no match" が返る）、`sys.platform=="win32"` かつ `driver=="rtlsdr"` の場合のみ `librtlsdr.dll` を ctypes で直接呼ぶバイパス実装。`SoapySDR.Device` とduck-type互換（`setupStream`/`readStream`/`setSampleRate` 等を実装）なので `SdrDevice` の他のコードは変更不要。uint8 I/Q → complex64 変換: `(sample - 127.5) / 127.5`。**動作確認済み v0.1.71（2026-06-25）**
+  - **Windows SDR — SoapySDR 根本的非互換（v0.1.72 確定）**: Windows では SoapySDR が WinUSB ドライバーと根本的に非互換。`SoapySDR::Device::make()` の ABI チェック層が enumerate 後にデバイスを拒否する（`hackrf_init()+hackrf_exit()` / `hackrf_open()` が WinUSB ハンドルキャッシュを破壊）。このため **Windows では RTL-SDR・HackRF のみ対応**。Airspy・Airspy HF+・ADALM-Pluto は Windows 非対応（SoapySDR が使える見込みがない）。
+  - **Windows RTL-SDR ctypes直接実装**（`RtlSdrDirectDevice` in `src/sdr/device.py`）: `sys.platform=="win32"` かつ `driver=="rtlsdr"` の場合のみ `librtlsdr.dll` を ctypes で直接呼ぶバイパス実装。uint8 I/Q → complex64 変換: `(sample - 127.5) / 127.5`。**動作確認済み v0.1.71（2026-06-25）**
+  - **Windows HackRF ctypes直接実装**（`HackRfDirectDevice` in `src/sdr/device.py`）: `sys.platform=="win32"` かつ `driver=="hackrf"` の場合のみ `hackrf.dll` を ctypes で直接呼ぶバイパス実装。`hackrf_start_rx()` + `ctypes.CFUNCTYPE` コールバックによる非同期ストリーミング。signed int8 I/Q → complex64 変換: `arr / 128.0`。LNA（0-40dB, step 8）+ VGA（0-62dB, step 2）ゲイン分割。**`_cb_func` を `self` に保持して GC クラッシュを防止すること**。**v0.1.72 実装済み・実機確認待ち**
+  - **両デバイスとも Zadig で WinUSB ドライバーを当てる必要がある**（初回一回限り）。libusbK は絶対に選ばない（クラッシュ実績）。
   - SDRPipeline（QThread）: I/Q 取得 → FFT（10fps スペクトラム）→ 復調 → 音声出力 → IQ 録音
   - Demodulator: NFM / USB / LSB / CW 各モード。DC ブロック IIR（30Hz HPF）で HackRF DC スパイク除去
   - CW 復調: エンベロープ検出なし・直接復調方式（ブーン音問題を根本解決）
@@ -768,12 +771,13 @@ sudo usermod -aG dialout $USER
   - FTX-1F（Hamlib 4.7.1 モデル1051、Direct モード）: モード・CTCSS（raw CAT `MD1/MD0/CN1/CT1` via `os.open()`）動作確認済み（2026-06-18）
   - FT-991AM（Hamlib 4.7.1 モデル1036、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
   - FT-991/FT-991A（Direct モード）: モード・CTCSS（raw CAT `SV/MD0/CN0/CT0` via pyserial）実装済み・実機確認待ち（2026-06-18）
-  - HackRF One（SoapyHackRF）: NFM/USB/CW 復調・スペクトラム・Bias-T 動作確認済み（Linux/Windows）
+  - HackRF One（SoapyHackRF）: NFM/USB/CW 復調・スペクトラム・Bias-T 動作確認済み（Linux）
+  - HackRF One（ctypes直接実装 `HackRfDirectDevice`）: **Windows 実装済み v0.1.72（2026-06-25）** — 実機確認待ち。Zadig で WinUSB ドライバー適用要
   - RTL-SDR（SoapyRTLSDR）: 基本動作確認済み（Linux）
-  - RTL-SDR（ctypes直接実装 `RtlSdrDirectDevice`）: **Windows 動作確認済み（v0.1.71・2026-06-25）** — SoapySDR::Device::make() がABIチェック層で拒否するため Windows + RTL-SDR のみ ctypes で librtlsdr.dll を直接呼ぶバイパス実装
-  - Airspy R2・Mini（SoapyAirspy）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
-  - Airspy HF+（SoapyAirspyHF）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
-  - ADALM-Pluto（SoapyPlutoSDR + libiio）: Windows バンドル同梱（CI にて MSVC ソースビルド）・実機未確認
+  - RTL-SDR（ctypes直接実装 `RtlSdrDirectDevice`）: **Windows 動作確認済み（v0.1.71・2026-06-25）** — Zadig で WinUSB ドライバー適用要
+  - Airspy R2・Mini（SoapyAirspy）: Linux/macOS brew/apt 対応（実機未確認）**Windows 非対応**
+  - Airspy HF+（SoapyAirspyHF）: Linux/macOS brew/apt 対応（実機未確認）**Windows 非対応**
+  - ADALM-Pluto（SoapyPlutoSDR + libiio）: Linux/macOS のみ対応 **Windows 非対応**
   - Rig 1（FTX-1F）+ Rig 2（RTL-SDR）デュアル構成: Passband Tune + Lock 連動動作確認済み
 
 ### カスタムFavoriteグループ設計（src/data/database.py）
@@ -1808,26 +1812,30 @@ Phase 1 後も TLE なしの `10000-89999` 衛星を個別照会：
 - `SoapySDR` が import できない場合は SDR 機能を自動非表示（graceful degradation）
 - デバイス列挙: `SoapySDR.Device.enumerate()` / 未インストール時は `pyusb` で USB VID/PID スキャン
 
-#### Windows バンドル構成（v0.1.4 以降・CI で conda-forge から自動取得）
+#### Windows バンドル構成と対応デバイス（v0.1.72 確定）
 
-Windows インストーラーには SoapySDR 0.8.1 と以下のデバイスモジュールが同梱されている。
-ユーザーは追加インストール不要。RTL-SDR と ADALM-Pluto（USB接続時のみ）は Zadig で WinUSB ドライバを一度当てる必要がある。
+**Windows では SoapySDR は根本的に使用できない。** SoapySDR の enumerate が
+`hackrf_init()+hackrf_exit()` や `libusb_init()+libusb_exit()` を複数回呼び出し、
+WinUSB ハンドルキャッシュを破壊する。このため RTL-SDR・HackRF は
+ctypes で DLL を直接呼ぶバイパス実装を使用する。
 
-| 同梱モジュール | 対応デバイス | Zadig 必要 | 入手方法 |
+**Windows でサポートするデバイス（v0.1.72 時点）**:
+
+| デバイス | 実装方式 | Zadig/WinUSB | DLL |
 |---|---|---|---|
-| SoapyRTLSDR | RTL-SDR（RTL2832U 系全般） | ✓ 一回限り | conda-forge |
-| SoapyHackRF | HackRF One | — | conda-forge |
-| SoapyAirspy | Airspy R2 / Airspy Mini | — | conda-forge |
-| SoapyAirspyHF | Airspy HF+ Discovery | — | conda-forge |
-| SoapyPlutoSDR | ADALM-Pluto | USB時のみ | MSVC ソースビルド（CI） |
+| RTL-SDR（RTL2832U 系） | `RtlSdrDirectDevice`（ctypes） | ✓ 一回限り | `librtlsdr.dll` |
+| HackRF One | `HackRfDirectDevice`（ctypes） | ✓ 一回限り | `hackrf.dll` |
+| Airspy / Airspy HF+ | **非対応** | — | SoapySDR 経由は不可 |
+| ADALM-Pluto | **非対応** | — | SoapySDR 経由は不可 |
 
-ADALM-Pluto はネットワーク接続（IP: 192.168.2.1）でも動作し、その場合 Zadig 不要。
+SoapySDR モジュール DLL（SoapyRTLSDR.dll・SoapyHackRF.dll 等）は Windows インストーラーに
+同梱しているが、ctypes バイパスにより実際には使用されない。
 
 バンドル DLL の配置: core DLL + Python binding は `_MEIPASS/`、モジュール DLL は `_MEIPASS/soapy_modules/`。
 起動時に `SOAPY_SDR_PLUGIN_PATH=soapy_modules/` をセット（`src/main.py` の frozen ブロック）。
 
 conda-forge パッケージ取得スクリプト: `scripts/extract_soapy_conda.py`（CI の Windows ビルドステップで実行）。
-SoapyPlutoSDR は conda-forge に存在しないため CI で MSVC ソースビルドし `soapy-win64/modules/` に配置する。
+SoapyPlutoSDR は conda-forge に存在しないため CI で MSVC ソースビルドし `soapy-win64/modules/` に配置する（ただし Windows では実際に使用されない）。
 
 #### Linux / macOS インストール方法
 
