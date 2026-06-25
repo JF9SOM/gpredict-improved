@@ -7,12 +7,15 @@ applies quality scoring, and saves them to SQLite.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 from skyfield.api import EarthSatellite, load
+
+logger = logging.getLogger(__name__)
 
 # TLE source definitions (in priority order)
 # CelesTrak GP API: https://celestrak.org/NORAD/documentation/gp-data-formats.php
@@ -179,7 +182,7 @@ class TLEManager:
                 r.raise_for_status()
                 text = r.text
         except httpx.HTTPError as e:
-            print(f"[TLEManager] fetch error from {source_name}: {e}")
+            logger.warning(f"fetch error from {source_name}: {e}")
             stats["errors"] = 1
             return stats
 
@@ -279,7 +282,7 @@ class TLEManager:
                     stats["inserted"] += 1
 
             except Exception as e:
-                print(f"[TLEManager] parse error for {name}: {e}")
+                logger.warning(f"parse error for {name}: {e}")
                 stats["errors"] += 1
 
         self._conn.commit()
@@ -303,7 +306,7 @@ class TLEManager:
                     name, line1, line2 = lines[0], lines[1], lines[2]
                     return self.add_manual_tle(norad_cat_id, name, line1, line2)
         except httpx.HTTPError as e:
-            print(f"[TLEManager] fetch_single error: {e}")
+            logger.warning(f"fetch_single error: {e}")
         return False
 
     def add_manual_tle(
@@ -340,7 +343,7 @@ class TLEManager:
             self._conn.commit()
             return True
         except Exception as e:
-            print(f"[TLEManager] invalid TLE: {e}")
+            logger.warning(f"invalid TLE: {e}")
             return False
 
     def is_active_tle_stale(self, max_age_hours: float = 24.0) -> bool:
@@ -531,8 +534,10 @@ class TLEManager:
                     r = await client.get(url_ct, params={"GROUP": group, "FORMAT": "TLE"})
                     r.raise_for_status()
                     _process_tle_text(r.text, f"celestrak-{group}")
+                except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+                    stats["errors"] += 1
                 except httpx.HTTPError as exc:
-                    print(f"[TLEManager] active fetch error ({group}): {exc}")
+                    logger.warning(f"active fetch error ({group}): {exc}")
                     stats["errors"] += 1
 
         self._conn.commit()
@@ -572,8 +577,11 @@ class TLEManager:
                             )
                             resp.raise_for_status()
                             data = resp.json()
+                    except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+                        stats["errors"] += 1
+                        return
                     except Exception as exc:
-                        print(f"[TLEManager] SATNOGS TLE fallback error {norad}: {exc}")
+                        logger.warning(f"SATNOGS TLE fallback error {norad}: {exc}")
                         stats["errors"] += 1
                         return
 
@@ -619,7 +627,7 @@ class TLEManager:
                         epoch_dt = sat_obj.epoch.utc_datetime()
                         quality = _calc_quality(epoch_dt)
                     except Exception as exc:
-                        print(f"[TLEManager] SATNOGS TLE parse error {norad}: {exc}")
+                        logger.warning(f"SATNOGS TLE parse error {norad}: {exc}")
                         stats["errors"] += 1
                         return
 
@@ -725,11 +733,25 @@ class TLEManager:
                         )
                         stats["hidden"] += 1
 
+                except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+                    stats["errors"] += 1
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 404:
+                        # 404 = CelesTrak no longer tracks this satellite → hide it
+                        self._conn.execute(
+                            "UPDATE satellites SET is_hidden = 2, updated_at = ?"
+                            " WHERE norad_cat_id = ?",
+                            (now, norad),
+                        )
+                        stats["hidden"] += 1
+                    else:
+                        logger.warning(f"legacy TLE fetch error for {norad}: {exc}")
+                        stats["errors"] += 1
                 except httpx.HTTPError as exc:
-                    print(f"[TLEManager] legacy TLE fetch error for {norad}: {exc}")
+                    logger.warning(f"legacy TLE fetch error for {norad}: {exc}")
                     stats["errors"] += 1
                 except Exception as exc:
-                    print(f"[TLEManager] legacy TLE parse error for {norad}: {exc}")
+                    logger.warning(f"legacy TLE parse error for {norad}: {exc}")
                     stats["errors"] += 1
 
         self._conn.commit()
@@ -790,14 +812,20 @@ class TLEManager:
                     )
                     r.raise_for_status()
                     data = r.json()
+                except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+                    # Silently skip on timeout/connection errors — these are
+                    # expected when the app is shutting down or the network
+                    # is momentarily unavailable.
+                    stats["errors"] += 1
+                    continue
                 except httpx.HTTPError as exc:
                     ename = type(exc).__name__
-                    print(f"[TLEManager] provisional TLE fetch error for {fake_id}: {ename}: {exc}")
+                    logger.warning(f"provisional TLE fetch error for {fake_id}: {ename}: {exc}")
                     stats["errors"] += 1
                     continue
                 except Exception as exc:
                     ename = type(exc).__name__
-                    print(f"[TLEManager] prov TLE unexpected error for {fake_id}: {ename}: {exc}")
+                    logger.warning(f"prov TLE unexpected error for {fake_id}: {ename}: {exc}")
                     stats["errors"] += 1
                     continue
 
@@ -851,7 +879,7 @@ class TLEManager:
                     epoch_dt = sat_obj.epoch.utc_datetime()
                     quality = _calc_quality(epoch_dt)
                 except Exception as exc:
-                    print(f"[TLEManager] provisional TLE parse error for {fake_id}: {exc}")
+                    logger.warning(f"provisional TLE parse error for {fake_id}: {exc}")
                     stats["errors"] += 1
                     continue
 

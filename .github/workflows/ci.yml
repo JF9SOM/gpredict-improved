@@ -2,7 +2,7 @@ name: CI / Build
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "feature/*"]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -770,4 +770,160 @@ jobs:
             dist/GPredict-Improved.dmg
             ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
+
+  # ------------------------------------------------------------------ #
+  # Direwolf バンドルビルド（タグpush時のみ）
+  # ------------------------------------------------------------------ #
+  direwolf-linux:
+    name: Bundle Direwolf (Linux)
+    runs-on: ubuntu-22.04
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake build-essential libasound2-dev libgps-dev \
+            libudev-dev libusb-1.0-0-dev
+
+      - name: Build Direwolf from source
+        run: |
+          DVER="1.7"
+          git clone --branch ${DVER} --depth 1 \
+            https://github.com/wb2osz/direwolf.git direwolf-src
+
+          cd direwolf-src
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/tmp/direwolf-install \
+                ..
+          make -j$(nproc)
+          make install
+          cd ../..
+
+          # Flat layout: binary at archive root (find_direwolf() expects dir/direwolf)
+          ARCH=$(uname -m)
+          PKG_DIR=/tmp/direwolf-flat
+          mkdir -p ${PKG_DIR}
+          cp /tmp/direwolf-install/bin/direwolf ${PKG_DIR}/
+          cp /tmp/direwolf-install/bin/atest    ${PKG_DIR}/ 2>/dev/null || true
+          echo "${DVER}" > ${PKG_DIR}/version.txt
+
+          PKG_NAME="direwolf-linux-${ARCH}.tar.gz"
+          tar -czf ${PKG_NAME} -C ${PKG_DIR} .
+          echo "DIREWOLF_PKG=${PKG_NAME}" >> $GITHUB_ENV
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: ${{ env.DIREWOLF_PKG }}
+          make_latest: false
+
+  direwolf-windows:
+    name: Bundle Direwolf (Windows)
+    runs-on: windows-latest
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Direwolf from source (MinGW)
+        shell: powershell
+        run: |
+          $DVER = "1.7"
+          git clone --branch $DVER --depth 1 `
+            https://github.com/wb2osz/direwolf.git direwolf-src
+
+          cd direwolf-src
+          New-Item -ItemType Directory build | Out-Null
+          cd build
+          # Use MinGW Makefiles available via Git for Windows / MSYS2
+          cmake -G "MinGW Makefiles" `
+                -DCMAKE_BUILD_TYPE=Release `
+                -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\direwolf-install" `
+                ..
+          cmake --build . --config Release -j
+          cmake --install .
+          cd ..\..\
+
+          # Flat layout: binary at archive root (find_direwolf() expects dir/direwolf.exe)
+          $FLAT = "$env:RUNNER_TEMP\direwolf-flat"
+          New-Item -ItemType Directory $FLAT | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\direwolf-install\bin\direwolf.exe" $FLAT\ -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\direwolf-install\bin\*.dll"        $FLAT\ -ErrorAction SilentlyContinue
+          $DVER | Out-File "$FLAT\version.txt" -NoNewline
+
+          $PKG_NAME = "direwolf-windows-x86_64.zip"
+          Compress-Archive -Path "$FLAT\*" -DestinationPath $PKG_NAME
+          echo "DIREWOLF_PKG=$PKG_NAME" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: ${{ env.DIREWOLF_PKG }}
+          make_latest: false
+
+  direwolf-macos:
+    name: Bundle Direwolf (macOS)
+    runs-on: macos-14
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: brew install cmake portaudio
+
+      - name: Build Direwolf from source
+        run: |
+          DVER="1.7"
+          git clone --branch ${DVER} --depth 1 \
+            https://github.com/wb2osz/direwolf.git direwolf-src
+
+          cd direwolf-src
+          mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/tmp/direwolf-install \
+                ..
+          make -j$(sysctl -n hw.logicalcpu)
+          make install
+          cd ../..
+
+          # Flat layout: binary at archive root
+          ARCH=$(uname -m)
+          PKG_DIR=/tmp/direwolf-flat
+          mkdir -p ${PKG_DIR}
+          cp /tmp/direwolf-install/bin/direwolf ${PKG_DIR}/
+
+          # Bundle portaudio dylib so Direwolf runs without Homebrew
+          DBIN="${PKG_DIR}/direwolf"
+          PORTAUDIO_DYLIB=$(otool -L "${DBIN}" | awk '/portaudio/{print $1}')
+          if [ -n "${PORTAUDIO_DYLIB}" ]; then
+            cp "${PORTAUDIO_DYLIB}" ${PKG_DIR}/
+            DYLIB_NAME=$(basename "${PORTAUDIO_DYLIB}")
+            install_name_tool -change "${PORTAUDIO_DYLIB}" "@executable_path/${DYLIB_NAME}" "${DBIN}"
+          fi
+          echo "${DVER}" > ${PKG_DIR}/version.txt
+
+          PKG_NAME="direwolf-macos-${ARCH}.tar.gz"
+          tar -czf ${PKG_NAME} -C ${PKG_DIR} .
+          echo "DIREWOLF_PKG=${PKG_NAME}" >> $GITHUB_ENV
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: ${{ env.DIREWOLF_PKG }}
+          make_latest: false
           overwrite_files: true

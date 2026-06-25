@@ -1,0 +1,859 @@
+"""Communications > FT4 tab.
+
+Provides FT4 TX/RX for satellite QSOs using:
+  - ft8_lib (ctypes) for message encode/decode
+  - sounddevice for audio I/O
+  - RigController for PTT (CAT)
+
+Rig + Sound Card configuration (Rig Settings > Sound Card) is required.
+SDR-only mode is not supported because FT4 requires TX capability.
+If a second rig slot is an SDR, it can optionally be used for RX audio.
+
+Tab is non-resident: opened via Communications > FT4 and closed with ×.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import sqlite3
+import threading
+import time
+from datetime import UTC, datetime
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
+from PySide6.QtCore import QObject, Qt, Signal, Slot
+from PySide6.QtWidgets import (
+    QComboBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from comms.ft4.codec import (
+    SAMPLE_RATE,
+    Ft4Codec,
+    Ft4Message,
+)
+from comms.ft4.qso import Ft4QsoManager, QsoState
+from comms.ft4.scheduler import Ft4Scheduler
+from i18n import _
+
+UTC = UTC
+
+# Columns in the decoded-messages table
+_COL_UTC = 0
+_COL_DB = 1
+_COL_DT = 2
+_COL_FREQ = 3
+_COL_MSG = 4
+_COL_COUNT = 5
+
+_FT4_SETTINGS_KEY = "ft4_settings"
+_DEFAULT_AUDIO_FREQ = 1000.0  # Hz — base tone within SSB passband
+
+
+# ---------------------------------------------------------------------------
+# Worker: TX audio output (runs in daemon thread to avoid blocking the UI)
+# ---------------------------------------------------------------------------
+
+
+class _TxWorker(QObject):
+    """Plays FT4 audio through sounddevice and controls PTT.
+
+    Lives in a plain Python thread (not QThread) because sounddevice.play()
+    is blocking and we do not need Qt event loop inside the worker.
+    """
+
+    finished: Signal = Signal()
+    error: Signal = Signal(str)
+
+    def __init__(
+        self,
+        audio: NDArray[np.float32],
+        out_device: int | None,
+        rig: Any,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._audio = audio
+        self._out_device = out_device
+        self._rig = rig
+
+    def run(self) -> None:
+        try:
+            import sounddevice as sd  # optional dep
+
+            if self._rig is not None:
+                self._rig.set_ptt(True)
+                time.sleep(0.15)  # PTT lead time
+
+            sd.play(self._audio, samplerate=SAMPLE_RATE, device=self._out_device, blocking=True)
+
+            if self._rig is not None:
+                time.sleep(0.10)  # PTT tail time
+                self._rig.set_ptt(False)
+        except Exception as exc:
+            if self._rig is not None:
+                with contextlib.suppress(Exception):
+                    self._rig.set_ptt(False)
+            self.error.emit(str(exc))
+        finally:
+            self.finished.emit()
+
+
+# ---------------------------------------------------------------------------
+# FT4 Tab
+# ---------------------------------------------------------------------------
+
+
+class Ft4Tab(QWidget):
+    """FT4 QSO tab.
+
+    Requires a rig connected and Sound Card settings configured.
+    Opens via Communications > FT4 or when a FT4 transponder is selected.
+    """
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        radio_control: Any,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._conn = conn
+        self._radio_control = radio_control
+
+        self._codec = Ft4Codec()
+        self._scheduler = Ft4Scheduler(self)
+        self._qso: Ft4QsoManager | None = None  # created when callsign is known
+        self._rx_buffer: list[NDArray[np.float32]] = []
+        self._audio_stream: Any = None  # sounddevice.InputStream
+        self._tx_thread: threading.Thread | None = None
+        self._tx_enabled: bool = False
+        self._tx_in_progress: bool = False
+
+        self._my_call: str = ""
+        self._my_grid: str = ""
+        self._audio_freq: float = _DEFAULT_AUDIO_FREQ
+        self._out_device: int | None = None
+        self._in_device: int | None = None
+        self._rx_source: str = "soundcard"  # "soundcard" or "sdr"
+
+        self._load_settings()
+        self._ensure_table()
+        self._setup_ui()
+        self._connect_rig_signals()
+        self._refresh_codec_status()
+
+        # Scheduler signals
+        self._scheduler.period_tick.connect(self._on_period_tick)
+        self._scheduler.period_changed.connect(self._on_period_changed)
+        self._scheduler.rx_period_ended.connect(self._on_rx_period_ended)
+
+    # ------------------------------------------------------------------ #
+    # Setup                                                                #
+    # ------------------------------------------------------------------ #
+
+    def _setup_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setSpacing(6)
+
+        # -- Input source indicator (inline label, same style as APRS/SSTV tabs) --
+        self._input_banner = QLabel()
+        self._input_banner.setStyleSheet("color: #f44336;")
+        _ft4_help = QLabel(" ? ")
+        _ft4_help.setStyleSheet(
+            "color:white;background:#2980b9;border-radius:8px;font-weight:bold;padding:2px 6px;"
+        )
+        _ft4_help.setToolTip(
+            "FT4 is available on:\n"
+            "  • RS-44   (NORAD 44909)  DL 435.612 MHz / UL 145.993 MHz\n"
+            "  • JO-97   (NORAD 43803)  DL 145.857 MHz / UL 435.118 MHz\n"
+            "  • MO-122  (NORAD 60209)  DL 435.812 MHz / UL 145.938 MHz\n\n"
+            "Select one of these satellites in Radio Control to get started."
+        )
+        _banner_row = QHBoxLayout()
+        _banner_row.setSpacing(6)
+        _banner_row.addWidget(self._input_banner)
+        _banner_row.addWidget(_ft4_help)
+        _banner_row.addStretch()
+        root.addLayout(_banner_row)
+
+        # -- Codec status banner (shown when ft8lib not installed) --
+        self._codec_banner = QLabel()
+        self._codec_banner.setWordWrap(True)
+        self._codec_banner.setStyleSheet("background:#e74c3c;color:white;padding:4px;")
+        self._codec_banner.setVisible(False)
+        root.addWidget(self._codec_banner)
+
+        # -- Header: callsign / grid / RX source --
+        hdr_grp = QGroupBox(_("Station"))
+        hdr_layout = QHBoxLayout(hdr_grp)
+        hdr_layout.addWidget(QLabel(_("My Call:")))
+        self._call_edit = QLineEdit(self._my_call)
+        self._call_edit.setMaximumWidth(120)
+        self._call_edit.setPlaceholderText("JF9SOM")
+        self._call_edit.textChanged.connect(self._on_settings_changed)
+        hdr_layout.addWidget(self._call_edit)
+        hdr_layout.addSpacing(16)
+        hdr_layout.addWidget(QLabel(_("Grid:")))
+        self._grid_edit = QLineEdit(self._my_grid)
+        self._grid_edit.setMaximumWidth(80)
+        self._grid_edit.setPlaceholderText("PM86")
+        self._grid_edit.textChanged.connect(self._on_settings_changed)
+        hdr_layout.addWidget(self._grid_edit)
+        hdr_layout.addSpacing(16)
+        hdr_layout.addWidget(QLabel(_("Audio freq (Hz):")))
+        self._audio_freq_edit = QLineEdit(str(int(self._audio_freq)))
+        self._audio_freq_edit.setMaximumWidth(70)
+        self._audio_freq_edit.textChanged.connect(self._on_settings_changed)
+        hdr_layout.addWidget(self._audio_freq_edit)
+        hdr_layout.addSpacing(16)
+        hdr_layout.addWidget(QLabel(_("RX Input:")))
+        self._rx_src_combo = QComboBox()
+        self._rx_src_combo.addItem(_("Rig Soundcard"), "soundcard")
+        self._rx_src_combo.currentIndexChanged.connect(self._on_rx_source_changed)
+        hdr_layout.addWidget(self._rx_src_combo)
+        hdr_layout.addStretch()
+        root.addWidget(hdr_grp)
+
+        # -- Period indicator --
+        period_grp = QGroupBox(_("Period"))
+        period_layout = QHBoxLayout(period_grp)
+        self._period_label = QLabel("RX")
+        self._period_label.setStyleSheet("font-size:16px;font-weight:bold;")
+        period_layout.addWidget(self._period_label)
+        period_layout.addSpacing(12)
+        self._countdown_label = QLabel("6.0 s")
+        self._countdown_label.setMinimumWidth(60)
+        period_layout.addWidget(self._countdown_label)
+        period_layout.addSpacing(20)
+        self._tx_enable_btn = QPushButton(_("▶ TX Enable"))
+        self._tx_enable_btn.setCheckable(True)
+        self._tx_enable_btn.setStyleSheet(
+            "QPushButton:checked{background:#2ecc71;color:white;font-weight:bold;}"
+        )
+        self._tx_enable_btn.toggled.connect(self._on_tx_enable_toggled)
+        period_layout.addWidget(self._tx_enable_btn)
+        self._halt_btn = QPushButton(_("■ Halt TX"))
+        self._halt_btn.clicked.connect(self._on_halt)
+        period_layout.addWidget(self._halt_btn)
+        period_layout.addStretch()
+        self._status_label = QLabel("")
+        self._status_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        period_layout.addWidget(self._status_label)
+        root.addWidget(period_grp)
+
+        # -- Decoded messages table --
+        decode_grp = QGroupBox(_("Decoded Messages"))
+        dv = QVBoxLayout(decode_grp)
+        self._table = QTableWidget(0, _COL_COUNT)
+        self._table.setHorizontalHeaderLabels([_("UTC"), _("dB"), _("DT"), _("Hz"), _("Message")])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnWidth(_COL_UTC, 62)
+        self._table.setColumnWidth(_COL_DB, 46)
+        self._table.setColumnWidth(_COL_DT, 46)
+        self._table.setColumnWidth(_COL_FREQ, 56)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setMaximumHeight(180)
+        self._table.cellDoubleClicked.connect(self._on_message_double_clicked)
+        dv.addWidget(self._table)
+        dv.addWidget(
+            QLabel(_("Double-click a decoded CQ to reply, or an exchange message to advance QSO"))
+        )
+        root.addWidget(decode_grp)
+
+        # -- TX controls --
+        tx_grp = QGroupBox(_("TX Message"))
+        tv = QVBoxLayout(tx_grp)
+        tx_row = QHBoxLayout()
+        self._tx_edit = QLineEdit()
+        self._tx_edit.setMaximumWidth(260)
+        self._tx_edit.setPlaceholderText(_("FT4 message (max 22 chars)"))
+        tx_row.addWidget(self._tx_edit)
+        tx_row.addSpacing(8)
+        for label, slot in [
+            ("CQ", self._on_btn_cq),
+            ("RST", self._on_btn_rst),
+            ("R+RST", self._on_btn_rrst),
+            ("RR73", self._on_btn_rr73),
+            ("73", self._on_btn_73),
+        ]:
+            btn = QPushButton(label)
+            btn.setMaximumWidth(60)
+            btn.clicked.connect(slot)
+            tx_row.addWidget(btn)
+        tv.addLayout(tx_row)
+        root.addWidget(tx_grp)
+
+        # -- Active QSO --
+        qso_grp = QGroupBox(_("Active QSO"))
+        qv = QHBoxLayout(qso_grp)
+        self._qso_label = QLabel(_("No active QSO"))
+        qv.addWidget(self._qso_label)
+        qv.addStretch()
+        self._log_btn = QPushButton(_("Log QSO"))
+        self._log_btn.setEnabled(False)
+        self._log_btn.clicked.connect(self._on_log_qso)
+        qv.addWidget(self._log_btn)
+        self._clear_btn = QPushButton(_("Clear"))
+        self._clear_btn.clicked.connect(self._on_clear_qso)
+        qv.addWidget(self._clear_btn)
+        root.addWidget(qso_grp)
+
+        # -- Log count + ADIF export --
+        bot_row = QHBoxLayout()
+        self._log_count_label = QLabel("")
+        bot_row.addWidget(self._log_count_label)
+        bot_row.addStretch()
+        self._adif_btn = QPushButton(_("Export ADIF…"))
+        self._adif_btn.clicked.connect(self._on_export_adif)
+        bot_row.addWidget(self._adif_btn)
+        root.addLayout(bot_row)
+
+        self._refresh_log_count()
+
+    def _connect_rig_signals(self) -> None:
+        rc = self._radio_control
+        for sig_name in ("rig_connected", "rig1_connected"):
+            sig = getattr(rc, sig_name, None)
+            if sig is not None:
+                sig.connect(self._on_rig_connected)
+        for sig_name in ("rig_disconnected", "rig1_disconnected"):
+            sig = getattr(rc, sig_name, None)
+            if sig is not None:
+                sig.connect(self._on_rig_disconnected)
+        # Reflect current connection state at tab-open time
+        rig = getattr(rc, "_rig1", None)
+        already_connected = rig is not None and getattr(rig, "_connected", False)
+        self._refresh_input_source(already_connected)
+
+    # ------------------------------------------------------------------ #
+    # Settings persistence                                                 #
+    # ------------------------------------------------------------------ #
+
+    def _load_settings(self) -> None:
+        row = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = ?", (_FT4_SETTINGS_KEY,)
+        ).fetchone()
+        if row:
+            data = json.loads(row[0])
+            self._my_call = data.get("my_call", "")
+            self._my_grid = data.get("my_grid", "")
+            self._audio_freq = float(data.get("audio_freq_hz", _DEFAULT_AUDIO_FREQ))
+            self._rx_source = data.get("rx_source", "soundcard")
+        # Load soundcard device indices from shared soundcard_settings
+        row2 = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'soundcard_settings'"
+        ).fetchone()
+        if row2:
+            sc = json.loads(row2[0])
+            val_in = sc.get("input_device_index")
+            val_out = sc.get("output_device_index")
+            self._in_device = int(val_in) if val_in is not None else None
+            self._out_device = int(val_out) if val_out is not None else None
+
+    def _save_settings(self) -> None:
+        data = json.dumps(
+            {
+                "my_call": self._my_call,
+                "my_grid": self._my_grid,
+                "audio_freq_hz": self._audio_freq,
+                "rx_source": self._rx_source,
+            }
+        )
+        self._conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+            (_FT4_SETTINGS_KEY, data),
+        )
+        self._conn.commit()
+
+    def _ensure_table(self) -> None:
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS ft4_log (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                qso_date      TEXT    NOT NULL,
+                time_on       TEXT    NOT NULL,
+                time_off      TEXT,
+                call          TEXT    NOT NULL,
+                gridsquare    TEXT,
+                rst_sent      TEXT,
+                rst_rcvd      TEXT,
+                freq_hz       INTEGER,
+                norad_cat_id  INTEGER,
+                sat_name      TEXT
+            )"""
+        )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Codec status                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _refresh_codec_status(self) -> None:
+        if not self._codec.is_available:
+            self._codec_banner.setText(
+                _(
+                    "ft8lib is not installed — FT4 TX/RX is disabled.\n"
+                    "Build ft8_lib (github.com/kgoba/ft8_lib) and place "
+                    "the shared library in ~/.local/share/gpredict-improved/ft8lib/"
+                )
+            )
+            self._codec_banner.setVisible(True)
+            self._tx_enable_btn.setEnabled(False)
+        elif not self._codec.decode_available:
+            self._codec_banner.setText(
+                _(
+                    "ft8lib found but decode API is unavailable — TX only.\n"
+                    "Update ft8_lib to ≥ v0.4 for RX decode support."
+                )
+            )
+            self._codec_banner.setStyleSheet("background:#f39c12;color:white;padding:4px;")
+            self._codec_banner.setVisible(True)
+
+    # ------------------------------------------------------------------ #
+    # QSO helpers                                                          #
+    # ------------------------------------------------------------------ #
+
+    def _get_qso_manager(self) -> Ft4QsoManager | None:
+        call = self._my_call.strip()
+        grid = self._my_grid.strip()
+        if not call:
+            self._status_label.setText(_("Set My Call before operating"))
+            return None
+        if self._qso is None or self._qso._my_call != call.upper():
+            self._qso = Ft4QsoManager(call, grid)
+        return self._qso
+
+    def _update_qso_display(self) -> None:
+        qso = self._qso
+        if qso is None or qso.state == QsoState.IDLE:
+            self._qso_label.setText(_("No active QSO"))
+            self._log_btn.setEnabled(False)
+            return
+        sess = qso.session
+        state_str = qso.state.name
+        self._qso_label.setText(
+            f"{sess.their_call}  [{state_str}]  "
+            f"Sent: {sess.rst_sent or '—'}  Rcvd: {sess.rst_rcvd or '—'}"
+        )
+        self._log_btn.setEnabled(qso.state == QsoState.LOGGED)
+
+    # ------------------------------------------------------------------ #
+    # Rig / audio                                                          #
+    # ------------------------------------------------------------------ #
+
+    def _rig1(self) -> Any:
+        """Return the Rig 1 controller, or None."""
+        return getattr(self._radio_control, "_rig1", None)
+
+    def _start_audio_capture(self) -> None:
+        """Open sounddevice InputStream for RX accumulation."""
+        if self._audio_stream is not None:
+            return
+        try:
+            import sounddevice as sd
+        except ImportError:
+            self._status_label.setText(_("sounddevice not installed — pip install sounddevice"))
+            return
+        if self._in_device is None:
+            self._status_label.setText(
+                _("Sound Card not configured — open Rig Settings > Sound Card")
+            )
+            return
+        self._rx_buffer.clear()
+        try:
+            self._audio_stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                device=self._in_device,
+                callback=self._audio_callback,
+            )
+            self._audio_stream.start()
+        except Exception as exc:
+            self._status_label.setText(f"Audio open error: {exc}")
+            self._audio_stream = None
+
+    def _stop_audio_capture(self) -> None:
+        if self._audio_stream is not None:
+            with contextlib.suppress(Exception):
+                self._audio_stream.stop()
+                self._audio_stream.close()
+            self._audio_stream = None
+
+    def _audio_callback(
+        self,
+        indata: NDArray[np.float32],
+        frames: int,
+        _time: Any,
+        _status: Any,
+    ) -> None:
+        self._rx_buffer.append(indata[:, 0].copy())
+
+    # ------------------------------------------------------------------ #
+    # Scheduler slots                                                      #
+    # ------------------------------------------------------------------ #
+
+    @Slot(bool, float)
+    def _on_period_tick(self, is_tx: bool, seconds_remaining: float) -> None:
+        label = _("TX") if is_tx else _("RX")
+        color = "#e74c3c" if is_tx else "#2ecc71"
+        self._period_label.setText(label)
+        self._period_label.setStyleSheet(f"font-size:16px;font-weight:bold;color:{color};")
+        self._countdown_label.setText(f"{seconds_remaining:.1f} s")
+
+    @Slot(bool)
+    def _on_period_changed(self, is_tx: bool) -> None:
+        if is_tx and self._tx_enabled and not self._tx_in_progress:
+            self._transmit_now()
+        elif not is_tx:
+            # Start accumulating RX audio
+            self._rx_buffer.clear()
+            self._start_audio_capture()
+
+    @Slot()
+    def _on_rx_period_ended(self) -> None:
+        """RX slot ended — decode the accumulated audio buffer."""
+        if not self._rx_buffer:
+            return
+        audio = np.concatenate(self._rx_buffer)
+        self._rx_buffer.clear()
+        if not self._codec.decode_available:
+            return
+        messages = self._codec.decode_audio(audio)
+        if messages:
+            self._display_decoded(messages)
+
+    # ------------------------------------------------------------------ #
+    # Transmit path                                                        #
+    # ------------------------------------------------------------------ #
+
+    def _transmit_now(self) -> None:
+        """Start TX in a daemon thread."""
+        if not self._codec.is_available:
+            return
+        msg = self._tx_edit.text().strip().upper()
+        if not msg:
+            qso = self._qso
+            if qso is not None:
+                msg = qso.pending_tx
+        if not msg:
+            return
+
+        try:
+            audio_freq = float(self._audio_freq_edit.text())
+        except ValueError:
+            audio_freq = _DEFAULT_AUDIO_FREQ
+
+        audio = self._codec.encode_audio(msg, base_freq=audio_freq)
+        if audio is None:
+            self._status_label.setText(_("Invalid FT4 message: ") + msg)
+            return
+
+        rig = self._rig1()
+        worker = _TxWorker(audio, self._out_device, rig)
+        worker.finished.connect(self._on_tx_finished)
+        worker.error.connect(self._on_tx_error)
+
+        self._tx_in_progress = True
+        t = threading.Thread(target=worker.run, daemon=True)
+        self._tx_thread = t
+        t.start()
+        self._status_label.setText(_("TX: ") + msg)
+
+    @Slot()
+    def _on_tx_finished(self) -> None:
+        self._tx_in_progress = False
+        self._status_label.setText(_("TX done — waiting for next period"))
+
+    @Slot(str)
+    def _on_tx_error(self, msg: str) -> None:
+        self._tx_in_progress = False
+        self._status_label.setText(_("TX error: ") + msg)
+
+    # ------------------------------------------------------------------ #
+    # Decoded messages display                                             #
+    # ------------------------------------------------------------------ #
+
+    def _display_decoded(self, messages: list[Ft4Message]) -> None:
+        utc_str = datetime.now(UTC).strftime("%H%M")
+        for msg in messages:
+            row = self._table.rowCount()
+            self._table.insertRow(row)
+            self._table.setItem(row, _COL_UTC, QTableWidgetItem(utc_str))
+            self._table.setItem(row, _COL_DB, QTableWidgetItem(f"{msg.snr_db:+.0f}"))
+            self._table.setItem(row, _COL_DT, QTableWidgetItem(f"{msg.dt_sec:+.1f}"))
+            self._table.setItem(row, _COL_FREQ, QTableWidgetItem(f"{msg.freq_hz:.0f}"))
+            self._table.setItem(row, _COL_MSG, QTableWidgetItem(msg.text))
+            # Highlight if message addressed to us
+            if self._my_call and self._my_call.upper() in msg.text.upper():
+                for c in range(_COL_COUNT):
+                    item = self._table.item(row, c)
+                    if item is not None:
+                        item.setBackground(Qt.GlobalColor.yellow)
+            self._table.scrollToBottom()
+
+        # Auto-advance QSO state machine
+        qso = self._qso
+        if qso is not None and qso.state not in (QsoState.IDLE, QsoState.LOGGED):
+            for msg in messages:
+                next_tx = qso.advance(msg.text, their_snr=msg.snr_db)
+                if next_tx is not None:
+                    self._tx_edit.setText(next_tx)
+                    self._update_qso_display()
+                    break
+
+    @Slot(int, int)
+    def _on_message_double_clicked(self, row: int, _col: int) -> None:
+        item = self._table.item(row, _COL_MSG)
+        if item is None:
+            return
+        text = item.text()
+        words = text.upper().split()
+        qso = self._get_qso_manager()
+        if qso is None:
+            return
+
+        if words[0] == "CQ" and len(words) >= 2:
+            their_call = words[1]
+            their_grid = words[2] if len(words) >= 3 else ""
+            reply = qso.respond_to(their_call, their_grid)
+            self._tx_edit.setText(reply)
+            self._update_qso_display()
+            # Start scheduler with opposite slot (responding station takes the other half)
+            _is_even, _pos = Ft4Scheduler.current_slot_info()
+            # CQ station is in current slot → respond in opposite
+            self._start_scheduler(tx_even=not _is_even)
+        else:
+            # Let the state machine interpret the message
+            next_tx = qso.advance(text)
+            if next_tx is not None:
+                self._tx_edit.setText(next_tx)
+                self._update_qso_display()
+
+    # ------------------------------------------------------------------ #
+    # TX quick buttons                                                     #
+    # ------------------------------------------------------------------ #
+
+    def _on_btn_cq(self) -> None:
+        qso = self._get_qso_manager()
+        if qso is None:
+            return
+        msg = qso.start_cq()
+        self._tx_edit.setText(msg)
+        self._update_qso_display()
+        is_even, _pos = Ft4Scheduler.current_slot_info()
+        self._start_scheduler(tx_even=is_even)
+
+    def _on_btn_rst(self) -> None:
+        call = self._my_call.strip().upper()
+        qso = self._qso
+        their = qso.session.their_call if qso else ""
+        if their:
+            self._tx_edit.setText(f"{their} {call} -05")
+
+    def _on_btn_rrst(self) -> None:
+        call = self._my_call.strip().upper()
+        qso = self._qso
+        their = qso.session.their_call if qso else ""
+        if their:
+            self._tx_edit.setText(f"{their} {call} R-05")
+
+    def _on_btn_rr73(self) -> None:
+        call = self._my_call.strip().upper()
+        qso = self._qso
+        their = qso.session.their_call if qso else ""
+        if their:
+            self._tx_edit.setText(f"{their} {call} RR73")
+
+    def _on_btn_73(self) -> None:
+        call = self._my_call.strip().upper()
+        qso = self._qso
+        their = qso.session.their_call if qso else ""
+        if their:
+            self._tx_edit.setText(f"{their} {call} 73")
+
+    # ------------------------------------------------------------------ #
+    # QSO log / clear                                                      #
+    # ------------------------------------------------------------------ #
+
+    @Slot()
+    def _on_log_qso(self) -> None:
+        qso = self._qso
+        if qso is None:
+            return
+        # Attach satellite info from radio control
+        norad_text = getattr(self._radio_control, "_norad_label", None)
+        sat_text = getattr(self._radio_control, "_sat_name_label", None)
+        try:
+            qso.session.norad_cat_id = int(norad_text.text()) if norad_text else None
+        except (ValueError, AttributeError):
+            qso.session.norad_cat_id = None
+        try:
+            qso.session.sat_name = sat_text.text() if sat_text else ""
+        except AttributeError:
+            qso.session.sat_name = ""
+        qso.log_qso(self._conn)
+        self._refresh_log_count()
+        self._on_clear_qso()
+
+    @Slot()
+    def _on_clear_qso(self) -> None:
+        if self._qso is not None:
+            self._qso.clear()
+        self._tx_edit.clear()
+        self._update_qso_display()
+
+    # ------------------------------------------------------------------ #
+    # Settings change handlers                                             #
+    # ------------------------------------------------------------------ #
+
+    @Slot()
+    def _on_settings_changed(self) -> None:
+        self._my_call = self._call_edit.text().upper().strip()
+        self._my_grid = self._grid_edit.text().upper().strip()
+        with contextlib.suppress(ValueError):
+            self._audio_freq = float(self._audio_freq_edit.text())
+        self._qso = None  # reset manager so it picks up new callsign
+        self._save_settings()
+
+    @Slot(int)
+    def _on_rx_source_changed(self, _idx: int) -> None:
+        self._rx_source = self._rx_src_combo.currentData()
+        self._save_settings()
+
+    # ------------------------------------------------------------------ #
+    # TX Enable / Halt                                                     #
+    # ------------------------------------------------------------------ #
+
+    @Slot(bool)
+    def _on_tx_enable_toggled(self, checked: bool) -> None:
+        self._tx_enabled = checked
+        if checked:
+            if not self._codec.is_available:
+                self._tx_enable_btn.setChecked(False)
+                return
+            if not self._my_call.strip():
+                self._status_label.setText(_("Set My Call before enabling TX"))
+                self._tx_enable_btn.setChecked(False)
+                return
+            if not self._scheduler._running:
+                is_even, _pos = Ft4Scheduler.current_slot_info()
+                self._start_scheduler(tx_even=is_even)
+        else:
+            self._status_label.setText(_("TX disabled"))
+
+    @Slot()
+    def _on_halt(self) -> None:
+        self._tx_enabled = False
+        self._tx_enable_btn.setChecked(False)
+        self._status_label.setText(_("TX halted"))
+
+    # ------------------------------------------------------------------ #
+    # Rig connected/disconnected                                           #
+    # ------------------------------------------------------------------ #
+
+    @Slot()
+    def _on_rig_connected(self) -> None:
+        self._refresh_input_source(connected=True)
+        self._status_label.setText(_("Rig connected — ready"))
+        # Re-read soundcard settings in case they were updated
+        self._load_settings()
+
+    @Slot()
+    def _on_rig_disconnected(self) -> None:
+        self._on_halt()
+        self._stop_audio_capture()
+        self._scheduler.stop()
+        self._refresh_input_source(connected=False)
+        self._status_label.setText(_("Rig disconnected"))
+
+    def _refresh_input_source(self, connected: bool) -> None:
+        """Update the input-source label text and colour (matches APRS/SSTV style)."""
+        if connected:
+            self._input_banner.setText(_("Input: Rig connected"))
+            self._input_banner.setStyleSheet("color: #4caf50;")
+        else:
+            self._input_banner.setText(_("Input: No audio source — connect Rig in Radio Control"))
+            self._input_banner.setStyleSheet("color: #f44336;")
+
+    # ------------------------------------------------------------------ #
+    # Scheduler start helper                                               #
+    # ------------------------------------------------------------------ #
+
+    def _start_scheduler(self, tx_even: bool) -> None:
+        if not self._scheduler._running:
+            self._scheduler.start(tx_even=tx_even)
+        else:
+            self._scheduler.set_tx_even(tx_even)
+
+    # ------------------------------------------------------------------ #
+    # Log count / ADIF export                                              #
+    # ------------------------------------------------------------------ #
+
+    def _refresh_log_count(self) -> None:
+        row = self._conn.execute("SELECT COUNT(*) FROM ft4_log").fetchone()
+        n = row[0] if row else 0
+        self._log_count_label.setText(_("QSOs logged: ") + str(n))
+
+    @Slot()
+    def _on_export_adif(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        default = f"ft4_log_{datetime.now(UTC).strftime('%Y%m%d')}.adi"
+        path, _filt = QFileDialog.getSaveFileName(self, _("Export ADIF"), default, "ADIF (*.adi)")
+        if not path:
+            return
+        rows = self._conn.execute(
+            "SELECT qso_date,time_on,time_off,call,gridsquare,"
+            "rst_sent,rst_rcvd,freq_hz,sat_name FROM ft4_log ORDER BY id ASC"
+        ).fetchall()
+        lines = ["<ADIF_VER:5>3.1.4\n<EOH>\n"]
+        for r in rows:
+            qso_date, time_on, time_off, call, grid, rst_s, rst_r, freq_hz, sat = r
+            freq_mhz = f"{freq_hz / 1e6:.6f}" if freq_hz else ""
+            entry = (
+                f"<CALL:{len(call)}>{call} "
+                f"<QSO_DATE:8>{qso_date} "
+                f"<TIME_ON:6>{time_on} "
+                f"<MODE:3>FT4 "
+                f"<PROP_MODE:3>SAT "
+            )
+            if sat:
+                entry += f"<SAT_NAME:{len(sat)}>{sat} "
+            if freq_mhz:
+                entry += f"<FREQ:{len(freq_mhz)}>{freq_mhz} "
+            if rst_s:
+                entry += f"<RST_SENT:{len(rst_s)}>{rst_s} "
+            if rst_r:
+                entry += f"<RST_RCVD:{len(rst_r)}>{rst_r} "
+            if grid:
+                entry += f"<GRIDSQUARE:{len(grid)}>{grid} "
+            entry += "<EOR>\n"
+            lines.append(entry)
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        QMessageBox.information(self, _("Export"), _("Exported ") + str(len(rows)) + _(" QSOs."))
+
+    # ------------------------------------------------------------------ #
+    # Cleanup on tab close                                                 #
+    # ------------------------------------------------------------------ #
+
+    def closeEvent(self, event: Any) -> None:
+        self._on_halt()
+        self._stop_audio_capture()
+        self._scheduler.stop()
+        super().closeEvent(event)
