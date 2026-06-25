@@ -46,6 +46,16 @@ GPredict-Improved は、長年アマチュア無線家に愛用されてきた
 - **Autotrack/Record** — 衛星を順次自動追尾。タイマーで開始・停止時刻を設定可能。AOS時にリグ・ローテーターを自動接続、LOS時に自動切断。SDR Audio/IQ録音をAOS〜LOS間で自動制御
 - **AOS/LOSデスクトップ通知**（Linux: notify-send / macOS: osascript / Windows: PowerShell）
 
+### Communications（デジタル通信）
+メニューバーの **Communications**（Radio と Autotrack/Record の間）からアクセス。各機能は × で閉じられる非常駐タブとして開きます。
+
+- **APRS** — Rig + サウンドカード + Direwolf（TCP KISS）または SDR 内蔵の Bell 202 AFSK 復調器でAX.25/APRSパケットを受信・デコード。APRSメッセージ・位置ビーコンの送信にも対応（PTTはCAT制御）。受信した位置パケットはDashboardマップにシアン▲ピンで表示。コールサイン・SSID・Viaパスを保存。ADIF出力対応。
+- **Telemetry** — アマチュア衛星のAX.25テレメトリーフレームをデコード。12衛星分のバイナリフォーマット定義を同梱（ISS、FO-29、SO-50、AO-73、JO-97、RS-44、MO-122 等）。定義のない衛星は生Hex表示。CSV出力対応。
+- **SSTV / SSDV** — アマチュア衛星（例：ISS 145.800 MHz PD120・437.550 MHz Robot36）のSSTV画像（Robot36、PD120、Martin、Scottie）とSSDVパケットを受信。SDR音声またはリグのサウンドカード入力に対応。トランスポンダー説明に「SSTV」「SSDV」「IMAGING」が含まれると自動オープン。
+- **FT4** — 内蔵 ft8_lib（ctypes）でFT4の送受信が可能（WSJT-X不要）。Rig + PTTで送信。RS-44・JO-97・MO-122 等のFT4運用衛星で自動オープン。ADIF出力対応。
+- **Help → Direwolf Installation…** — 全プラットフォームでDirewolfの検出・インストール・更新が可能
+- **Help → gr-satellites…** — gr-satellitesのインストール状態確認・インストール案内（apt / brew / pip）
+
 ### モバイルブラウザUI
 同じLAN内のスマホ・タブレットからアプリインストール不要でアクセス可能です。
 
@@ -235,6 +245,7 @@ gpredict-improved/
 │   ├── web/      # FastAPI + WebSocket（LAN内ブラウザアクセス、ポート8080）
 │   ├── rig/      # Hamlib 無線機・ローテーター制御 + SdrRigAdapter
 │   ├── sdr/      # SoapySDR バックエンド — デバイス・パイプライン・復調・録音
+│   ├── comms/    # デジタル通信 — APRSエンジン・Direwolf管理・Bell 202 AFSK復調・AX.25パーサー
 │   ├── data/     # TLE/SATNOGS同期・SQLite DB・手動入力
 │   └── i18n/     # 多言語対応（gettextベース）
 ├── locale/
@@ -299,11 +310,8 @@ Windows の SoapySDR は WinUSB との根本的な非互換性があるため、
 
 ### デジタルモード — アマチュア衛星（SDR）
 - **HRPT / LRPT** — SatDump連携による気象衛星画像受信
-- **APRS** — Direwolf（TCP KISS）経由での受信・デコード
-- **FT4 / FT8** — WSJT-X（UDP）との連携
-- **衛星テレメトリー** — gr-satellites対応（100機種以上）
 - **CW解析** — AIベースのデコーダー（機械学習推論）
-- **SSTV** — pySSTV による受信
+- **gr-satellites 深度統合** — gr-satellites サブプロセス経由で100機種以上のテレメトリーフォーマットに対応
 
 ### 業務用衛星受信（SDR）— 計画中
 HackRF / RTL-SDR + 適切な LNA・フィルターで受信可能な業務用衛星信号。

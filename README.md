@@ -46,6 +46,16 @@ satellite tracker by Alexandru Csete OZ9AEC — built on a modern Python stack.
 - **Autotrack/Record** — automatic sequential satellite tracking with scheduled timer (start/stop time), auto rig+rotator connect at AOS / disconnect at LOS, and automatic SDR audio/IQ recording between AOS and LOS
 - **AOS/LOS desktop notifications** (Linux: notify-send / macOS: osascript / Windows: PowerShell)
 
+### Communications (Digital Modes)
+Access via the **Communications** menu (between Radio and Autotrack/Record). Each mode opens as a closeable non-resident tab.
+
+- **APRS** — receive and decode AX.25/APRS packets via Direwolf (TCP KISS) with a Rig + sound card, or via the built-in Bell 202 AFSK demodulator when an SDR is connected. Send APRS messages and position beacons (PTT via CAT). Received position packets appear as cyan ▲ pins on the Dashboard map. Callsign, SSID, and via path are saved. ADIF export.
+- **Telemetry** — decode AX.25 telemetry frames from amateur satellites. Binary format definitions included for 12 satellites (ISS, FO-29, SO-50, AO-73, JO-97, RS-44, MO-122, etc.). Raw hex display for undefined satellites. CSV export.
+- **SSTV / SSDV** — receive SSTV images (Robot36, PD120, Martin, Scottie) and SSDV packets from amateur satellites (e.g. ISS 145.800 MHz PD120 or 437.550 MHz Robot36). Works with SDR audio or a rig sound card. Auto-opens when a transponder description contains "SSTV", "SSDV", or "IMAGING".
+- **FT4** — encode and decode FT4 using the built-in ft8_lib (ctypes — no WSJT-X required). Transmit via Rig + PTT. Auto-opens for RS-44, JO-97, MO-122, and other FT4-active satellites. ADIF export.
+- **Help → Direwolf Installation…** — detect, install, or update Direwolf on all platforms
+- **Help → gr-satellites…** — detect gr-satellites installation and show install instructions (apt / brew / pip)
+
 ### Mobile Browser UI
 Access from any smartphone or tablet on your local network — no app install needed.
 
@@ -250,6 +260,7 @@ gpredict-improved/
 │   ├── web/      # FastAPI + WebSocket (LAN browser access on port 8080)
 │   ├── rig/      # Hamlib radio/rotator control + SdrRigAdapter
 │   ├── sdr/      # SoapySDR backend — device, pipeline, demodulator, recorder
+│   ├── comms/    # Digital communications — APRS engine, Direwolf, Bell 202 AFSK, AX.25
 │   ├── data/     # TLE/SATNOGS sync, SQLite DB, manual entries
 │   └── i18n/     # Internationalization (gettext-based)
 ├── locale/
@@ -326,11 +337,8 @@ SoapySDR is incompatible with WinUSB on Windows; RTL-SDR and HackRF bypass it vi
 
 #### Digital Modes — Amateur Satellites (SDR)
 - **HRPT / LRPT** — weather satellite image reception via SatDump
-- **APRS** — receive and decode via Direwolf (TCP KISS)
-- **FT4 / FT8** — integration with WSJT-X (UDP)
-- **Satellite telemetry** — gr-satellites support (100+ satellites)
 - **CW decode** — AI-based decoder (ML inference, no zero-crossing artefacts)
-- **SSTV** — receive via pySSTV
+- **gr-satellites deep integration** — 100+ satellite telemetry formats via gr-satellites subprocess
 
 #### Operational Satellite Reception (SDR) — Planned
 Receivable with HackRF / RTL-SDR + appropriate LNA/filter. Open-source decoders exist for all of these and will be integrated as SDR plugins.
