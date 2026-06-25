@@ -214,8 +214,13 @@ static SoapySDR::Device *makeRTLSDR(const SoapySDR::Kwargs &args)
     // Catch both std::exception and unknown exceptions (Windows SEH / access
     // violations appear as unknown exceptions when SoapySDR.dll is built with
     // /EHa; without /EHa they would crash the process).
+    std::string _argKeys;
+    for (const auto &kv : args) _argKeys += kv.first + "=" + kv.second + " ";
+    SoapySDR_logf(SOAPY_SDR_INFO, "makeRTLSDR called, args: %s", _argKeys.c_str());
     try {
-        return new SoapyRTLSDR(args);
+        SoapySDR::Device *d = new SoapyRTLSDR(args);
+        SoapySDR_logf(SOAPY_SDR_INFO, "SoapyRTLSDR ctor completed OK, device=%p", (void *)d);
+        return d;
     } catch (const std::exception &ex) {
         SoapySDR_logf(SOAPY_SDR_ERROR, "SoapyRTLSDR ctor threw std::exception: %s", ex.what());
         throw;
@@ -441,28 +446,40 @@ if CTOR_SRC is not None and ctor_content:
             print(f"{CTOR_SRC}: replaced serial-block via regex fallback.", file=sys.stderr)
 
     # ── Post-open diagnostic patch ────────────────────────────────────────────
-    # Add step-by-step SoapySDR_logf calls immediately after rtlsdr_open()
-    # succeeds so we can see exactly which subsequent call crashes (SEH) and
-    # causes Device::make() to return "no match" without a logged exception.
-    POST_OPEN_FIND = (
-        "    if (rtlsdr_open( &dev, (uint32_t)deviceId ) != RTLSDR_SUCCESS)\n"
-        '        throw std::runtime_error( "Unable to open RTL-SDR device #" + std::to_string(deviceId) );\n'  # noqa: E501
-    )
-    POST_OPEN_REPLACE = (
-        "    if (rtlsdr_open( &dev, (uint32_t)deviceId ) != RTLSDR_SUCCESS)\n"
-        '        throw std::runtime_error( "Unable to open RTL-SDR device #" + std::to_string(deviceId) );\n'  # noqa: E501
+    # Inject step-by-step SoapySDR_logf calls immediately after rtlsdr_open()
+    # succeeds.  If Device::make() still returns "no match" with no exception
+    # log, the crash point is precisely the first call that has a "before" log
+    # but no "after" log.
+    #
+    # The injected block:
+    #   1. "rtlsdr_open OK"                 — open succeeded
+    #   2. rtlsdr_get_tuner_gains before/after — first post-open librtlsdr call
+    #   3. "post-open diag done"             — all injected calls survived
+    POST_OPEN_INJECTION = (
         '    SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: rtlsdr_open OK, dev=%p", (void*)dev);\n'  # noqa: E501
         "    {\n"
+        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: calling rtlsdr_get_tuner_gains");\n'  # noqa: E501
         "        int _nGains = rtlsdr_get_tuner_gains(dev, nullptr);\n"
-        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: rtlsdr_get_tuner_gains returned %d", _nGains);\n'  # noqa: E501
+        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: rtlsdr_get_tuner_gains=%d", _nGains);\n'  # noqa: E501
+        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: calling rtlsdr_set_sample_rate");\n'  # noqa: E501
+        "        rtlsdr_set_sample_rate(dev, 2048000);\n"
+        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: rtlsdr_set_sample_rate done");\n'  # noqa: E501
+        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: diag block done");\n'
         "    }\n"
     )
-    if POST_OPEN_FIND in ctor_patched:
-        ctor_patched = ctor_patched.replace(POST_OPEN_FIND, POST_OPEN_REPLACE, 1)
+    # Match rtlsdr_open() + throw line — whitespace-flexible regex
+    post_open_re = re.compile(
+        r"([ \t]*if\s*\(rtlsdr_open\s*\([^)]*\)\s*!=\s*RTLSDR_SUCCESS\)\s*\n"
+        r"[ \t]*throw[^\n]+\n)"
+    )
+    ctor_after_po = post_open_re.sub(r"\1" + POST_OPEN_INJECTION, ctor_patched, count=1)
+    if ctor_after_po != ctor_patched:
+        ctor_patched = ctor_after_po
         print(f"{CTOR_SRC}: added post-open diagnostic logging.", file=sys.stderr)
     else:
         print(
-            f"WARNING: {CTOR_SRC} post-open pattern not found — skipping post-open diagnostic",
+            f"WARNING: {CTOR_SRC} post-open rtlsdr_open pattern not found"
+            " — skipping post-open diag",
             file=sys.stderr,
         )
 
