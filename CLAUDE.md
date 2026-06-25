@@ -1057,6 +1057,33 @@ rr = obs.range_rate_km_s * (2.0 if self._selected_norad == MOON_ID else 1.0)
 
 ---
 
+## 既知のバグ（未修正）
+
+### AppImage — テキストフィールドにキー入力ができない（Linux 非Ubuntu系）
+
+**症状**: Linux AppImage 版で、CI-Vアドレス・ポート名・テキスト入力フィールドにキーボードで文字が入力できない。マウス操作は正常。
+
+**再現環境**: openSUSE Leap 16.0（Python 3.13 仮想環境から `python src/main.py` で起動した場合は正常動作する）
+
+**原因（推定）**: AppImage に同梱された Qt6 / libxkbcommon が、非Ubuntu系ディストリビューションの XKB 設定ファイルを見つけられない。`QT_XKB_CONFIG_ROOT` / `XKB_CONFIG_ROOT` を `/usr/share/X11/xkb` または `/usr/share/xkb` に設定するコードは `src/main.py` に実装済みだが、それでも解消しない環境がある。
+
+**現状の対処**:
+- `src/main.py` に `QT_XKB_CONFIG_ROOT` / `XKB_CONFIG_ROOT` の自動設定を実装済み（起動時に `/usr/share/X11/xkb`, `/usr/share/xkb` を順に検索して最初に存在するパスをセット）
+- それでも再現する場合は AppImage 内部の Qt プラグイン or libxkbcommon の問題と考えられる
+
+**調査方針（次回対応時）**:
+1. 問題が再現する環境で AppImage をターミナルから起動し、ログ出力を入手
+2. `qt.qpa.keymapper` や `xkb` 関連の警告・エラーを確認
+3. AppImage 内の `libxkbcommon.so` と XKB データのパスを確認
+4. 必要であれば AppImage ビルド時に XKB データを同梱するか、`linuxdeploy` プラグインで解決を試みる
+
+**ログ取得コマンド（問題再現環境で実行）**:
+```bash
+QT_LOGGING_RULES="qt.qpa.*=true" ./GPredict-Improved.AppImage 2>&1 | head -100
+```
+
+---
+
 ## 次回の作業候補（v0.1.0 以降）
 
 ### 継続中・優先度高
