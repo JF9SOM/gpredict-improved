@@ -309,6 +309,8 @@ See [CLAUDE.md](CLAUDE.md) for the full architecture reference used during devel
 |--------|------|---------|-------------|-------|
 | Yaesu FTX-1F | Transceiver | ✓ | ✓ | Hamlib 4.7.1 model 1051, NET Control, Doppler |
 | Yaesu FT-991AM | Transceiver | ✓ | ✓ | Hamlib 4.7.1 model 1036, NET Control, Doppler |
+| Icom IC-9100 | Transceiver | — | ✓ | Hamlib 4.7.1 model 3068, NET+Direct, SAT mode, Doppler (v0.1.27) |
+| Icom IC-9700 | Transceiver | ✓ | ✓ | Hamlib 4.7.1 model 3081, NET+Direct, SAT mode, Doppler (v0.1.27) |
 | RTL-SDR | SDR | ✓ (WinUSB/Zadig)* | ✓ | ctypes direct on Windows, SoapyRTLSDR on Linux/macOS |
 | HackRF One | SDR | ✓ (WinUSB/Zadig)* | ✓ | ctypes direct on Windows, SoapyHackRF on Linux/macOS |
 | Airspy R2 / Mini | SDR | ❌ not supported | ✓ | SoapyAirspy (Linux/macOS only) |
@@ -359,7 +361,7 @@ Each decoder will run as a subprocess with results displayed in a dedicated plug
 - **SDR Device Installation dialog** — USB VID/PID scan, guided driver install for RTL-SDR / HackRF on all platforms
 
 #### Hardware
-- Real-world Doppler tests with IC-9700, TS-2000, FT-817ND, etc.
+- Real-world Doppler tests with TS-2000, FT-817ND, etc. (IC-9100/IC-9700 confirmed in v0.1.27)
 - WSJT-X / JS8Call frequency & mode sync
 
 Contributions and feedback are welcome — see the mailing list below.

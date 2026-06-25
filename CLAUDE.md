@@ -775,6 +775,9 @@ sudo usermod -aG dialout $USER
   - FTX-1F（Hamlib 4.7.1 モデル1051、Direct モード）: モード・CTCSS（raw CAT `MD1/MD0/CN1/CT1` via `os.open()`）動作確認済み（2026-06-18）
   - FT-991AM（Hamlib 4.7.1 モデル1036、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
   - FT-991/FT-991A（Direct モード）: モード・CTCSS（raw CAT `SV/MD0/CN0/CT0` via pyserial）実装済み・実機確認待ち（2026-06-18）
+  - IC-9100（Hamlib 4.7.1 モデル3068、Direct モード）: クロスバンド・同バンド両方の周波数・モード・CTCSS 動作確認済み（v0.1.27・2026-06-25）— SAT モード ON/OFF・ドップラー補正・VFO 逆転バグ修正済み
+  - IC-9100（Hamlib 4.7.1 モデル3068、NET Control）: クロスバンド・同バンド両方の周波数・モード・CTCSS 動作確認済み（v0.1.27・2026-06-25）
+  - IC-9700（Hamlib 4.7.1 モデル3081、Direct/NET モード）: Linux・Windows 両方で IC-9100 と同様に動作確認済み（v0.1.27・2026-06-25）— `_SATMODE_USE_VFO_SUB` 分岐（VFO_SUB for UL）使用
   - HackRF One（SoapyHackRF）: NFM/USB/CW 復調・スペクトラム・Bias-T 動作確認済み（Linux）
   - HackRF One（ctypes直接実装 `HackRfDirectDevice`）: **Windows 実装済み v0.1.72（2026-06-25）** — 実機確認待ち。Zadig で WinUSB ドライバー適用要
   - RTL-SDR（SoapyRTLSDR）: 基本動作確認済み（Linux）
@@ -1197,7 +1200,7 @@ QT_LOGGING_RULES="qt.qpa.*=true" ./GPredict-Improved.AppImage 2>&1 | head -100
 
 ### 継続中・優先度高
 0. ~~**RTL-SDR WinUSB Connect 失敗修正**~~ **→ v0.1.71 で解決済み（2026-06-25）**
-1. **ドップラー補正の実動作確認** — 各種リグ（IC-9700・TS-2000・FT-817ND 等）での実衛星通信テスト（FTX-1F・FT-991AM・RTL-SDR/HackRF は確認済み）
+1. **ドップラー補正の実動作確認** — 各種リグ（TS-2000・FT-817ND 等）での実衛星通信テスト（FTX-1F・FT-991AM・IC-9100・IC-9700・RTL-SDR/HackRF は確認済み）
 2. **ローテーター設定ダイアログの改善** — 接続テストボタン・AZ/ELリミット設定
 3. **デバッグ用ログファイル出力の削除または設定化** — `src/main.py` の `_setup_logging()` にある frozen バンドル向けファイルログ出力（`platformdirs.user_log_dir`）は dmg デバッグ目的で追加したもの。Settings に「デバッグログを保存する」チェック（デフォルトOFF）を追加するか削除する。該当箇所: `src/main.py` 63〜75行目
 4. ~~**Autotrack/Record メニューの実装**~~ **→ v0.1.0 以降で完了**（AutotrackRecordDialog・Autotrack Timer・AOS/LOS 自動接続・録音自動制御）
@@ -1226,7 +1229,7 @@ QT_LOGGING_RULES="qt.qpa.*=true" ./GPredict-Improved.AppImage 2>&1 | head -100
 17. **多言語対応（日本語）** — フェーズ2として日本語UIの追加（翻訳ファイルは準備済み。View > Language > Japanese は現在「To be prepared later.」表示）
 
 ### ハードウェア連携
-18. **追加リグの実機テスト** — IC-9700・TS-2000・FT-817ND 等でのドップラー制御動作確認（satmode含む）
+18. **追加リグの実機テスト** — TS-2000・FT-817ND 等でのドップラー制御動作確認（IC-9100・IC-9700 は v0.1.27 で確認済み）
 19. **WSJT-X / JS8Call 連携** — デジタルモード運用ソフトとの周波数・モード連動（将来）
 
 ---
