@@ -65,6 +65,25 @@ def main() -> int:
     out = cmake_dir / "SoapySDRConfig.cmake"
     out.write_text(config, encoding="utf-8")
     print(f"Wrote {out}")
+
+    # cmake's find_package(SoapySDR "0.4.0" REQUIRED) also reads
+    # SoapySDRConfigVersion.cmake to check compatibility.  Without it cmake
+    # reports "version: unknown" and rejects the config file even when the
+    # path is correct.
+    version_config = (
+        'set(PACKAGE_VERSION "0.8.1")\n'
+        "if(PACKAGE_VERSION VERSION_LESS PACKAGE_FIND_VERSION)\n"
+        "  set(PACKAGE_VERSION_COMPATIBLE FALSE)\n"
+        "else()\n"
+        "  set(PACKAGE_VERSION_COMPATIBLE TRUE)\n"
+        "  if(PACKAGE_FIND_VERSION STREQUAL PACKAGE_VERSION)\n"
+        "    set(PACKAGE_VERSION_EXACT TRUE)\n"
+        "  endif()\n"
+        "endif()\n"
+    )
+    ver_out = cmake_dir / "SoapySDRConfigVersion.cmake"
+    ver_out.write_text(version_config, encoding="utf-8")
+    print(f"Wrote {ver_out}")
     print(f"  include: {inc}")
     print(f"  lib:     {lib}")
     return 0
