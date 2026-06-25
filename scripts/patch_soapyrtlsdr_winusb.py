@@ -210,7 +210,12 @@ static SoapySDR::Device *makeRTLSDR(const SoapySDR::Kwargs &args)
     // libusb operation and WinUSB finds the device without interference.
     // Out-of-range device indices are handled by rtlsdr_open()'s own error
     // path, which throws an appropriate exception.
-    return new SoapyRTLSDR(args);
+    try {
+        return new SoapyRTLSDR(args);
+    } catch (const std::exception &ex) {
+        SoapySDR_logf(SOAPY_SDR_ERROR, "SoapyRTLSDR ctor threw: %s", ex.what());
+        throw;
+    }
 }
 """
 
@@ -382,12 +387,15 @@ if CTOR_SRC is not None and ctor_content:
         '    // found!") even when the device is physically present.\n'
         '    if (args.count("device_index") != 0) {\n'
         '        deviceId = std::stoi(args.at("device_index"));\n'
+        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB patch: using device_index=%s", args.at("device_index").c_str());\n'  # noqa: E501
         '    } else if (args.count("serial") != 0) {\n'
         "        // Fallback for non-WinUSB systems (libusbK / Linux / macOS).\n"
         '        const auto serial = args.at("serial");\n'
+        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB patch: falling back to serial=%s", serial.c_str());\n'  # noqa: E501
         "        deviceId = rtlsdr_get_index_by_serial(serial.c_str());\n"
         '        if (deviceId < 0) throw std::runtime_error("No RTL-SDR device with serial: " + serial);\n'  # noqa: E501
         "    } else {\n"
+        '        SoapySDR_logf(SOAPY_SDR_ERROR, "WinUSB patch: neither device_index nor serial in args!");\n'  # noqa: E501
         '        throw std::runtime_error("No RTL-SDR devices found!");\n'
         "    }\n"
     )
