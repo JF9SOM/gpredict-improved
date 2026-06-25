@@ -337,7 +337,18 @@ class SdrInstallDialog(QDialog):
                 self._dev_layout.addWidget(w)
 
         # SoapySDR overall status
-        if SOAPY_AVAILABLE:
+        if platform.system() == "Windows":
+            # On Windows, RTL-SDR and HackRF bypass SoapySDR via ctypes.
+            # SoapySDR is bundled but not actually used for device access.
+            self._soapy_status.setText(
+                "ℹ️  "
+                + _(
+                    "SoapySDR is bundled but bypassed on Windows.\n"
+                    "RTL-SDR and HackRF communicate directly via ctypes (hackrf.dll / rtlsdr.dll)."
+                )
+            )
+            self._soapy_status.setStyleSheet("color: #3498db;")
+        elif SOAPY_AVAILABLE:
             self._soapy_status.setText("✅  " + _("SoapySDR is installed and ready."))
             self._soapy_status.setStyleSheet("color: #2ecc71;")
         else:
