@@ -300,9 +300,24 @@ else:
 if CTOR_SRC is not None:
     with open(CTOR_SRC, encoding="utf-8", errors="replace") as f:
         ctor_content = f.read()
+    crlf_before = ctor_content.count("\r")
     ctor_content = ctor_content.replace("\r\n", "\n")  # normalize CRLF → LF (Windows git clone)
+    print(f"CTOR content length: {len(ctor_content)}", file=sys.stderr)
+    print(f"CRLF count before normalization: {crlf_before}", file=sys.stderr)
+    print(f"CR count after normalization: {ctor_content.count(chr(13))}", file=sys.stderr)
+    print(f"'serial' occurrences in file: {ctor_content.count('serial')}", file=sys.stderr)
+    # Show the exact bytes of the target block to diagnose match failures
+    idx = ctor_content.find("//if a serial is not present")
+    if idx >= 0:
+        snippet = ctor_content[max(0, idx - 10) : idx + 200]
+        print(f"SERIAL_BLOCK raw bytes: {snippet!r}", file=sys.stderr)
+    else:
+        print(
+            "SERIAL_BLOCK marker '//if a serial is not present' NOT FOUND in file", file=sys.stderr
+        )
 else:
     ctor_content = ""
+    crlf_before = 0
 
 print(
     f"=== {CTOR_SRC or 'constructor'} BEFORE patch (rtlsdr_get_device_count lines) ===",
