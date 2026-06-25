@@ -59,6 +59,11 @@ if sys.platform == "win32" and getattr(sys, "frozen", False):
     _soapy_modules = Path(getattr(sys, "_MEIPASS", "")) / "soapy_modules"
     if _soapy_modules.exists():
         os.environ.setdefault("SOAPY_SDR_PLUGIN_PATH", str(_soapy_modules))
+    # Add _internal/ to DLL search path so rtlsdrSupport.dll (in soapy_modules/)
+    # can find SoapySDR.dll and rtlsdr.dll at load time.
+    _mei = Path(getattr(sys, "_MEIPASS", ""))
+    if _mei.exists() and hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(str(_mei))
 
 # Windows subprocess enumerate worker.
 # SdrDevice.enumerate() on Windows spawns this process with --_gpredict_soapy_enum
