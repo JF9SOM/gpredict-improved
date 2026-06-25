@@ -729,6 +729,7 @@ sudo usermod -aG dialout $USER
 
 - **SoapySDR バックエンド**（`src/sdr/`）: device・pipeline・demodulator・recorder
   - SdrDevice: SoapySDR デバイス列挙（audio/null/remote ドライバ除外）・オープン・ストリーミング
+  - **Windows RTL-SDR ctypes直接実装**（`RtlSdrDirectDevice` in `src/sdr/device.py`）: `SoapySDR::Device::make()` がABIチェック層でデバイスを拒否するため（コンストラクタは成功するのに "no match" が返る）、`sys.platform=="win32"` かつ `driver=="rtlsdr"` の場合のみ `librtlsdr.dll` を ctypes で直接呼ぶバイパス実装。`SoapySDR.Device` とduck-type互換（`setupStream`/`readStream`/`setSampleRate` 等を実装）なので `SdrDevice` の他のコードは変更不要。uint8 I/Q → complex64 変換: `(sample - 127.5) / 127.5`。**動作確認済み v0.1.71（2026-06-25）**
   - SDRPipeline（QThread）: I/Q 取得 → FFT（10fps スペクトラム）→ 復調 → 音声出力 → IQ 録音
   - Demodulator: NFM / USB / LSB / CW 各モード。DC ブロック IIR（30Hz HPF）で HackRF DC スパイク除去
   - CW 復調: エンベロープ検出なし・直接復調方式（ブーン音問題を根本解決）
@@ -768,7 +769,8 @@ sudo usermod -aG dialout $USER
   - FT-991AM（Hamlib 4.7.1 モデル1036、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
   - FT-991/FT-991A（Direct モード）: モード・CTCSS（raw CAT `SV/MD0/CN0/CT0` via pyserial）実装済み・実機確認待ち（2026-06-18）
   - HackRF One（SoapyHackRF）: NFM/USB/CW 復調・スペクトラム・Bias-T 動作確認済み（Linux/Windows）
-  - RTL-SDR（SoapyRTLSDR）: 基本動作確認済み（Linux/Windows）
+  - RTL-SDR（SoapyRTLSDR）: 基本動作確認済み（Linux）
+  - RTL-SDR（ctypes直接実装 `RtlSdrDirectDevice`）: **Windows 動作確認済み（v0.1.71・2026-06-25）** — SoapySDR::Device::make() がABIチェック層で拒否するため Windows + RTL-SDR のみ ctypes で librtlsdr.dll を直接呼ぶバイパス実装
   - Airspy R2・Mini（SoapyAirspy）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
   - Airspy HF+（SoapyAirspyHF）: Windows バンドル同梱・Linux brew/apt 対応（実機未確認）
   - ADALM-Pluto（SoapyPlutoSDR + libiio）: Windows バンドル同梱（CI にて MSVC ソースビルド）・実機未確認
@@ -1054,6 +1056,7 @@ rr = obs.range_rate_km_s * (2.0 if self._selected_norad == MOON_ID else 1.0)
 ## 次回の作業候補（v0.1.0 以降）
 
 ### 継続中・優先度高
+0. ~~**RTL-SDR WinUSB Connect 失敗修正**~~ **→ v0.1.71 で解決済み（2026-06-25）**
 1. **ドップラー補正の実動作確認** — 各種リグ（IC-9700・TS-2000・FT-817ND 等）での実衛星通信テスト（FTX-1F・FT-991AM・RTL-SDR/HackRF は確認済み）
 2. **ローテーター設定ダイアログの改善** — 接続テストボタン・AZ/ELリミット設定
 3. **デバッグ用ログファイル出力の削除または設定化** — `src/main.py` の `_setup_logging()` にある frozen バンドル向けファイルログ出力（`platformdirs.user_log_dir`）は dmg デバッグ目的で追加したもの。Settings に「デバッグログを保存する」チェック（デフォルトOFF）を追加するか削除する。該当箇所: `src/main.py` 63〜75行目
