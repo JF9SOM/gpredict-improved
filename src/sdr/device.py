@@ -136,26 +136,45 @@ def _find_rtlsdr_dll() -> str | None:
 
 
 def _find_hackrf_dll() -> str | None:
-    """Locate hackrf.dll on Windows, returning the full path or None."""
+    """Locate hackrf.dll on Windows, returning the full path or None.
+
+    Searches in priority order:
+      1. PyInstaller _MEIPASS (_internal/)
+      2. soapy_modules/ directory (where HackRFSupport.dll lives)
+      3. SOAPY_SDR_PLUGIN_PATH parent (development environment)
+      Tries exact name 'hackrf.dll' first, then glob 'hackrf*.dll' and
+      'libhackrf*.dll' to handle versioned or differently-named DLLs from
+      conda-forge (e.g. libhackrf.dll, hackrf-0.dll).
+    """
     import os as _os
 
-    search_dirs: list[str] = []
+    search_dirs: list[Path] = []
     if getattr(sys, "frozen", False):
-        search_dirs.append(sys._MEIPASS)  # type: ignore[attr-defined]
-    for env_var in ("SOAPY_SDR_ROOT", "SOAPY_SDR_PLUGIN_PATH"):
-        val = _os.environ.get(env_var, "")
-        if val:
-            search_dirs.append(str(Path(val).parent))
+        meipass = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+        search_dirs.append(meipass)
+        # soapy_modules/ is a sibling of _MEIPASS in the installed layout
+        search_dirs.append(meipass / "soapy_modules")
     plugin_path = _os.environ.get("SOAPY_SDR_PLUGIN_PATH", "")
     if plugin_path:
-        search_dirs.append(str(Path(plugin_path).parent.parent / "bin"))
+        pp = Path(plugin_path)
+        search_dirs.append(pp.parent)  # _MEIPASS in dev
+        search_dirs.append(pp)  # soapy_modules/ itself in dev
 
-    logger.info("[HackRF direct] hackrf.dll search dirs: %s", search_dirs)
+    # Exact-name candidates first (most common), then versioned/prefixed variants
+    name_patterns = ["hackrf.dll", "hackrf-0.dll", "libhackrf.dll", "libhackrf-0.dll"]
+
+    logger.info("[HackRF direct] hackrf.dll search dirs: %s", [str(d) for d in search_dirs])
     for d in search_dirs:
-        candidate = Path(d) / "hackrf.dll"
-        if candidate.exists():
-            logger.info("[HackRF direct] hackrf.dll found: %s", candidate)
-            return str(candidate)
+        for name in name_patterns:
+            candidate = d / name
+            if candidate.exists():
+                logger.info("[HackRF direct] hackrf.dll found: %s", candidate)
+                return str(candidate)
+        # Glob fallback: catch any hackrf*.dll not matched above
+        for match in sorted(d.glob("hackrf*.dll")):
+            logger.info("[HackRF direct] hackrf.dll found via glob: %s", match)
+            return str(match)
+
     found = ctypes.util.find_library("hackrf")
     logger.info("[HackRF direct] hackrf.dll search result: %s", found)
     return found

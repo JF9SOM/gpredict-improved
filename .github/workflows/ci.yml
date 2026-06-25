@@ -360,6 +360,38 @@ jobs:
           Write-Host "=== soapy-win64 contents ==="
           Get-ChildItem soapy-win64 -Recurse -File | Select-Object FullName
 
+          # Ensure hackrf.dll is present in soapy-win64/bin/ for the ctypes bypass.
+          # conda-forge libhackrf0 should have placed it there; if not (e.g. different
+          # DLL name in the package), search broadly and copy under the canonical name.
+          $hackrfDll = Get-ChildItem "soapy-win64\bin" -Filter "hackrf*.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $hackrfDll) {
+            Write-Host "hackrf.dll not found in soapy-win64\bin — searching conda pkgs..."
+            $hackrfDll = Get-ChildItem . -Recurse -Filter "hackrf*.dll" -ErrorAction SilentlyContinue |
+                         Where-Object { $_.FullName -notlike "*soapy-win64\modules*" } |
+                         Select-Object -First 1
+          }
+          if ($hackrfDll) {
+            if ($hackrfDll.Name -ne "hackrf.dll") {
+              Copy-Item $hackrfDll.FullName "soapy-win64\bin\hackrf.dll" -Force
+              Write-Host "Copied $($hackrfDll.Name) -> soapy-win64\bin\hackrf.dll"
+            } else {
+              Write-Host "hackrf.dll already at: $($hackrfDll.FullName)"
+            }
+          } else {
+            Write-Host "hackrf.dll not found in conda packages — downloading from HackRF releases..."
+            $hackrfZip = "hackrf-2024.02.1-win.zip"
+            $hackrfUrl = "https://github.com/greatscottgadgets/hackrf/releases/download/v2024.02.1/$hackrfZip"
+            Invoke-WebRequest -Uri $hackrfUrl -OutFile $hackrfZip
+            Expand-Archive -Path $hackrfZip -DestinationPath hackrf-release -Force
+            $hackrfDll = Get-ChildItem hackrf-release -Recurse -Filter "hackrf.dll" | Select-Object -First 1
+            if ($hackrfDll) {
+              Copy-Item $hackrfDll.FullName "soapy-win64\bin\hackrf.dll" -Force
+              Write-Host "Downloaded and installed hackrf.dll from HackRF releases."
+            } else {
+              throw "hackrf.dll not found in HackRF release archive — cannot continue."
+            }
+          }
+
           # Verify SoapySDR import using the extracted .pyd
           $PY_SITE = python -c "import sysconfig; print(sysconfig.get_path('purelib'))"
           Copy-Item soapy-win64\python\* "$PY_SITE\" -Force
