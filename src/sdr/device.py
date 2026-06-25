@@ -523,7 +523,8 @@ class SdrDevice:
             stdout = proc.stdout.strip()
             if stdout:
                 raw: list[dict[str, str]] = _json.loads(stdout)
-                return cls._parse_raw_devices(raw)
+                results = cls._parse_raw_devices(raw)
+                return cls._win_filter_rtlsdr_by_count(results)
             if proc.returncode != 0:
                 logger.warning(
                     "SoapySDR enumerate subprocess exited %d; stderr: %s",
@@ -533,6 +534,44 @@ class SdrDevice:
         except Exception:
             logger.exception("SoapySDR enumerate subprocess failed")
         return []
+
+    @classmethod
+    def _win_filter_rtlsdr_by_count(cls, results: list[SdrDeviceInfo]) -> list[SdrDeviceInfo]:
+        """Filter Windows RTL-SDR enumerate results by actual dongle count via ctypes.
+
+        The patched findRTLSDR (SoapyRTLSDR WinUSB fix) always returns a single
+        device_index=0 entry regardless of whether a dongle is plugged in.  Now
+        that SoapySDR::Device::make() is bypassed entirely for Windows RTL-SDR,
+        calling rtlsdr_get_device_count() here is safe — it runs after the
+        subprocess exits (no WinUSB state shared with the subprocess) and before
+        any rtlsdr_open() call in the main process.
+        """
+        rtl_entries = [d for d in results if (d.driver or "").lower() == "rtlsdr"]
+        if not rtl_entries:
+            return results
+
+        dll_path = _find_rtlsdr_dll()
+        if dll_path is None:
+            logger.warning("[RTL-SDR enum] rtlsdr.dll not found — cannot verify dongle presence")
+            return results
+
+        try:
+            lib = ctypes.CDLL(dll_path)
+            get_count = lib.rtlsdr_get_device_count
+            get_count.restype = ctypes.c_uint32
+            get_count.argtypes = []
+            real_count = int(get_count())
+        except Exception as exc:
+            logger.warning("[RTL-SDR enum] rtlsdr_get_device_count() failed: %s", exc)
+            return results
+
+        logger.info("[RTL-SDR enum] rtlsdr_get_device_count() = %d", real_count)
+        if real_count >= len(rtl_entries):
+            return results
+        # Keep only as many RTL-SDR entries as physically present (may be 0).
+        non_rtl = [d for d in results if (d.driver or "").lower() != "rtlsdr"]
+        kept_rtl = rtl_entries[:real_count]
+        return non_rtl + kept_rtl
 
     @classmethod
     def _parse_raw_devices(cls, raw: list[dict[str, str]]) -> list[SdrDeviceInfo]:
