@@ -210,10 +210,17 @@ static SoapySDR::Device *makeRTLSDR(const SoapySDR::Kwargs &args)
     // libusb operation and WinUSB finds the device without interference.
     // Out-of-range device indices are handled by rtlsdr_open()'s own error
     // path, which throws an appropriate exception.
+    //
+    // Catch both std::exception and unknown exceptions (Windows SEH / access
+    // violations appear as unknown exceptions when SoapySDR.dll is built with
+    // /EHa; without /EHa they would crash the process).
     try {
         return new SoapyRTLSDR(args);
     } catch (const std::exception &ex) {
-        SoapySDR_logf(SOAPY_SDR_ERROR, "SoapyRTLSDR ctor threw: %s", ex.what());
+        SoapySDR_logf(SOAPY_SDR_ERROR, "SoapyRTLSDR ctor threw std::exception: %s", ex.what());
+        throw;
+    } catch (...) {
+        SoapySDR_logf(SOAPY_SDR_ERROR, "SoapyRTLSDR ctor threw unknown exception (SEH/ABI crash?)");
         throw;
     }
 }
@@ -432,6 +439,32 @@ if CTOR_SRC is not None and ctor_content:
         else:
             ctor_patched = ctor_after
             print(f"{CTOR_SRC}: replaced serial-block via regex fallback.", file=sys.stderr)
+
+    # ── Post-open diagnostic patch ────────────────────────────────────────────
+    # Add step-by-step SoapySDR_logf calls immediately after rtlsdr_open()
+    # succeeds so we can see exactly which subsequent call crashes (SEH) and
+    # causes Device::make() to return "no match" without a logged exception.
+    POST_OPEN_FIND = (
+        "    if (rtlsdr_open( &dev, (uint32_t)deviceId ) != RTLSDR_SUCCESS)\n"
+        '        throw std::runtime_error( "Unable to open RTL-SDR device #" + std::to_string(deviceId) );\n'  # noqa: E501
+    )
+    POST_OPEN_REPLACE = (
+        "    if (rtlsdr_open( &dev, (uint32_t)deviceId ) != RTLSDR_SUCCESS)\n"
+        '        throw std::runtime_error( "Unable to open RTL-SDR device #" + std::to_string(deviceId) );\n'  # noqa: E501
+        '    SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: rtlsdr_open OK, dev=%p", (void*)dev);\n'  # noqa: E501
+        "    {\n"
+        "        int _nGains = rtlsdr_get_tuner_gains(dev, nullptr);\n"
+        '        SoapySDR_logf(SOAPY_SDR_INFO, "WinUSB post-open: rtlsdr_get_tuner_gains returned %d", _nGains);\n'  # noqa: E501
+        "    }\n"
+    )
+    if POST_OPEN_FIND in ctor_patched:
+        ctor_patched = ctor_patched.replace(POST_OPEN_FIND, POST_OPEN_REPLACE, 1)
+        print(f"{CTOR_SRC}: added post-open diagnostic logging.", file=sys.stderr)
+    else:
+        print(
+            f"WARNING: {CTOR_SRC} post-open pattern not found — skipping post-open diagnostic",
+            file=sys.stderr,
+        )
 
     with open(CTOR_SRC, "w", encoding="utf-8", newline="") as f:
         f.write(ctor_patched)
