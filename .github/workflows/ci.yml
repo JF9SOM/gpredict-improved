@@ -492,10 +492,14 @@ jobs:
         shell: pwsh
         run: |
           Set-MpPreference -DisableRealtimeMonitoring $true
-          # NSIS is pre-installed on windows-latest runners; only install if missing.
-          $nsisPath = "C:\Program Files (x86)\NSIS"
-          if (Test-Path "$nsisPath\makensis.exe") {
-            Write-Host "NSIS already installed at $nsisPath"
+          # Detect NSIS in common install locations (path varies by runner image).
+          $nsisCandidates = @(
+            "C:\Program Files (x86)\NSIS\makensis.exe",
+            "C:\Program Files\NSIS\makensis.exe"
+          )
+          $makensis = $nsisCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($makensis) {
+            Write-Host "NSIS already installed: $makensis"
           } else {
             Write-Host "NSIS not found, installing via Chocolatey..."
             $maxRetries = 3
@@ -509,7 +513,13 @@ jobs:
                 throw "NSIS installation failed after $maxRetries attempts"
               }
             }
+            $makensis = $nsisCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
           }
+          if (-not $makensis) { throw "makensis.exe not found after install" }
+          # Persist the NSIS directory to PATH for subsequent steps via GITHUB_PATH.
+          $nsisDir = Split-Path $makensis
+          Write-Host "Adding NSIS dir to GITHUB_PATH: $nsisDir"
+          "$nsisDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build with PyInstaller
         shell: pwsh
@@ -526,7 +536,7 @@ jobs:
       - name: Build NSIS installer
         shell: pwsh
         run: |
-          $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
+          Write-Host "makensis path: $((Get-Command makensis -ErrorAction SilentlyContinue)?.Source)"
           $tag = "${{ github.ref_name }}"
           $ver = $tag.TrimStart("v")
           # VIProductVersion requires X.X.X.X numeric format; strip pre-release suffix
