@@ -390,7 +390,7 @@ class RtlSdrDirectDevice:
         if ret != 0 or n_read.value < 2:
             return _SrResult(-1)
         n_samples = n_read.value // 2
-        arr = np.frombuffer(raw, dtype=np.uint8)[: n_samples * 2].astype(np.float32)
+        arr = np.frombuffer(bytes(raw), dtype=np.uint8)[: n_samples * 2].astype(np.float32)
         arr = (arr - 127.5) / 127.5
         buf_cf32 = buffers[0]
         buf_cf32[:n_samples] = arr[0::2] + 1j * arr[1::2]
