@@ -2084,7 +2084,7 @@ class MainWindow(QMainWindow):
         ).start()
 
     def _fetch_satnogs_uuid_bg(self, norad: int, name: str) -> None:
-        """Background thread: fetch SatNOGS UUID by NORAD, fall back to name search."""
+        """Background thread: fetch SatNOGS UUID by NORAD, fall back to name/provisional search."""
         _SATNOGS_SAT_API = "https://db.satnogs.org/api/satellites/"
         sat_id: str | None = None
         try:
@@ -2110,6 +2110,24 @@ class MainWindow(QMainWindow):
                         if entry_name == name_lower or name_lower in alt_names.split(","):
                             sat_id = str(entry["sat_id"])
                             break
+
+                # Last resort: look up via provisional (satnogs_source_id) NORAD
+                if not sat_id:
+                    row = self._conn.execute(
+                        "SELECT satnogs_source_id FROM satellites WHERE norad_cat_id = ?",
+                        (norad,),
+                    ).fetchone()
+                    provisional = row[0] if row else None
+                    if provisional:
+                        r3 = client.get(
+                            _SATNOGS_SAT_API,
+                            params={"format": "json", "norad_cat_id": provisional},
+                        )
+                        r3.raise_for_status()
+                        data3 = r3.json()
+                        results3 = data3.get("results", data3) if isinstance(data3, dict) else data3
+                        if results3:
+                            sat_id = str(results3[0]["sat_id"])
         except Exception:
             logger.exception("SatNOGS UUID fetch failed for NORAD %s / name %r", norad, name)
 
