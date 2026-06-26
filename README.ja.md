@@ -365,3 +365,7 @@ GPL-2.0-or-later（GPredict互換）
 - [Hamlib](https://hamlib.github.io/) — Hamlib Development Team
 - [SATNOGS](https://satnogs.org/) — Libre Space Foundation
 - [SoapySDR](https://github.com/pothosware/SoapySDR) — Pothosware
+- [Direwolf](https://github.com/wb2osz/direwolf) — WB2OSZ（John Langner）— AX.25 / APRS / KISS ソフトウェアTNC
+- [ft8_lib](https://github.com/kgoba/ft8_lib) — Kārlis Goba YL3JG — FT4/FT8コーデック（C ライブラリ、GPL-2.0）
+- [pySSTV](https://github.com/dholm/pySSTV) — Dominik Heidler DL2DH — SSTVエンコーダー/デコーダー
+- [gr-satellites](https://github.com/daniestevez/gr-satellites) — Daniel Estévez EA4GPZ — アマチュア衛星テレメトリーデコーダー
