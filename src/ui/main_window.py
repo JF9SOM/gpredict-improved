@@ -686,14 +686,13 @@ class MainWindow(QMainWindow):
             row = self._conn.execute(
                 "SELECT value FROM app_settings WHERE key = 'satellite_filter'"
             ).fetchone()
-            if row:
-                idx = self._filter_combo.findText(row[0])
-                if idx >= 0:
-                    self._filter_combo.blockSignals(True)
-                    self._filter_combo.setCurrentIndex(idx)
-                    self._filter_combo.blockSignals(False)
-                    # Sync the AMSAT link visibility (signal was blocked)
-                    self._amsat_link.setVisible(row[0] == "Operational (AMSAT)")
+            saved = row[0] if row else "Operational (AMSAT)"
+            idx = self._filter_combo.findText(saved)
+            if idx >= 0:
+                self._filter_combo.blockSignals(True)
+                self._filter_combo.setCurrentIndex(idx)
+                self._filter_combo.blockSignals(False)
+                self._amsat_link.setVisible(saved == "Operational (AMSAT)")
         except Exception:
             pass
 
