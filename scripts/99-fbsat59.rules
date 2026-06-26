@@ -1,5 +1,5 @@
-# /etc/udev/rules.d/99-gpredict-improved.rules
-# GPredict-Improved — USB無線機・SDRドングルのアクセス権設定
+# /etc/udev/rules.d/99-fbsat59.rules
+# FBSAT59 — USB無線機・SDRドングルのアクセス権設定
 #
 # インストール後、以下を実行してください:
 #   sudo udevadm control --reload-rules

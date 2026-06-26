@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for GPredict-Improved.
+PyInstaller spec for FBSAT59.
 
 Bundles:
   - src/main.py (entry point)
@@ -228,7 +228,7 @@ exe = EXE(  # noqa: F821
     a.scripts,
     [],
     exclude_binaries=True,
-    name="gpredict-improved",
+    name="fbsat59",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -249,16 +249,16 @@ coll = COLLECT(  # noqa: F821
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="gpredict-improved",
+    name="fbsat59",
 )
 
 # macOS: also build an .app bundle
 if sys.platform == "darwin":
     app = BUNDLE(  # noqa: F821
         coll,
-        name="GPredict-Improved.app",
+        name="FBSAT59.app",
         icon=_exe_icon,
-        bundle_identifier="org.gpredict.improved",
+        bundle_identifier="org.fbsat59",
         info_plist={
             "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,

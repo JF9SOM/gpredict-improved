@@ -2,16 +2,16 @@
 # build-dmg.sh — create a macOS .dmg from the PyInstaller .app bundle
 #
 # Prerequisites:
-#   - PyInstaller dist/GPredict-Improved.app already built
+#   - PyInstaller dist/FBSAT59.app already built
 #
-# Output: dist/GPredict-Improved.dmg
+# Output: dist/FBSAT59.dmg
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist"
-APP_BUNDLE="$DIST_DIR/GPredict-Improved.app"
-DMG_PATH="$DIST_DIR/GPredict-Improved.dmg"
+APP_BUNDLE="$DIST_DIR/FBSAT59.app"
+DMG_PATH="$DIST_DIR/FBSAT59.dmg"
 DMG_STAGING="$DIST_DIR/dmg-staging"
 
 # --------------------------------------------------------------------------- #
@@ -19,7 +19,7 @@ DMG_STAGING="$DIST_DIR/dmg-staging"
 # --------------------------------------------------------------------------- #
 if [[ ! -d "$APP_BUNDLE" ]]; then
     echo "ERROR: .app bundle not found at $APP_BUNDLE" >&2
-    echo "       Run 'pyinstaller scripts/gpredict-improved.spec' first." >&2
+    echo "       Run 'pyinstaller scripts/fbsat59.spec' first." >&2
     exit 1
 fi
 
@@ -39,7 +39,7 @@ rm -f "$DMG_PATH"
 
 for attempt in 1 2 3; do
     hdiutil create \
-        -volname "GPredict-Improved" \
+        -volname "FBSAT59" \
         -srcfolder "$DMG_STAGING" \
         -ov \
         -format UDZO \

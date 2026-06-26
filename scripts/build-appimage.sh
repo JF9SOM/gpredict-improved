@@ -3,15 +3,15 @@
 #
 # Prerequisites (installed by CI before this script runs):
 #   - appimagetool  (downloaded as AppImage, placed in PATH)
-#   - PyInstaller dist/gpredict-improved/ already built
+#   - PyInstaller dist/fbsat59/ already built
 #
-# Output: dist/GPredict-Improved-x86_64.AppImage
+# Output: dist/FBSAT59-x86_64.AppImage
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist"
-COLLECT_DIR="$DIST_DIR/gpredict-improved"
+COLLECT_DIR="$DIST_DIR/fbsat59"
 APPDIR="$DIST_DIR/AppDir"
 
 # --------------------------------------------------------------------------- #
@@ -19,7 +19,7 @@ APPDIR="$DIST_DIR/AppDir"
 # --------------------------------------------------------------------------- #
 if [[ ! -d "$COLLECT_DIR" ]]; then
     echo "ERROR: PyInstaller output not found at $COLLECT_DIR" >&2
-    echo "       Run 'pyinstaller scripts/gpredict-improved.spec' first." >&2
+    echo "       Run 'pyinstaller scripts/fbsat59.spec' first." >&2
     exit 1
 fi
 
@@ -40,28 +40,28 @@ cat > "$APPDIR/AppRun" << 'EOF'
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "$0")")"
 export LD_LIBRARY_PATH="$HERE/usr/bin:${LD_LIBRARY_PATH:-}"
-exec "$HERE/usr/bin/gpredict-improved" "$@"
+exec "$HERE/usr/bin/fbsat59" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"
 
 # .desktop file (required by AppImage spec)
-cat > "$APPDIR/usr/share/applications/gpredict-improved.desktop" << 'EOF'
+cat > "$APPDIR/usr/share/applications/fbsat59.desktop" << 'EOF'
 [Desktop Entry]
-Name=GPredict-Improved
+Name=FBSAT59
 Comment=Amateur Satellite Tracking
-Exec=gpredict-improved
-Icon=gpredict-improved
+Exec=fbsat59
+Icon=fbsat59
 Type=Application
 Categories=HamRadio;Science;
 EOF
 # Symlink to top-level (appimagetool expects .desktop at AppDir root)
-ln -sf usr/share/applications/gpredict-improved.desktop "$APPDIR/gpredict-improved.desktop"
+ln -sf usr/share/applications/fbsat59.desktop "$APPDIR/fbsat59.desktop"
 
 # Placeholder icon (256x256 PNG required; replace with real icon when available)
-ICON_SRC="$REPO_ROOT/scripts/gpredict-improved.png"
+ICON_SRC="$REPO_ROOT/scripts/fbsat59.png"
 if [[ -f "$ICON_SRC" ]]; then
-    cp "$ICON_SRC" "$APPDIR/usr/share/icons/hicolor/256x256/apps/gpredict-improved.png"
-    ln -sf usr/share/icons/hicolor/256x256/apps/gpredict-improved.png "$APPDIR/gpredict-improved.png"
+    cp "$ICON_SRC" "$APPDIR/usr/share/icons/hicolor/256x256/apps/fbsat59.png"
+    ln -sf usr/share/icons/hicolor/256x256/apps/fbsat59.png "$APPDIR/fbsat59.png"
 else
     # Generate a minimal placeholder PNG using Python + Pillow (available via packaging extras)
     python3 - << 'PYEOF'
@@ -72,12 +72,12 @@ d.ellipse([16, 16, 240, 240], outline=(88, 166, 255), width=8)
 d.text((80, 110), "GP+", fill=(88, 166, 255))
 import os, pathlib
 out = pathlib.Path(os.environ.get("APPDIR_ICON",
-    "dist/AppDir/usr/share/icons/hicolor/256x256/apps/gpredict-improved.png"))
+    "dist/AppDir/usr/share/icons/hicolor/256x256/apps/fbsat59.png"))
 out.parent.mkdir(parents=True, exist_ok=True)
 img.save(str(out))
 PYEOF
-    export APPDIR_ICON="$APPDIR/usr/share/icons/hicolor/256x256/apps/gpredict-improved.png"
-    ln -sf usr/share/icons/hicolor/256x256/apps/gpredict-improved.png "$APPDIR/gpredict-improved.png"
+    export APPDIR_ICON="$APPDIR/usr/share/icons/hicolor/256x256/apps/fbsat59.png"
+    ln -sf usr/share/icons/hicolor/256x256/apps/fbsat59.png "$APPDIR/fbsat59.png"
 fi
 
 # --------------------------------------------------------------------------- #
@@ -98,7 +98,7 @@ fi
 # --------------------------------------------------------------------------- #
 # Build AppImage
 # --------------------------------------------------------------------------- #
-ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$DIST_DIR/GPredict-Improved-x86_64.AppImage"
+ARCH=x86_64 "$APPIMAGETOOL" "$APPDIR" "$DIST_DIR/FBSAT59-x86_64.AppImage"
 
 echo ""
-echo "AppImage created: $DIST_DIR/GPredict-Improved-x86_64.AppImage"
+echo "AppImage created: $DIST_DIR/FBSAT59-x86_64.AppImage"
