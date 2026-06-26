@@ -169,7 +169,7 @@ class SettingsDialog(QDialog):
     def __init__(self, conn: sqlite3.Connection, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._conn = conn
-        self.setWindowTitle(_("Settings"))
+        self.setWindowTitle(_("General Settings"))
         self.resize(640, 480)
         self._source_checks: dict[str, QCheckBox] = {}
         # World-map tab state
