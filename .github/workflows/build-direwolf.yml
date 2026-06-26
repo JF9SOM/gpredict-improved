@@ -191,7 +191,7 @@ jobs:
       contents: write
     steps:
       - name: Install build dependencies
-        run: brew install cmake portaudio dylibbundler
+        run: brew install cmake portaudio hidapi dylibbundler
 
       - name: Build Direwolf from source
         env:
