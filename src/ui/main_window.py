@@ -617,6 +617,7 @@ class MainWindow(QMainWindow):
             help_menu.addAction(_("Check for Updates…"), self._on_check_updates)
             help_menu.addAction(_("SDR Device Installation…"), self._on_sdr_install)
             help_menu.addAction(_("Hamlib Update…"), self._on_hamlib_update)
+            help_menu.addAction(_("ft8lib Installation…"), self._on_ft8lib_help)
             help_menu.addAction(_("Direwolf Installation…"), self._on_direwolf_help)
             help_menu.addAction(_("gr-satellites Installation…"), self._on_gr_satellites_help)
             help_menu.addSeparator()
@@ -3717,6 +3718,12 @@ class MainWindow(QMainWindow):
         from ui.hamlib_update_dialog import HamlibUpdateDialog
 
         dlg = HamlibUpdateDialog(self)
+        dlg.exec()
+
+    def _on_ft8lib_help(self) -> None:
+        from ui.ft8lib_dialog import Ft8LibDialog
+
+        dlg = Ft8LibDialog(self)
         dlg.exec()
 
     def _on_direwolf_help(self) -> None:

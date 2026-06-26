@@ -1,0 +1,305 @@
+name: Build ft8lib Bundle
+
+# Checks weekly for new kgoba/ft8_lib releases.
+# Builds libft8 from source for all three platforms.
+# Artifacts are stored in the dedicated "ft8lib-bundle" pre-release tag.
+# Also supports manual triggering for emergencies.
+
+on:
+  schedule:
+    - cron: '0 11 * * 1'  # Every Monday 11:00 UTC (after q65lib check at 10:00)
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force rebuild even if version unchanged'
+        required: false
+        default: 'false'
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Check whether a build is needed
+  # ------------------------------------------------------------------ #
+  check-version:
+    name: Check ft8_lib version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      needs_build: ${{ steps.check.outputs.needs_build }}
+      ft8lib_tag: ${{ steps.check.outputs.ft8lib_tag }}
+    steps:
+      - name: Compare upstream vs bundled version
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ github.event.inputs.force_build }}
+        run: |
+          # Latest release from kgoba/ft8_lib
+          UPSTREAM=$(gh api repos/kgoba/ft8_lib/releases \
+            --jq '.[0].tag_name' 2>/dev/null || echo "")
+          # Fall back to latest tag if no formal release exists
+          if [ -z "$UPSTREAM" ]; then
+            UPSTREAM=$(gh api repos/kgoba/ft8_lib/tags \
+              --jq '.[0].name' 2>/dev/null || echo "main")
+          fi
+          echo "Upstream ft8_lib: $UPSTREAM"
+          echo "ft8lib_tag=$UPSTREAM" >> "$GITHUB_OUTPUT"
+
+          if [ "$FORCE" = "true" ]; then
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            echo "Force build requested."
+            exit 0
+          fi
+
+          CURRENT=""
+          if gh release download ft8lib-bundle \
+               --repo "${{ github.repository }}" \
+               --pattern "ft8lib-linux-x86_64.tar.gz" \
+               --dir /tmp/ft8-check 2>/dev/null; then
+            tar -xzf /tmp/ft8-check/ft8lib-linux-x86_64.tar.gz \
+                -C /tmp/ft8-check 2>/dev/null || true
+            CURRENT=$(cat /tmp/ft8-check/version.txt 2>/dev/null || echo "")
+          fi
+
+          echo "Bundled version: '$CURRENT'"
+          if [ "$CURRENT" = "$UPSTREAM" ]; then
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date — skipping build."
+          else
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            echo "Build needed: $UPSTREAM (have: '$CURRENT')"
+          fi
+
+  # ------------------------------------------------------------------ #
+  # Linux
+  # ------------------------------------------------------------------ #
+  build-linux:
+    name: Build ft8lib (Linux)
+    needs: check-version
+    if: needs.check-version.outputs.needs_build == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y build-essential gcc
+
+      - name: Build libft8 from source
+        env:
+          FT8LIB_TAG: ${{ needs.check-version.outputs.ft8lib_tag }}
+        run: |
+          ARCH=$(uname -m)
+          OUT_DIR="/tmp/ft8lib-flat"
+          mkdir -p "$OUT_DIR"
+
+          # Clone ft8_lib source
+          git clone --depth 1 --branch "${FT8LIB_TAG}" \
+            https://github.com/kgoba/ft8_lib.git ft8lib-src 2>/dev/null || \
+          git clone --depth 1 \
+            https://github.com/kgoba/ft8_lib.git ft8lib-src
+
+          cd ft8lib-src
+
+          # Compile all objects with -fPIC (required for shared library)
+          make clean 2>/dev/null || true
+          make -j$(nproc) CFLAGS="-O3 -DHAVE_STPCPY -I. -fPIC" 2>&1 | tail -20
+
+          # Collect built objects
+          OBJS=""
+          for d in ft8 common fft; do
+            for o in .build/$d/*.o; do
+              [ -f "$o" ] && OBJS="$OBJS $o"
+            done
+          done
+
+          if [ -n "$OBJS" ]; then
+            gcc -shared -fPIC -o "$OUT_DIR/libft8.so" $OBJS
+            echo "libft8.so built successfully"
+            file "$OUT_DIR/libft8.so"
+          else
+            echo "No object files found — build may have failed"
+            exit 1
+          fi
+
+          echo "${FT8LIB_TAG}" > "$OUT_DIR/version.txt"
+          cd ..
+
+          PKG_NAME="ft8lib-linux-${ARCH}.tar.gz"
+          tar -czf "/tmp/${PKG_NAME}" -C /tmp ft8lib-flat
+          echo "PKG=/tmp/${PKG_NAME}" >> "$GITHUB_ENV"
+          echo "PKG_NAME=${PKG_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload to ft8lib-bundle release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view ft8lib-bundle \
+            --repo "${{ github.repository }}" 2>/dev/null || \
+          gh release create ft8lib-bundle \
+            --repo "${{ github.repository }}" \
+            --title "ft8lib Bundle" \
+            --notes "Pre-built libft8 for FT4/Q65 encoding. Built from kgoba/ft8_lib source." \
+            --prerelease
+          gh release upload ft8lib-bundle \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "${{ env.PKG }}"
+
+  # ------------------------------------------------------------------ #
+  # Windows
+  # ------------------------------------------------------------------ #
+  build-windows:
+    name: Build ft8lib (Windows)
+    needs: check-version
+    if: needs.check-version.outputs.needs_build == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Install MinGW
+        shell: pwsh
+        run: choco install mingw -y --no-progress
+
+      - name: Build ft8.dll from source
+        shell: pwsh
+        env:
+          FT8LIB_TAG: ${{ needs.check-version.outputs.ft8lib_tag }}
+        run: |
+          $FLAT = "$env:RUNNER_TEMP\ft8lib-flat"
+          New-Item -ItemType Directory -Force -Path $FLAT | Out-Null
+
+          # Clone ft8_lib source
+          try {
+            git clone --depth 1 --branch "$env:FT8LIB_TAG" `
+              https://github.com/kgoba/ft8_lib.git ft8lib-src 2>$null
+          } catch {
+            git clone --depth 1 https://github.com/kgoba/ft8_lib.git ft8lib-src
+          }
+
+          Push-Location ft8lib-src
+
+          # Compile with MinGW gcc
+          $objs = @()
+          $srcDirs = @("ft8", "common", "fft")
+          foreach ($dir in $srcDirs) {
+            New-Item -ItemType Directory -Force -Path ".build\$dir" | Out-Null
+            foreach ($f in Get-ChildItem "$dir\*.c" -ErrorAction SilentlyContinue) {
+              $obj = ".build\$dir\$($f.BaseName).o"
+              & gcc -O3 -DHAVE_STPCPY -I. -fPIC -c $f.FullName -o $obj
+              if (Test-Path $obj) { $objs += $obj }
+            }
+          }
+
+          if ($objs.Count -gt 0) {
+            & gcc -shared -o "$FLAT\ft8.dll" @objs
+            Write-Host "ft8.dll built with $($objs.Count) objects"
+          } else {
+            Write-Error "No objects built"
+            exit 1
+          }
+
+          # Copy MinGW runtime DLLs needed by ft8.dll
+          foreach ($dll in @("libgcc_s_seh-1.dll", "libwinpthread-1.dll")) {
+            $src = "C:\mingw64\bin\$dll"
+            if (Test-Path $src) { Copy-Item $src "$FLAT\" }
+          }
+
+          Pop-Location
+
+          "$env:FT8LIB_TAG" | Out-File -FilePath "$FLAT\version.txt" -Encoding ASCII -NoNewline
+
+          $PKG_NAME = "ft8lib-windows-x86_64.zip"
+          $PKG = "$env:RUNNER_TEMP\$PKG_NAME"
+          Compress-Archive -Path "$FLAT\*" -DestinationPath $PKG
+          "PKG=$PKG"           | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
+          "PKG_NAME=$PKG_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
+
+      - name: Upload to ft8lib-bundle release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $exists = gh release view ft8lib-bundle `
+            --repo "${{ github.repository }}" 2>$null
+          if (-not $exists) {
+            gh release create ft8lib-bundle `
+              --repo "${{ github.repository }}" `
+              --title "ft8lib Bundle" `
+              --notes "Pre-built libft8 for FT4/Q65 encoding." `
+              --prerelease
+          }
+          gh release upload ft8lib-bundle `
+            --repo "${{ github.repository }}" `
+            --clobber `
+            "${{ env.PKG }}"
+
+  # ------------------------------------------------------------------ #
+  # macOS
+  # ------------------------------------------------------------------ #
+  build-macos:
+    name: Build ft8lib (macOS)
+    needs: check-version
+    if: needs.check-version.outputs.needs_build == 'true'
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - name: Build libft8 from source
+        env:
+          FT8LIB_TAG: ${{ needs.check-version.outputs.ft8lib_tag }}
+        run: |
+          ARCH=$(uname -m)
+          OUT_DIR=/tmp/ft8lib-flat
+          mkdir -p "$OUT_DIR"
+
+          git clone --depth 1 --branch "${FT8LIB_TAG}" \
+            https://github.com/kgoba/ft8_lib.git ft8lib-src 2>/dev/null || \
+          git clone --depth 1 \
+            https://github.com/kgoba/ft8_lib.git ft8lib-src
+
+          cd ft8lib-src
+
+          make clean 2>/dev/null || true
+          make -j$(sysctl -n hw.logicalcpu) CFLAGS="-O3 -DHAVE_STPCPY -I. -fPIC" 2>&1 | tail -20
+
+          OBJS=""
+          for d in ft8 common fft; do
+            for o in .build/$d/*.o; do
+              [ -f "$o" ] && OBJS="$OBJS $o"
+            done
+          done
+
+          if [ -n "$OBJS" ]; then
+            clang -dynamiclib -undefined dynamic_lookup \
+              $OBJS -o "$OUT_DIR/libft8.dylib"
+            echo "libft8.dylib built successfully"
+          else
+            echo "No object files found — build failed"
+            exit 1
+          fi
+
+          echo "${FT8LIB_TAG}" > "$OUT_DIR/version.txt"
+          cd ..
+
+          PKG_NAME="ft8lib-macos-${ARCH}.tar.gz"
+          tar -czf "/tmp/${PKG_NAME}" -C /tmp ft8lib-flat
+          echo "PKG=/tmp/${PKG_NAME}" >> "$GITHUB_ENV"
+          echo "PKG_NAME=${PKG_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload to ft8lib-bundle release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view ft8lib-bundle \
+            --repo "${{ github.repository }}" 2>/dev/null || \
+          gh release create ft8lib-bundle \
+            --repo "${{ github.repository }}" \
+            --title "ft8lib Bundle" \
+            --notes "Pre-built libft8 for FT4/Q65 encoding." \
+            --prerelease
+          gh release upload ft8lib-bundle \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "${{ env.PKG }}"
