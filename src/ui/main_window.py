@@ -2097,14 +2097,19 @@ class MainWindow(QMainWindow):
                 if results:
                     sat_id = str(results[0]["sat_id"])
 
-                # Fallback: search by satellite name
+                # Fallback: search by satellite name, only accept an exact name match
                 if not sat_id:
                     r2 = client.get(_SATNOGS_SAT_API, params={"format": "json", "search": name})
                     r2.raise_for_status()
                     data2 = r2.json()
                     results2 = data2.get("results", data2) if isinstance(data2, dict) else data2
-                    if results2:
-                        sat_id = str(results2[0]["sat_id"])
+                    name_lower = name.strip().lower()
+                    for entry in results2:
+                        entry_name = str(entry.get("name", "")).strip().lower()
+                        alt_names = str(entry.get("names", "")).lower()
+                        if entry_name == name_lower or name_lower in alt_names.split(","):
+                            sat_id = str(entry["sat_id"])
+                            break
         except Exception:
             logger.exception("SatNOGS UUID fetch failed for NORAD %s / name %r", norad, name)
 
