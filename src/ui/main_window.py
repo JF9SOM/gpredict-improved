@@ -542,7 +542,7 @@ class MainWindow(QMainWindow):
         file_menu = mb.addMenu(_("File"))
         if file_menu:
             file_menu.addAction(_("Set QTH..."), self._on_set_qth)
-            file_menu.addAction(_("Settings"), self._on_settings)
+            file_menu.addAction(_("General Settings"), self._on_settings)
             file_menu.addSeparator()
             file_menu.addAction(_("Exit"), self.close)
 

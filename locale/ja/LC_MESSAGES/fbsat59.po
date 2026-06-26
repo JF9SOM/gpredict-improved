@@ -53,6 +53,9 @@ msgstr "無線機に接続"
 msgid "Disconnect Radio"
 msgstr "無線機を切断"
 
+msgid "General Settings"
+msgstr "全般設定"
+
 msgid "Radio Settings..."
 msgstr "無線機設定..."
 
