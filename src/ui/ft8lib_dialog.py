@@ -46,7 +46,9 @@ def _get_ft8lib_version(lib: ctypes.CDLL) -> str:
         try:
             fn = getattr(lib, sym)
             fn.restype = ctypes.c_char_p
-            return fn().decode("utf-8", errors="replace")
+            raw: bytes | None = fn()
+            if raw is not None:
+                return raw.decode("utf-8", errors="replace")
         except AttributeError:
             continue
     return _("(version symbol not available)")
