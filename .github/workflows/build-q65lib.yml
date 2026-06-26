@@ -34,11 +34,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE: ${{ github.event.inputs.force_build }}
         run: |
-          # Latest release from WSJT-X on SourceForge — use GitHub mirror/tags
-          # WSJT-X does not publish on GitHub; use a fixed reference or git tag
-          # We track the WSJT-X version string stored in version.txt
-          UPSTREAM="wsjtx-2.7.0"  # Update this when WSJT-X releases Q65 changes
-          echo "Reference version: $UPSTREAM"
+          # Latest release from wsjtx/wsjtx on GitHub
+          UPSTREAM=$(gh api repos/wsjtx/wsjtx/releases \
+            --jq '.[0].tag_name')
+          echo "Upstream WSJT-X: $UPSTREAM"
           echo "wsjtx_tag=$UPSTREAM" >> "$GITHUB_OUTPUT"
 
           if [ "$FORCE" = "true" ]; then
@@ -88,12 +87,12 @@ jobs:
         run: |
           ARCH=$(uname -m)
 
-          # Clone WSJT-X source (contains lib/q65/ with Fortran+C Q65 codec)
+          # Clone WSJT-X source from GitHub (wsjtx/wsjtx)
+          git clone --depth 1 --branch "${WSJTX_TAG}" \
+            https://github.com/wsjtx/wsjtx.git wsjtx-src 2>/dev/null || \
           git clone --depth 1 \
-            https://git.code.sf.net/p/wsjt/wsjtx wsjtx-src 2>/dev/null || \
-          git clone --depth 1 \
-            https://sourceforge.net/p/wsjt/wsjtx/ci/HEAD/tree/ wsjtx-src 2>/dev/null || \
-          { echo "SourceForge clone failed; using local stub build" && mkdir -p wsjtx-src/lib/q65; }
+            https://github.com/wsjtx/wsjtx.git wsjtx-src 2>/dev/null || \
+          { echo "Clone failed; using stub build" && mkdir -p wsjtx-src/lib/q65; }
 
           # Build q65 shared library from lib/q65/
           Q65_DIR="wsjtx-src/lib/q65"
@@ -210,7 +209,7 @@ jobs:
           # Try to clone WSJT-X source
           $cloned = $false
           try {
-            git clone --depth 1 https://git.code.sf.net/p/wsjt/wsjtx wsjtx-src 2>$null
+            git clone --depth 1 --branch "$env:WSJTX_TAG" https://github.com/wsjtx/wsjtx.git wsjtx-src 2>$null
             $cloned = Test-Path "wsjtx-src\lib\q65"
           } catch {}
 
@@ -300,9 +299,11 @@ jobs:
           OUT_DIR=/tmp/q65lib-flat
           mkdir -p "$OUT_DIR"
 
-          # Try to clone WSJT-X source
+          # Clone WSJT-X source from GitHub
+          git clone --depth 1 --branch "${WSJTX_TAG}" \
+            https://github.com/wsjtx/wsjtx.git wsjtx-src 2>/dev/null || \
           git clone --depth 1 \
-            https://git.code.sf.net/p/wsjt/wsjtx wsjtx-src 2>/dev/null || true
+            https://github.com/wsjtx/wsjtx.git wsjtx-src 2>/dev/null || true
 
           Q65_DIR="wsjtx-src/lib/q65"
           OBJS=""
