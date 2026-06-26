@@ -1,0 +1,248 @@
+name: Build Direwolf Bundle
+
+# Runs weekly to check for new Direwolf releases.
+# Also triggered manually for emergencies.
+# Builds only when upstream has a newer version than our bundled one.
+# Artifacts are stored in the dedicated "direwolf-bundle" release tag.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  # ------------------------------------------------------------------ #
+  # Check whether a build is needed
+  # ------------------------------------------------------------------ #
+  check-version:
+    name: Check Direwolf version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      needs_build: ${{ steps.check.outputs.needs_build }}
+      direwolf_tag: ${{ steps.check.outputs.direwolf_tag }}
+    steps:
+      - name: Compare upstream vs bundled version
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Latest release from wb2osz/direwolf (includes pre-releases)
+          UPSTREAM=$(gh api repos/wb2osz/direwolf/releases \
+            --jq '.[0].tag_name')
+          echo "Upstream Direwolf: $UPSTREAM"
+          echo "direwolf_tag=$UPSTREAM" >> "$GITHUB_OUTPUT"
+
+          # Check version stored inside our bundled asset
+          CURRENT=""
+          if gh release download direwolf-bundle \
+               --repo "${{ github.repository }}" \
+               --pattern "direwolf-linux-x86_64.tar.gz" \
+               --dir /tmp/dw-check 2>/dev/null; then
+            tar -xzf /tmp/dw-check/direwolf-linux-x86_64.tar.gz \
+                -C /tmp/dw-check 2>/dev/null || true
+            CURRENT=$(cat /tmp/dw-check/version.txt 2>/dev/null || echo "")
+          fi
+
+          echo "Bundled version: '$CURRENT'"
+          if [ "$CURRENT" = "$UPSTREAM" ]; then
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date — skipping build."
+          else
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            echo "New version available: $UPSTREAM (have: '$CURRENT')"
+          fi
+
+  # ------------------------------------------------------------------ #
+  # Linux
+  # ------------------------------------------------------------------ #
+  build-linux:
+    name: Bundle Direwolf (Linux)
+    needs: check-version
+    if: needs.check-version.outputs.needs_build == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y cmake build-essential libasound2-dev
+
+      - name: Build Direwolf from source
+        env:
+          DIREWOLF_TAG: ${{ needs.check-version.outputs.direwolf_tag }}
+        run: |
+          ARCH=$(uname -m)
+          git clone --depth 1 --branch "${DIREWOLF_TAG}" \
+            https://github.com/wb2osz/direwolf.git direwolf-src
+          cd direwolf-src
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_HAMLIB=OFF \
+            -DFORCE_SSE=OFF
+          make -j$(nproc) direwolf
+          cd ../..
+
+          PKG_DIR=/tmp/direwolf-flat
+          mkdir -p "$PKG_DIR"
+          cp direwolf-src/build/src/direwolf "$PKG_DIR/"
+          echo "${DIREWOLF_TAG}" > "$PKG_DIR/version.txt"
+
+          PKG_NAME="direwolf-linux-${ARCH}.tar.gz"
+          tar -czf "/tmp/${PKG_NAME}" -C /tmp direwolf-flat
+          echo "PKG=/tmp/${PKG_NAME}" >> "$GITHUB_ENV"
+          echo "PKG_NAME=${PKG_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload to direwolf-bundle release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIREWOLF_TAG: ${{ needs.check-version.outputs.direwolf_tag }}
+        run: |
+          gh release view direwolf-bundle \
+            --repo "${{ github.repository }}" 2>/dev/null || \
+          gh release create direwolf-bundle \
+            --repo "${{ github.repository }}" \
+            --title "Direwolf Bundle" \
+            --notes "Pre-built Direwolf binaries. Updated automatically when upstream releases a new version." \
+            --prerelease
+          gh release upload direwolf-bundle \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "${{ env.PKG }}"
+
+  # ------------------------------------------------------------------ #
+  # Windows
+  # ------------------------------------------------------------------ #
+  build-windows:
+    name: Bundle Direwolf (Windows)
+    needs: check-version
+    if: needs.check-version.outputs.needs_build == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Install build tools
+        shell: pwsh
+        run: choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y --no-progress
+
+      - name: Build Direwolf from source (MinGW)
+        shell: pwsh
+        env:
+          DIREWOLF_TAG: ${{ needs.check-version.outputs.direwolf_tag }}
+        run: |
+          git clone --depth 1 --branch "$env:DIREWOLF_TAG" `
+            https://github.com/wb2osz/direwolf.git direwolf-src
+          Set-Location direwolf-src
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          Set-Location build
+          cmake .. -G "MinGW Makefiles" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DUSE_HAMLIB=OFF
+          mingw32-make -j4 direwolf
+          Set-Location ..\..
+
+          $FLAT = "$env:RUNNER_TEMP\direwolf-flat"
+          New-Item -ItemType Directory -Force -Path $FLAT | Out-Null
+          Copy-Item "direwolf-src\build\src\direwolf.exe" $FLAT\ -ErrorAction SilentlyContinue
+          # Copy MinGW runtime DLLs required by direwolf.exe
+          foreach ($dll in @("libgcc_s_seh-1.dll", "libwinpthread-1.dll", "libstdc++-6.dll")) {
+            $src = "C:\mingw64\bin\$dll"
+            if (Test-Path $src) { Copy-Item $src $FLAT\ }
+          }
+          "$env:DIREWOLF_TAG" | Out-File -FilePath "$FLAT\version.txt" -Encoding ASCII -NoNewline
+
+          $PKG_NAME = "direwolf-windows-x86_64.zip"
+          $PKG = "$env:RUNNER_TEMP\$PKG_NAME"
+          Compress-Archive -Path "$FLAT\*" -DestinationPath $PKG
+          "PKG=$PKG"         | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
+          "PKG_NAME=$PKG_NAME" | Out-File -FilePath $env:GITHUB_ENV -Encoding UTF8 -Append
+
+      - name: Upload to direwolf-bundle release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $exists = gh release view direwolf-bundle `
+            --repo "${{ github.repository }}" 2>$null
+          if (-not $exists) {
+            gh release create direwolf-bundle `
+              --repo "${{ github.repository }}" `
+              --title "Direwolf Bundle" `
+              --notes "Pre-built Direwolf binaries. Updated automatically." `
+              --prerelease
+          }
+          gh release upload direwolf-bundle `
+            --repo "${{ github.repository }}" `
+            --clobber `
+            "${{ env.PKG }}"
+
+  # ------------------------------------------------------------------ #
+  # macOS
+  # ------------------------------------------------------------------ #
+  build-macos:
+    name: Bundle Direwolf (macOS)
+    needs: check-version
+    if: needs.check-version.outputs.needs_build == 'true'
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - name: Install build dependencies
+        run: brew install cmake portaudio dylibbundler
+
+      - name: Build Direwolf from source
+        env:
+          DIREWOLF_TAG: ${{ needs.check-version.outputs.direwolf_tag }}
+        run: |
+          ARCH=$(uname -m)
+          git clone --depth 1 --branch "${DIREWOLF_TAG}" \
+            https://github.com/wb2osz/direwolf.git direwolf-src
+          cd direwolf-src
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_HAMLIB=OFF \
+            -DCMAKE_INSTALL_PREFIX=/tmp/direwolf-install
+          make -j$(sysctl -n hw.logicalcpu) direwolf
+          make install
+          cd ../..
+
+          PKG_DIR=/tmp/direwolf-flat
+          mkdir -p "$PKG_DIR"
+          cp /tmp/direwolf-install/bin/direwolf "$PKG_DIR/"
+
+          # Bundle portaudio dylib so Direwolf runs without Homebrew
+          DBIN="${PKG_DIR}/direwolf"
+          dylibbundler \
+            --bundle-deps \
+            --fix-file "$DBIN" \
+            --dest-dir "$HOME/direwolf-deps" \
+            --install-path @executable_path/. \
+            --overwrite-dir
+          cp "$HOME/direwolf-deps/"*.dylib "$PKG_DIR/" 2>/dev/null || true
+
+          echo "${DIREWOLF_TAG}" > "$PKG_DIR/version.txt"
+
+          PKG_NAME="direwolf-macos-${ARCH}.tar.gz"
+          tar -czf "/tmp/${PKG_NAME}" -C /tmp direwolf-flat
+          echo "PKG=/tmp/${PKG_NAME}" >> "$GITHUB_ENV"
+          echo "PKG_NAME=${PKG_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload to direwolf-bundle release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view direwolf-bundle \
+            --repo "${{ github.repository }}" 2>/dev/null || \
+          gh release create direwolf-bundle \
+            --repo "${{ github.repository }}" \
+            --title "Direwolf Bundle" \
+            --notes "Pre-built Direwolf binaries. Updated automatically." \
+            --prerelease
+          gh release upload direwolf-bundle \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "${{ env.PKG }}"

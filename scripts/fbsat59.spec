@@ -71,6 +71,23 @@ elif sys.platform == "linux":
             hamlib_binaries.append((str(_so), "."))
 
 # --------------------------------------------------------------------------- #
+# Direwolf bundle (downloaded from direwolf-bundle release by CI)
+# Placed at _MEIPASS root so find_direwolf() finds it as _MEIPASS/direwolf
+# --------------------------------------------------------------------------- #
+direwolf_binaries: list[tuple[str, str]] = []
+_direwolf_dir = ROOT / "direwolf-bundle"
+if _direwolf_dir.exists():
+    _dw_exe = _direwolf_dir / ("direwolf.exe" if sys.platform == "win32" else "direwolf")
+    if _dw_exe.exists():
+        direwolf_binaries.append((str(_dw_exe), "."))
+    if sys.platform == "win32":
+        for _dll in _direwolf_dir.glob("*.dll"):
+            direwolf_binaries.append((str(_dll), "."))
+    elif sys.platform == "darwin":
+        for _dylib in _direwolf_dir.glob("*.dylib"):
+            direwolf_binaries.append((str(_dylib), "."))
+
+# --------------------------------------------------------------------------- #
 # Collect binary-heavy packages that PyInstaller cannot auto-detect fully
 # --------------------------------------------------------------------------- #
 from PyInstaller.utils.hooks import collect_all  # noqa: E402
@@ -190,7 +207,7 @@ hidden_imports = [
 a = Analysis(
     [str(SRC / "main.py")],
     pathex=[str(SRC)],
-    binaries=hamlib_binaries + soapy_binaries + extra_binaries,
+    binaries=hamlib_binaries + soapy_binaries + direwolf_binaries + extra_binaries,
     datas=datas + extra_datas,
     hiddenimports=hidden_imports + extra_hidden,
     hookspath=[],
