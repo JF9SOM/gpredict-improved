@@ -169,6 +169,107 @@ _setup_logging()
 logger = logging.getLogger(__name__)
 
 
+def _migrate_legacy_data() -> None:
+    """Migrate data from the legacy GPredict-Improved directory to the current FBSAT59 directory.
+
+    Called once at startup before init_database().  Safe to call on every
+    launch: if the legacy directory does not exist, or if the new DB is
+    already populated, the function returns immediately without touching
+    anything.
+
+    Platform paths
+    --------------
+    Linux  : ~/.local/share/<AppName>/
+    macOS  : ~/Library/Application Support/<AppName>/
+    Windows: %APPDATA%\\<AppName>\\
+    """
+    import shutil
+
+    from platformdirs import user_data_dir
+
+    new_data_dir = Path(user_data_dir("fbsat59", "fbsat59"))
+    new_db = new_data_dir / "fbsat59.db"
+
+    # Skip if the new DB already has content (> 64 KB means real data).
+    if new_db.exists() and new_db.stat().st_size > 65536:
+        return
+
+    # Candidate legacy directory names tried in priority order.
+    legacy_app_names = ["GPredict-Improved", "gpredict-improved"]
+    legacy_dir: Path | None = None
+    for name in legacy_app_names:
+        candidate = Path(user_data_dir(name, name))
+        if candidate.exists():
+            legacy_dir = candidate
+            break
+
+    if legacy_dir is None:
+        return
+
+    logger.info("Legacy data directory found: %s — migrating to %s", legacy_dir, new_data_dir)
+    new_data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Files/dirs to migrate.  DB file may have a different stem.
+    migration_errors: list[str] = []
+
+    # --- Database file (stem may be gpredict-improved or fbsat59) ---
+    db_candidates = list(legacy_dir.glob("*.db"))
+    for src_db in db_candidates:
+        dst_db = new_data_dir / "fbsat59.db"
+        if dst_db.exists() and dst_db.stat().st_size > src_db.stat().st_size:
+            continue  # keep the larger (newer) file
+        try:
+            shutil.copy2(src_db, dst_db)
+            logger.info("Migrated DB: %s → %s", src_db, dst_db)
+            # Remove stale WAL/SHM files from the new location so SQLite
+            # opens cleanly without partial journal from the old location.
+            for ext in ("-wal", "-shm"):
+                stale = dst_db.with_suffix(".db" + ext)
+                if stale.exists():
+                    stale.unlink(missing_ok=True)
+        except OSError as exc:
+            migration_errors.append(f"DB copy failed: {exc}")
+
+    # --- Subdirectories (maps, ephemeris, hamlib, direwolf, ft8lib, …) ---
+    for src_sub in legacy_dir.iterdir():
+        if src_sub.suffix in (".db", ".db-wal", ".db-shm"):
+            continue  # already handled above
+        dst_sub = new_data_dir / src_sub.name
+        try:
+            if src_sub.is_dir():
+                if dst_sub.exists():
+                    # Merge: copy only files that are missing in the destination.
+                    for item in src_sub.rglob("*"):
+                        rel = item.relative_to(src_sub)
+                        target = dst_sub / rel
+                        if item.is_dir():
+                            target.mkdir(parents=True, exist_ok=True)
+                        elif not target.exists():
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(item, target)
+                else:
+                    shutil.copytree(src_sub, dst_sub)
+                logger.info("Migrated directory: %s", src_sub.name)
+            else:
+                if not dst_sub.exists():
+                    shutil.copy2(src_sub, dst_sub)
+                    logger.info("Migrated file: %s", src_sub.name)
+        except OSError as exc:
+            migration_errors.append(f"{src_sub.name}: {exc}")
+
+    if migration_errors:
+        logger.warning("Migration completed with errors: %s", migration_errors)
+        logger.warning("Legacy directory kept at %s — please review manually.", legacy_dir)
+        return
+
+    # Remove the legacy directory only when everything succeeded.
+    try:
+        shutil.rmtree(legacy_dir)
+        logger.info("Legacy directory removed: %s", legacy_dir)
+    except OSError as exc:
+        logger.warning("Could not remove legacy directory %s: %s", legacy_dir, exc)
+
+
 def _get_version() -> str:
     """Return the application version string.
 
@@ -236,6 +337,10 @@ def main() -> int:
     app.setApplicationName("FBSAT59")
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("FBSAT59")
+
+    # Migrate data from legacy GPredict-Improved directory (runs only once,
+    # when the old directory exists and the new DB is empty/missing).
+    _migrate_legacy_data()
 
     # Prefetch Natural Earth map data (downloads on first run, uses cache thereafter)
     prefetch_land_data()
