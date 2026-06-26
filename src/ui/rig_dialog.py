@@ -371,17 +371,22 @@ class _RigPanel(QWidget):
 
         # --- Connection mode ---
         mode_group = QGroupBox(_("Connection Mode"))
-        mode_layout = QVBoxLayout(mode_group)
+        mode_outer = QHBoxLayout(mode_group)
+        # Left column: Direct / NET
+        left_col = QVBoxLayout()
         self._radio_direct = QRadioButton(_("Direct (Hamlib built-in)"))
         self._radio_net = QRadioButton(_("NET (rigctld compatible)"))
+        left_col.addWidget(self._radio_direct)
+        left_col.addWidget(self._radio_net)
+        mode_outer.addLayout(left_col)
+        # Right: SDR button (vertically centred)
         self._radio_sdr = QRadioButton(_("SDR"))
+        mode_outer.addStretch()
+        mode_outer.addWidget(self._radio_sdr, alignment=Qt.AlignmentFlag.AlignVCenter)
         self._radio_direct.setChecked(True)
         self._radio_direct.toggled.connect(self._on_mode_toggled)
         self._radio_net.toggled.connect(self._on_mode_toggled)
         self._radio_sdr.toggled.connect(self._on_mode_toggled)
-        mode_layout.addWidget(self._radio_direct)
-        mode_layout.addWidget(self._radio_net)
-        mode_layout.addWidget(self._radio_sdr)
         form.addWidget(mode_group)
 
         # --- Direct connection settings ---
