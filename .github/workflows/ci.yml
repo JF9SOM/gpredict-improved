@@ -185,7 +185,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --pattern "direwolf-linux-${ARCH}.tar.gz" \
             --dir /tmp/dw-dl
-          tar -xzf /tmp/dw-dl/direwolf-linux-${ARCH}.tar.gz -C /tmp/dw-dl
+          tar -xzf /tmp/dw-dl/direwolf-linux-${ARCH}.tar.gz -C /tmp/dw-dl --strip-components=1
           cp /tmp/dw-dl/direwolf direwolf-bundle/
           chmod +x direwolf-bundle/direwolf
           echo "Direwolf version: $(cat /tmp/dw-dl/version.txt)"
@@ -604,7 +604,11 @@ jobs:
             --dir "$env:RUNNER_TEMP\dw-dl"
           Expand-Archive -Path "$env:RUNNER_TEMP\dw-dl\direwolf-windows-x86_64.zip" `
             -DestinationPath "$env:RUNNER_TEMP\dw-dl\dw-extracted"
-          Copy-Item "$env:RUNNER_TEMP\dw-dl\dw-extracted\*" direwolf-bundle\ -Force
+          # Strip top-level "direwolf-flat\" if present
+          $extracted = "$env:RUNNER_TEMP\dw-dl\dw-extracted"
+          $sub = Get-ChildItem $extracted -Directory | Select-Object -First 1
+          if ($sub) { $extracted = $sub.FullName }
+          Copy-Item "$extracted\*" direwolf-bundle\ -Force
           $ver = Get-Content "direwolf-bundle\version.txt" -ErrorAction SilentlyContinue
           Write-Host "Direwolf version: $ver"
 
@@ -854,7 +858,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --pattern "direwolf-macos-${ARCH}.tar.gz" \
             --dir /tmp/dw-dl
-          tar -xzf /tmp/dw-dl/direwolf-macos-${ARCH}.tar.gz -C /tmp/dw-dl
+          tar -xzf /tmp/dw-dl/direwolf-macos-${ARCH}.tar.gz -C /tmp/dw-dl --strip-components=1
           cp /tmp/dw-dl/direwolf direwolf-bundle/
           cp /tmp/dw-dl/*.dylib direwolf-bundle/ 2>/dev/null || true
           chmod +x direwolf-bundle/direwolf
