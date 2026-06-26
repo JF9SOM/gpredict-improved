@@ -128,7 +128,7 @@ def get_user_ft8lib_dir() -> Path:
     """Return platform-specific user install directory for ft8lib."""
     from platformdirs import user_data_dir
 
-    return Path(user_data_dir("gpredict-improved")) / "ft8lib"
+    return Path(user_data_dir("fbsat59")) / "ft8lib"
 
 
 def _find_ft8lib() -> ctypes.CDLL | None:

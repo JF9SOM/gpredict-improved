@@ -125,7 +125,7 @@ def _maps_dir() -> Path:
     """Return (and create) the local directory where map images are stored."""
     from platformdirs import user_data_dir
 
-    d = Path(user_data_dir("gpredict-improved", "gpredict-improved")) / "maps"
+    d = Path(user_data_dir("fbsat59", "fbsat59")) / "maps"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

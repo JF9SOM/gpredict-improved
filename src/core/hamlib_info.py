@@ -24,14 +24,14 @@ def get_user_hamlib_dir() -> Path:
     try:
         from platformdirs import user_data_dir
 
-        return Path(user_data_dir("gpredict-improved")) / "hamlib"
+        return Path(user_data_dir("fbsat59")) / "hamlib"
     except Exception:
         if sys.platform == "win32":
             appdata = Path.home() / "AppData" / "Roaming"
-            return appdata / "gpredict-improved" / "hamlib"
+            return appdata / "fbsat59" / "hamlib"
         if sys.platform == "darwin":
-            return Path.home() / "Library" / "Application Support" / "gpredict-improved" / "hamlib"
-        return Path.home() / ".local" / "share" / "gpredict-improved" / "hamlib"
+            return Path.home() / "Library" / "Application Support" / "fbsat59" / "hamlib"
+        return Path.home() / ".local" / "share" / "fbsat59" / "hamlib"
 
 
 def get_user_hamlib_version() -> str | None:

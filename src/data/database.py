@@ -141,9 +141,9 @@ def get_db_path() -> Path:
     """Return the platform-specific database file path"""
     from platformdirs import user_data_dir
 
-    data_dir = Path(user_data_dir("gpredict-improved", "gpredict-improved"))
+    data_dir = Path(user_data_dir("fbsat59", "fbsat59"))
     data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir / "gpredict-improved.db"
+    return data_dir / "fbsat59.db"
 
 
 def _apply_migrations(conn: sqlite3.Connection) -> None:

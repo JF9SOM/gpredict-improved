@@ -172,7 +172,7 @@ class GrSatellitesDialog(QDialog):
             _(
                 "gr-satellites is an open-source GNU Radio out-of-tree (OOT) module "
                 "that decodes telemetry from 100+ amateur satellites.\n\n"
-                "When installed, GPredict-Improved can launch gr_satellites as a "
+                "When installed, FBSAT59 can launch gr_satellites as a "
                 "subprocess and display decoded telemetry in the Telemetry tab "
                 "(9600 baud and other non-AFSK modes will become available)."
             )

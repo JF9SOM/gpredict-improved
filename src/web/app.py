@@ -348,9 +348,9 @@ def create_app(
     manager = ConnectionManager()
 
     app = FastAPI(
-        title="GPredict-Improved API",
+        title="FBSAT59 API",
         version=APP_VERSION,
-        description="REST / WebSocket API for the satellite tracking software GPredict-Improved",
+        description="REST / WebSocket API for the satellite tracking software FBSAT59",
     )
 
     _static = _find_static_dir()
@@ -381,9 +381,7 @@ def create_app(
             index_html = static_dir / "index.html"
             if index_html.is_file():
                 return HTMLResponse(content=index_html.read_text(encoding="utf-8"))
-        return HTMLResponse(
-            "<h1>GPredict-Improved</h1><p>index.html not found</p>", status_code=503
-        )
+        return HTMLResponse("<h1>FBSAT59</h1><p>index.html not found</p>", status_code=503)
 
     @app.get("/api/amsat", response_model=dict[str, str])
     async def get_amsat_status(

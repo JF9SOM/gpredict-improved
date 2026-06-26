@@ -408,7 +408,7 @@ class Ft4Tab(QWidget):
                 _(
                     "ft8lib is not installed — FT4 TX/RX is disabled.\n"
                     "Build ft8_lib (github.com/kgoba/ft8_lib) and place "
-                    "the shared library in ~/.local/share/gpredict-improved/ft8lib/"
+                    "the shared library in ~/.local/share/fbsat59/ft8lib/"
                 )
             )
             self._codec_banner.setVisible(True)

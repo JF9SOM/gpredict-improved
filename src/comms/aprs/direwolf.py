@@ -99,7 +99,7 @@ def _kiss_decode_frames(buf: bytearray) -> list[bytes]:
 # Direwolf binary detection
 # ---------------------------------------------------------------------------
 
-_APP_NAME = "gpredict-improved"
+_APP_NAME = "fbsat59"
 
 
 def _user_direwolf_dir() -> Path:

@@ -1,9 +1,9 @@
-"""Entry-point shim for the ``gpredict-improved`` console script.
+"""Entry-point shim for the ``fbsat59`` console script.
 
 ``pyproject.toml`` declares::
 
     [project.scripts]
-    gpredict-improved = "gpredict_improved.main:main"
+    fbsat59 = "fbsat59.main:main"
 
 This module delegates to ``src/main.py``, which contains all startup logic.
 ``src/`` is on ``sys.path`` for both editable and regular installs
@@ -19,7 +19,7 @@ import sys
 
 
 def main() -> int:
-    """Launch GPredict-Improved."""
+    """Launch FBSAT59."""
     src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if src_dir not in sys.path:
         sys.path.insert(0, src_dir)

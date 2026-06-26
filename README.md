@@ -1,15 +1,15 @@
-# GPredict-Improved
+# FBSAT59
 
 🌐 [日本語](README.ja.md) | English
 
 **Modern successor to GPredict** — Amateur satellite tracking software
 
-[![CI](https://github.com/JF9SOM/gpredict-improved/actions/workflows/ci.yml/badge.svg)](https://github.com/JF9SOM/gpredict-improved/actions)
-[![Release](https://img.shields.io/github/v/release/JF9SOM/gpredict-improved)](https://github.com/JF9SOM/gpredict-improved/releases/latest)
+[![CI](https://github.com/JF9SOM/fbsat59/actions/workflows/ci.yml/badge.svg)](https://github.com/JF9SOM/fbsat59/actions)
+[![Release](https://img.shields.io/github/v/release/JF9SOM/fbsat59)](https://github.com/JF9SOM/fbsat59/releases/latest)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://python.org)
 
-GPredict-Improved is a ground-up rewrite of
+FBSAT59 is a ground-up rewrite of
 [GPredict](https://github.com/csete/gpredict) — the beloved amateur radio
 satellite tracker by Alexandru Csete OZ9AEC — built on a modern Python stack.
 
@@ -17,7 +17,7 @@ satellite tracker by Alexandru Csete OZ9AEC — built on a modern Python stack.
 
 ## What's improved
 
-| Feature | GPredict | GPredict-Improved |
+| Feature | GPredict | FBSAT59 |
 |---------|----------|-------------------|
 | Platform | Desktop only | Desktop + **browser access from phones/tablets on the same LAN** |
 | Radio control | Requires separate rigctld | **Built-in Hamlib** (700+ radios) — select your rig in the GUI |
@@ -83,7 +83,7 @@ Access from any smartphone or tablet on your local network — no app install ne
 
 ### Auto Fetch Schedule
 
-GPredict-Improved fetches TLE and transponder data automatically in the background.
+FBSAT59 fetches TLE and transponder data automatically in the background.
 **Manual updates are not normally required.**
 Use manual sync only when you need the very latest data immediately (e.g. right before a pass of a newly launched satellite).
 
@@ -112,22 +112,22 @@ A summary is also available in the app under **Help → Auto Fetch Rules**.
 
 ### Windows
 
-Download `GPredict-Improved-Setup.exe` from the
-[Releases](https://github.com/JF9SOM/gpredict-improved/releases/latest) page
+Download `FBSAT59-Setup.exe` from the
+[Releases](https://github.com/JF9SOM/fbsat59/releases/latest) page
 and run the installer.
 
 ### macOS
 
-Download `GPredict-Improved.dmg` from the
-[Releases](https://github.com/JF9SOM/gpredict-improved/releases/latest) page,
+Download `FBSAT59.dmg` from the
+[Releases](https://github.com/JF9SOM/fbsat59/releases/latest) page,
 open it, and drag the app to Applications.
 
 ### Linux (AppImage)
 
 ```bash
 # Download and make executable
-chmod +x GPredict-Improved-*.AppImage
-./GPredict-Improved-*.AppImage
+chmod +x FBSAT59-*.AppImage
+./FBSAT59-*.AppImage
 ```
 
 ### Linux (from source — Ubuntu/Debian)
@@ -138,8 +138,8 @@ sudo apt install python3.11 python3-pip libhamlib-dev python3-hamlib \
                  python3-soapysdr soapysdr-module-rtlsdr soapysdr-module-hackrf
 
 # 2. Clone
-git clone https://github.com/JF9SOM/gpredict-improved.git
-cd gpredict-improved
+git clone https://github.com/JF9SOM/fbsat59.git
+cd fbsat59
 
 # 3. Python virtual environment
 python3.11 -m venv .venv
@@ -147,7 +147,7 @@ source .venv/bin/activate
 pip install -e .
 
 # 4. USB radio permissions (udev rule)
-sudo cp scripts/99-gpredict-improved.rules /etc/udev/rules.d/
+sudo cp scripts/99-fbsat59.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo usermod -aG dialout $USER
 # Log out and back in to apply group membership
@@ -188,7 +188,7 @@ Airspy, Airspy HF+, and ADALM-Pluto are **not supported on Windows**.
 >    (RTL-SDR: *Bulk-In, Interface 0* / HackRF: *Hackrf One*).
 >    Set driver to **WinUSB** → click **Install Driver**.
 >    **Do NOT select libusbK** — it causes device detection failures.
-> 4. Restart GPredict-Improved.
+> 4. Restart FBSAT59.
 >
 > See also **Help → SDR Device Installation** for step-by-step guidance.
 
@@ -253,7 +253,7 @@ brew install soapysdr soapyrtlsdr soapyhackrf soapyairspy
 ## Architecture
 
 ```
-gpredict-improved/
+fbsat59/
 ├── src/
 │   ├── core/     # Satellite engine (Skyfield) — elevation, Doppler, pass prediction
 │   ├── ui/       # PySide6 Qt6 desktop UI
@@ -295,8 +295,8 @@ mypy --strict src/
 python -m pytest tests/test_rig.py -q
 
 # Recompile translations after editing .po files
-msgfmt locale/ja/LC_MESSAGES/gpredict_improved.po \
-      -o locale/ja/LC_MESSAGES/gpredict_improved.mo
+msgfmt locale/ja/LC_MESSAGES/fbsat59.po \
+      -o locale/ja/LC_MESSAGES/fbsat59.mo
 ```
 
 See [CLAUDE.md](CLAUDE.md) for the full architecture reference used during development.
@@ -325,10 +325,10 @@ SoapySDR is incompatible with WinUSB on Windows; RTL-SDR and HackRF bypass it vi
 
 ## Adding a New Language
 
-1. Copy `locale/en/LC_MESSAGES/gpredict_improved.po` to
-   `locale/<lang>/LC_MESSAGES/gpredict_improved.po`
+1. Copy `locale/en/LC_MESSAGES/fbsat59.po` to
+   `locale/<lang>/LC_MESSAGES/fbsat59.po`
 2. Translate the `msgstr` lines
-3. Compile: `msgfmt locale/<lang>/LC_MESSAGES/gpredict_improved.po -o locale/<lang>/LC_MESSAGES/gpredict_improved.mo`
+3. Compile: `msgfmt locale/<lang>/LC_MESSAGES/fbsat59.po -o locale/<lang>/LC_MESSAGES/fbsat59.mo`
 4. The new language will appear automatically in the Settings dialog
 
 ---
@@ -364,7 +364,7 @@ Each decoder will run as a subprocess with results displayed in a dedicated plug
 - Real-world Doppler tests with TS-2000, FT-817ND, etc. (IC-9100/IC-9700 confirmed in v0.1.27)
 - WSJT-X / JS8Call frequency & mode sync
 
-Contributions and feedback are welcome — open a [GitHub Issue](https://github.com/JF9SOM/gpredict-improved/issues) or submit a pull request.
+Contributions and feedback are welcome — open a [GitHub Issue](https://github.com/JF9SOM/fbsat59/issues) or submit a pull request.
 
 ---
 

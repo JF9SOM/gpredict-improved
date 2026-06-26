@@ -435,7 +435,7 @@ class SdrInstallDialog(QDialog):
                     "     (RTL-SDR: Bulk-In Interface 0 / HackRF: Hackrf One)\n"
                     "     → set driver to WinUSB → click Install Driver.\n"
                     "  ⚠️  Do NOT select libusbK — it causes device detection failures.\n"
-                    "  4. Restart GPredict-Improved."
+                    "  4. Restart FBSAT59."
                 )
             )
             self._install_btn.setVisible(False)
@@ -483,7 +483,7 @@ class SdrInstallDialog(QDialog):
         self._log.append(f"\n{'✅' if success else '❌'}  {msg}")
         if success:
             self._refresh()
-            self._log.append(_("\n⚠️  Restart GPredict-Improved to activate the installed drivers."))
+            self._log.append(_("\n⚠️  Restart FBSAT59 to activate the installed drivers."))
 
     def _open_url(self, url: str) -> None:
         """Open a URL in the system browser."""

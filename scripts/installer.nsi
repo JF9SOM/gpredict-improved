@@ -1,19 +1,19 @@
-; GPredict-Improved NSIS Installer Script
+; FBSAT59 NSIS Installer Script
 ; Requires NSIS 3.x (available on GitHub Actions windows-latest runner)
 ;
 ; Usage:
 ;   makensis scripts\installer.nsi
 ;
 ; Produces:
-;   dist\GPredict-Improved-Setup.exe
+;   dist\FBSAT59-Setup.exe
 
 Unicode True
 
 ; ---- Definitions -------------------------------------------------------
-!define APP_NAME        "GPredict-Improved"
-!define APP_EXE         "gpredict-improved.exe"
-!define PUBLISHER       "GPredict-Improved Project"
-!define GITHUB_URL      "https://github.com/JF9SOM/gpredict-improved"
+!define APP_NAME        "FBSAT59"
+!define APP_EXE         "fbsat59.exe"
+!define PUBLISHER       "FBSAT59 Project"
+!define GITHUB_URL      "https://github.com/JF9SOM/fbsat59"
 !define UNINSTALL_KEY   "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 !define REG_INSTALL_DIR "Software\${APP_NAME}"
 
@@ -24,7 +24,7 @@ Unicode True
 
 ; ---- General -----------------------------------------------------------
 Name            "${APP_NAME} ${APP_VERSION}"
-OutFile         "..\dist\GPredict-Improved-Setup.exe"
+OutFile         "..\dist\FBSAT59-Setup.exe"
 InstallDir      "$PROGRAMFILES64\${APP_NAME}"
 InstallDirRegKey HKLM "${REG_INSTALL_DIR}" "InstallDir"
 RequestExecutionLevel admin
@@ -70,7 +70,7 @@ Section "Install" SecMain
   RMDir /r "$INSTDIR\_internal\soapy_modules"
 
   SetOutPath "$INSTDIR"
-  File /r "..\dist\gpredict-improved\"
+  File /r "..\dist\fbsat59\"
 
   ; Store install dir in registry
   WriteRegStr HKLM "${REG_INSTALL_DIR}" "InstallDir" "$INSTDIR"

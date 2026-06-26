@@ -69,7 +69,7 @@ def _send_windows_notification(title: str, body: str) -> None:
         notification.notify(
             title=title,
             message=body,
-            app_name="GPredict-Improved",
+            app_name="FBSAT59",
             timeout=8,
         )
     except Exception:  # noqa: BLE001
@@ -99,7 +99,7 @@ def _send_plyer(title: str, body: str) -> None:
     try:
         from plyer import notification  # noqa: PLC0415
 
-        notification.notify(title=title, message=body, app_name="GPredict-Improved", timeout=8)
+        notification.notify(title=title, message=body, app_name="FBSAT59", timeout=8)
     except Exception:  # noqa: BLE001
         pass
 

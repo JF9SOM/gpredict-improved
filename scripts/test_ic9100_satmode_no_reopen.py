@@ -11,7 +11,7 @@ If set_func(SATMODE,1) updates cache->satmode=1 immediately, close→open is
 unnecessary. This would also fix IC-9700 where the read-back during open()
 may not correctly detect satmode.
 
-Run with GPredict-Improved CLOSED:
+Run with FBSAT59 CLOSED:
   source .venv/bin/activate
   python scripts/test_ic9100_satmode_no_reopen.py [--port /dev/ttyUSB0] [--civ 65]
 """

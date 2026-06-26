@@ -4,7 +4,7 @@ Shows the current Direwolf status (path, version) and provides
 platform-specific installation guidance or a bundle-update option.
 
 Detection priority (mirrors find_direwolf()):
-  1. User-installed   ~/.local/share/gpredict-improved/direwolf/
+  1. User-installed   ~/.local/share/fbsat59/direwolf/
   2. System PATH      which direwolf
   3. Bundled          _MEIPASS/direwolf (PyInstaller)
 """
@@ -89,7 +89,7 @@ class _InstallWorker(QThread):
     finished_ok = Signal(str)  # installed path
     finished_err = Signal(str)
 
-    _REPO = "JF9SOM/gpredict-improved"
+    _REPO = "JF9SOM/fbsat59"
     _API = f"https://api.github.com/repos/{_REPO}/releases/latest"
 
     def run(self) -> None:

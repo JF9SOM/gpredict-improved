@@ -179,7 +179,7 @@ jobs:
         run: |
           echo "${{ github.ref_name }}" | sed 's/^v//' > src/version.txt
           export LD_LIBRARY_PATH=/opt/hamlib/4.7/lib:${LD_LIBRARY_PATH}
-          PYTHONPATH=src pyinstaller scripts/gpredict-improved.spec --noconfirm
+          PYTHONPATH=src pyinstaller scripts/fbsat59.spec --noconfirm
 
       - name: Create AppImage
         run: bash scripts/build-appimage.sh
@@ -188,14 +188,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-appimage
-          path: dist/GPredict-Improved-x86_64.AppImage
+          path: dist/FBSAT59-x86_64.AppImage
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
-            dist/GPredict-Improved-x86_64.AppImage
+            dist/FBSAT59-x86_64.AppImage
             ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
           overwrite_files: true
@@ -588,7 +588,7 @@ jobs:
           $ver = "${{ github.ref_name }}".TrimStart("v")
           $ver | Out-File -FilePath src\version.txt -Encoding ASCII -NoNewline
           $env:PYTHONPATH = "src"
-          pyinstaller scripts/gpredict-improved.spec --noconfirm --distpath dist
+          pyinstaller scripts/fbsat59.spec --noconfirm --distpath dist
           if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed" }
           $count = (Get-ChildItem dist -Recurse -File -ErrorAction SilentlyContinue).Count
           Write-Host "=== dist after PyInstaller: $count files ==="
@@ -607,20 +607,20 @@ jobs:
           $viVer = ($parts[0..3] -join '.')
           makensis /DAPP_VERSION=$ver /DVIVERSION=$viVer scripts\installer.nsi
           if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
-          Write-Host "Installer built: dist\GPredict-Improved-Setup.exe"
+          Write-Host "Installer built: dist\FBSAT59-Setup.exe"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: dist/GPredict-Improved-Setup.exe
+          path: dist/FBSAT59-Setup.exe
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
-            dist/GPredict-Improved-Setup.exe
+            dist/FBSAT59-Setup.exe
             ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
           overwrite_files: true
@@ -751,7 +751,7 @@ jobs:
       - name: Build with PyInstaller
         run: |
           echo "${{ github.ref_name }}" | sed 's/^v//' > src/version.txt
-          PYTHONPATH=src pyinstaller scripts/gpredict-improved.spec --noconfirm
+          PYTHONPATH=src pyinstaller scripts/fbsat59.spec --noconfirm
 
       - name: Create DMG
         run: bash scripts/build-dmg.sh
@@ -760,14 +760,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: dist/GPredict-Improved.dmg
+          path: dist/FBSAT59.dmg
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           files: |
-            dist/GPredict-Improved.dmg
+            dist/FBSAT59.dmg
             ${{ env.HAMLIB_PORTABLE_PKG }}
           make_latest: true
 

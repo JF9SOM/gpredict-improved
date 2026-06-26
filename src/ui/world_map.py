@@ -237,7 +237,7 @@ def _cache_path() -> Path:
     """Return the path to the GeoJSON cache file."""
     from platformdirs import user_data_dir
 
-    data_dir = Path(user_data_dir("gpredict-improved", "gpredict-improved"))
+    data_dir = Path(user_data_dir("fbsat59", "fbsat59"))
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / _CACHE_FILENAME
 

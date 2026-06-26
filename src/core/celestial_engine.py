@@ -37,7 +37,7 @@ def _eph_dir() -> Path:
     """Return the user-data directory used to cache the ephemeris file."""
     from platformdirs import user_data_dir
 
-    d = Path(user_data_dir("gpredict-improved", "gpredict-improved")) / "ephemeris"
+    d = Path(user_data_dir("fbsat59", "fbsat59")) / "ephemeris"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

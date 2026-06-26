@@ -2,7 +2,7 @@
 Internationalization (i18n) foundation module.
 
 Translation system based on Python standard gettext.
-To add a new language, add locale/<lang>/LC_MESSAGES/gpredict_improved.po
+To add a new language, add locale/<lang>/LC_MESSAGES/fbsat59.po
 and compile it with msgfmt.
 
 Usage:
@@ -19,7 +19,7 @@ import sys
 import threading
 from pathlib import Path
 
-_DOMAIN = "gpredict_improved"
+_DOMAIN = "fbsat59"
 
 # Resolve locale/ directory.  When running from a PyInstaller bundle the
 # _MEIPASS root is the extraction directory, so locale/ lives directly under it.

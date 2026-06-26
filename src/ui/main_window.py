@@ -216,7 +216,7 @@ class SatDetailPanel(QWidget):
 
 class MainWindow(QMainWindow):
     """
-    GPredict-Improved main window.
+    FBSAT59 main window.
 
     Layout:
         Left   — satellite list (with TLE quality indicator)
@@ -345,7 +345,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
 
         _ver = QApplication.applicationVersion() or "0.1.0"
-        self.setWindowTitle(f"GPredict-Improved  v{_ver}")
+        self.setWindowTitle(f"FBSAT59  v{_ver}")
         self.resize(1280, 800)
         self._set_app_icon()
         self._sync_progress.connect(self._on_sync_progress)
@@ -3610,7 +3610,7 @@ class MainWindow(QMainWindow):
         """Show a dialog explaining the automatic TLE and transponder fetch schedule."""
         msg = (
             "<h3>Auto Fetch Rules</h3>"
-            "<p>GPredict-Improved automatically fetches and updates TLE orbital data "
+            "<p>FBSAT59 automatically fetches and updates TLE orbital data "
             "and transponder information in the background. Manual updates are normally "
             "not required. Use manual sync only when you need the very latest data "
             "immediately (e.g. right before a pass of a newly launched satellite).</p>"
@@ -3649,17 +3649,17 @@ class MainWindow(QMainWindow):
         ver = QApplication.applicationVersion() or "0.1.0"
         QMessageBox.information(
             self,
-            _("About GPredict-Improved"),
-            f"GPredict-Improved  v{ver}\n\n"
+            _("About FBSAT59"),
+            f"FBSAT59  v{ver}\n\n"
             + _("Modern satellite tracking software for amateur radio operators.\n")
-            + "https://github.com/JF9SOM/gpredict-improved",
+            + "https://github.com/JF9SOM/fbsat59",
         )
 
     def _on_github(self) -> None:
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
 
-        QDesktopServices.openUrl(QUrl("https://github.com/JF9SOM/gpredict-improved"))
+        QDesktopServices.openUrl(QUrl("https://github.com/JF9SOM/fbsat59"))
 
     def _on_sdr_install(self) -> None:
         from ui.sdr_install_dialog import SdrInstallDialog

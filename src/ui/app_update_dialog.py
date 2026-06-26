@@ -1,14 +1,14 @@
 """
 App Update dialog — Help > Check for Updates…
 
-Checks GitHub Releases for a newer version of GPredict-Improved and
+Checks GitHub Releases for a newer version of FBSAT59 and
 offers a one-click download + install per platform:
 
-  Linux   — downloads GPredict-Improved-x86_64.AppImage, replaces the
+  Linux   — downloads FBSAT59-x86_64.AppImage, replaces the
              currently running AppImage, then prompts restart.
-  Windows — downloads GPredict-Improved-Setup.exe and launches it
+  Windows — downloads FBSAT59-Setup.exe and launches it
              (NSIS handles overwrite + restart).
-  macOS   — downloads GPredict-Improved.dmg, mounts it, copies the
+  macOS   — downloads FBSAT59.dmg, mounts it, copies the
              .app bundle over the existing one, unmounts, prompts restart.
 """
 
@@ -42,8 +42,8 @@ from i18n import _
 
 logger = logging.getLogger(__name__)
 
-GITHUB_API = "https://api.github.com/repos/JF9SOM/gpredict-improved/releases/latest"
-GITHUB_RELEASES = "https://github.com/JF9SOM/gpredict-improved/releases"
+GITHUB_API = "https://api.github.com/repos/JF9SOM/fbsat59/releases/latest"
+GITHUB_RELEASES = "https://github.com/JF9SOM/fbsat59/releases"
 
 
 def _current_version() -> str:
@@ -55,11 +55,11 @@ def _asset_name() -> str:
     """Return the expected release asset filename for the current platform."""
     os_name = platform.system()
     if os_name == "Linux":
-        return "GPredict-Improved-x86_64.AppImage"
+        return "FBSAT59-x86_64.AppImage"
     if os_name == "Windows":
-        return "GPredict-Improved-Setup.exe"
+        return "FBSAT59-Setup.exe"
     if os_name == "Darwin":
-        return "GPredict-Improved.dmg"
+        return "FBSAT59.dmg"
     return ""
 
 
@@ -78,7 +78,7 @@ class _CheckWorker(QThread):
         try:
             req = urllib.request.Request(
                 GITHUB_API,
-                headers={"User-Agent": "gpredict-improved/1.0"},
+                headers={"User-Agent": "fbsat59/1.0"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data: dict[str, object] = json.loads(resp.read())
@@ -158,7 +158,7 @@ class _DownloadWorker(QThread):
         self.finished.emit(
             True,
             _(
-                "Installer launched. GPredict-Improved will close now "
+                "Installer launched. FBSAT59 will close now "
                 "so the installer can complete the update."
             ),
         )
@@ -181,9 +181,7 @@ class _DownloadWorker(QThread):
         tmp_target.rename(current)
         self.finished.emit(
             True,
-            _("AppImage updated to {ver}. Please restart GPredict-Improved.").format(
-                ver=self._version
-            ),
+            _("AppImage updated to {ver}. Please restart FBSAT59.").format(ver=self._version),
         )
 
     def _install_macos(self, dmg: Path) -> None:
@@ -211,7 +209,7 @@ class _DownloadWorker(QThread):
             subprocess.run(["hdiutil", "detach", str(mount_point)], check=False)
         self.finished.emit(
             True,
-            _("{app} updated to {ver}. Please restart GPredict-Improved.").format(
+            _("{app} updated to {ver}. Please restart FBSAT59.").format(
                 app=src_app.name, ver=self._version
             ),
         )

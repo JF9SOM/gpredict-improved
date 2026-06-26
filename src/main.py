@@ -1,5 +1,5 @@
 """
-GPredict-Improved application entry point.
+FBSAT59 application entry point.
 
 Startup sequence:
     1. Create QApplication
@@ -41,9 +41,9 @@ if getattr(sys, "frozen", False):
 try:
     from platformdirs import user_data_dir as _udd
 
-    _hamlib_user_dir = Path(_udd("gpredict-improved")) / "hamlib"
+    _hamlib_user_dir = Path(_udd("fbsat59")) / "hamlib"
 except Exception:
-    _hamlib_user_dir = Path.home() / ".local" / "share" / "gpredict-improved" / "hamlib"
+    _hamlib_user_dir = Path.home() / ".local" / "share" / "fbsat59" / "hamlib"
 if _hamlib_user_dir.exists():
     _hamlib_user_str = str(_hamlib_user_dir)
     if _hamlib_user_str not in sys.path:
@@ -154,13 +154,13 @@ def _setup_logging() -> None:
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     from platformdirs import user_log_dir
 
-    log_dir = user_log_dir("GPredict-Improved", "GPredict-Improved")
+    log_dir = user_log_dir("FBSAT59", "FBSAT59")
     os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "gpredict-improved.log")
+    log_path = os.path.join(log_dir, "fbsat59.log")
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(logging.Formatter(fmt))
     handlers: list[logging.Handler] = [logging.StreamHandler(), file_handler]
-    print(f"[GPredict-Improved] Log file: {log_path}", file=sys.stderr)
+    print(f"[FBSAT59] Log file: {log_path}", file=sys.stderr)
 
     logging.basicConfig(level=logging.INFO, format=fmt, handlers=handlers)
 
@@ -219,7 +219,7 @@ def _get_version() -> str:
     try:
         from importlib.metadata import version as _meta_version
 
-        ver = _meta_version("gpredict-improved")
+        ver = _meta_version("fbsat59")
         if ".dev" not in ver and "+" not in ver:
             return ver
         return ver.split("+")[0]
@@ -233,9 +233,9 @@ APP_VERSION = _get_version()
 def main() -> int:
     """Application main entry point."""
     app = QApplication(sys.argv)
-    app.setApplicationName("GPredict-Improved")
+    app.setApplicationName("FBSAT59")
     app.setApplicationVersion(APP_VERSION)
-    app.setOrganizationName("GPredict-Improved")
+    app.setOrganizationName("FBSAT59")
 
     # Prefetch Natural Earth map data (downloads on first run, uses cache thereafter)
     prefetch_land_data()

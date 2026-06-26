@@ -73,7 +73,7 @@ class Demodulator:
         if not _SCIPY_AVAILABLE:
             raise ImportError(
                 "scipy is required for SDR demodulation. "
-                "Install it with: pip install 'gpredict-improved[sdr]'"
+                "Install it with: pip install 'fbsat59[sdr]'"
             )
         # Protects all filter coefficients and state from concurrent access.
         # set_mode/set_input_rate/set_* run on the Qt UI thread;

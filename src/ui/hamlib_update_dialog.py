@@ -63,7 +63,7 @@ class _CheckWorker(QThread):
         try:
             req = urllib.request.Request(
                 HAMLIB_GITHUB_API,
-                headers={"User-Agent": "gpredict-improved/1.0"},
+                headers={"User-Agent": "fbsat59/1.0"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data: dict[str, object] = json.loads(resp.read())
@@ -334,9 +334,7 @@ class HamlibUpdateDialog(QDialog):
         self._log.append(f"\n{icon}  {msg}")
         if success:
             self._refresh_current()
-            self._log.append(
-                _("\n⚠️  Restart GPredict-Improved to activate the new Hamlib version.")
-            )
+            self._log.append(_("\n⚠️  Restart FBSAT59 to activate the new Hamlib version."))
             # Disable install button — already installed
             self._install_btn.setVisible(False)
 

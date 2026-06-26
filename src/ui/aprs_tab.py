@@ -698,7 +698,7 @@ class AprsTab(QWidget):
 
         with open(path, "w", encoding="utf-8") as f:
             f.write("<ADIF_VER:5>3.1.4\n")
-            f.write("<PROGRAMID:18>GPredict-Improved\n")
+            f.write("<PROGRAMID:18>FBSAT59\n")
             f.write("<EOH>\n\n")
 
             for row in rows:

@@ -1,1 +1,1 @@
-"""GPredict-Improved core engine"""
+"""FBSAT59 core engine"""
