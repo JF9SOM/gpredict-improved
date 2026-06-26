@@ -29,7 +29,6 @@ from PySide6.QtGui import (
     QCloseEvent,
     QColor,
     QDesktopServices,
-    QFont,
     QIcon,
     QPixmap,
 )
@@ -800,10 +799,7 @@ class MainWindow(QMainWindow):
         if show_moon:
             moon_item = QListWidgetItem("☽ Moon")
             moon_item.setData(Qt.ItemDataRole.UserRole, MOON_ID)
-            moon_item.setForeground(QColor("#c8d8f8"))
-            font: QFont = moon_item.font()
-            font.setBold(True)
-            moon_item.setFont(font)
+            moon_item.setForeground(QColor("#4488ff"))
             self._sat_list.addItem(moon_item)
             if current_norad == MOON_ID:
                 restore_row = count
@@ -1590,6 +1586,16 @@ class MainWindow(QMainWindow):
 
         if obs is None:
             return
+
+        # Update Moon list item colour: blue below horizon, bold blue above
+        for i in range(self._sat_list.count()):
+            it = self._sat_list.item(i)
+            if it is not None and it.data(Qt.ItemDataRole.UserRole) == MOON_ID:
+                it.setForeground(QColor("#4488ff"))
+                f = it.font()
+                f.setBold(obs.is_above_horizon)
+                it.setFont(f)
+                break
 
         # 24-hour arc: recompute only on map-update ticks (every 5 s) to reduce CPU load
         if self._map_tick_counter == 0 or not self._moon_arc_cache:
@@ -3543,6 +3549,18 @@ class MainWindow(QMainWindow):
                 "normal",
                 _("Gray"),
                 _("Status unknown — not confirmed operational by any source."),
+            ),
+            (
+                "#4488ff",
+                "normal",
+                _("Blue"),
+                _("Celestial Bodies (Moon etc.) — below the horizon."),
+            ),
+            (
+                "#4488ff",
+                "bold",
+                _("Blue (bold)"),
+                _("Celestial Bodies (Moon etc.) — above the horizon."),
             ),
         ]
 
