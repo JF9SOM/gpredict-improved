@@ -100,6 +100,19 @@ if _q65lib_dir.exists():
         for _so in _q65lib_dir.glob("*.so"):
             q65lib_binaries.append((str(_so), "."))
 
+ft8lib_binaries: list[tuple[str, str]] = []
+_ft8lib_dir = ROOT / "ft8lib-bundle"
+if _ft8lib_dir.exists():
+    if sys.platform == "win32":
+        for _dll in _ft8lib_dir.glob("*.dll"):
+            ft8lib_binaries.append((str(_dll), "."))
+    elif sys.platform == "darwin":
+        for _dylib in _ft8lib_dir.glob("*.dylib"):
+            ft8lib_binaries.append((str(_dylib), "."))
+    else:
+        for _so in _ft8lib_dir.glob("*.so"):
+            ft8lib_binaries.append((str(_so), "."))
+
 # --------------------------------------------------------------------------- #
 # Collect binary-heavy packages that PyInstaller cannot auto-detect fully
 # --------------------------------------------------------------------------- #
@@ -220,7 +233,7 @@ hidden_imports = [
 a = Analysis(
     [str(SRC / "main.py")],
     pathex=[str(SRC)],
-    binaries=hamlib_binaries + soapy_binaries + direwolf_binaries + q65lib_binaries + extra_binaries,
+    binaries=hamlib_binaries + soapy_binaries + direwolf_binaries + q65lib_binaries + ft8lib_binaries + extra_binaries,
     datas=datas + extra_datas,
     hiddenimports=hidden_imports + extra_hidden,
     hookspath=[],

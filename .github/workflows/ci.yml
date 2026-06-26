@@ -200,9 +200,23 @@ jobs:
             --repo "${{ github.repository }}" \
             --pattern "q65lib-linux-${ARCH}.tar.gz" \
             --dir /tmp/q65-dl 2>/dev/null || { echo "q65lib bundle not found; skipping"; exit 0; }
-          tar -xzf /tmp/q65-dl/q65lib-linux-${ARCH}.tar.gz -C /tmp/q65-dl
+          tar -xzf /tmp/q65-dl/q65lib-linux-${ARCH}.tar.gz -C /tmp/q65-dl --strip-components=1
           cp /tmp/q65-dl/*.so q65lib-bundle/ 2>/dev/null || true
           echo "q65lib version: $(cat /tmp/q65-dl/version.txt 2>/dev/null || echo unknown)"
+
+      - name: Download ft8lib bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARCH=$(uname -m)
+          mkdir -p ft8lib-bundle
+          gh release download ft8lib-bundle \
+            --repo "${{ github.repository }}" \
+            --pattern "ft8lib-linux-${ARCH}.tar.gz" \
+            --dir /tmp/ft8-dl 2>/dev/null || { echo "ft8lib bundle not found; skipping"; exit 0; }
+          tar -xzf /tmp/ft8-dl/ft8lib-linux-${ARCH}.tar.gz -C /tmp/ft8-dl --strip-components=1
+          cp /tmp/ft8-dl/*.so ft8lib-bundle/ 2>/dev/null || true
+          echo "ft8lib version: $(cat /tmp/ft8-dl/version.txt 2>/dev/null || echo unknown)"
 
       - name: Build with PyInstaller
         run: |
@@ -625,11 +639,37 @@ jobs:
               --dir "$env:RUNNER_TEMP\q65-dl"
             Expand-Archive -Path "$env:RUNNER_TEMP\q65-dl\q65lib-windows-x86_64.zip" `
               -DestinationPath "$env:RUNNER_TEMP\q65-dl\q65-extracted"
-            Copy-Item "$env:RUNNER_TEMP\q65-dl\q65-extracted\*" q65lib-bundle\ -Force
+            $extracted = "$env:RUNNER_TEMP\q65-dl\q65-extracted"
+            $sub = Get-ChildItem $extracted -Directory | Select-Object -First 1
+            if ($sub) { $extracted = $sub.FullName }
+            Copy-Item "$extracted\*" q65lib-bundle\ -Force
             $ver = Get-Content "q65lib-bundle\version.txt" -ErrorAction SilentlyContinue
             Write-Host "q65lib version: $ver"
           } catch {
             Write-Host "q65lib bundle not found; skipping (Q65 decode disabled in this build)"
+          }
+
+      - name: Download ft8lib bundle
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force -Path ft8lib-bundle | Out-Null
+          try {
+            gh release download ft8lib-bundle `
+              --repo "${{ github.repository }}" `
+              --pattern "ft8lib-windows-x86_64.zip" `
+              --dir "$env:RUNNER_TEMP\ft8-dl"
+            Expand-Archive -Path "$env:RUNNER_TEMP\ft8-dl\ft8lib-windows-x86_64.zip" `
+              -DestinationPath "$env:RUNNER_TEMP\ft8-dl\ft8-extracted"
+            $extracted = "$env:RUNNER_TEMP\ft8-dl\ft8-extracted"
+            $sub = Get-ChildItem $extracted -Directory | Select-Object -First 1
+            if ($sub) { $extracted = $sub.FullName }
+            Copy-Item "$extracted\*" ft8lib-bundle\ -Force
+            $ver = Get-Content "ft8lib-bundle\version.txt" -ErrorAction SilentlyContinue
+            Write-Host "ft8lib version: $ver"
+          } catch {
+            Write-Host "ft8lib bundle not found; skipping (FT4/Q65 TX disabled in this build)"
           }
 
       - name: Disable Windows Defender and install NSIS
@@ -874,9 +914,23 @@ jobs:
             --repo "${{ github.repository }}" \
             --pattern "q65lib-macos-${ARCH}.tar.gz" \
             --dir /tmp/q65-dl 2>/dev/null || { echo "q65lib bundle not found; skipping"; exit 0; }
-          tar -xzf /tmp/q65-dl/q65lib-macos-${ARCH}.tar.gz -C /tmp/q65-dl
+          tar -xzf /tmp/q65-dl/q65lib-macos-${ARCH}.tar.gz -C /tmp/q65-dl --strip-components=1
           cp /tmp/q65-dl/*.dylib q65lib-bundle/ 2>/dev/null || true
           echo "q65lib version: $(cat /tmp/q65-dl/version.txt 2>/dev/null || echo unknown)"
+
+      - name: Download ft8lib bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARCH=$(uname -m)
+          mkdir -p ft8lib-bundle
+          gh release download ft8lib-bundle \
+            --repo "${{ github.repository }}" \
+            --pattern "ft8lib-macos-${ARCH}.tar.gz" \
+            --dir /tmp/ft8-dl 2>/dev/null || { echo "ft8lib bundle not found; skipping"; exit 0; }
+          tar -xzf /tmp/ft8-dl/ft8lib-macos-${ARCH}.tar.gz -C /tmp/ft8-dl --strip-components=1
+          cp /tmp/ft8-dl/*.dylib ft8lib-bundle/ 2>/dev/null || true
+          echo "ft8lib version: $(cat /tmp/ft8-dl/version.txt 2>/dev/null || echo unknown)"
 
       - name: Build with PyInstaller
         run: |
