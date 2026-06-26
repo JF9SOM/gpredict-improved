@@ -860,7 +860,7 @@ class TestMainWindow:
 
     def test_window_title_contains_app_name(self, qtbot, db, tle_manager) -> None:
         w = self._make_window(qtbot, db, tle_manager)
-        assert "GPredict" in w.windowTitle()
+        assert "FBSAT59" in w.windowTitle()
 
     def test_has_tab_widget_with_four_tabs(self, qtbot, db, tle_manager) -> None:
         # Tab count is 7: Dashboard, World Map, Radar, Pass Chart, Group Pass Chart,
