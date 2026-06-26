@@ -618,6 +618,7 @@ class MainWindow(QMainWindow):
             help_menu.addAction(_("SDR Device Installation…"), self._on_sdr_install)
             help_menu.addAction(_("Hamlib Update…"), self._on_hamlib_update)
             help_menu.addAction(_("ft8lib Installation…"), self._on_ft8lib_help)
+            help_menu.addAction(_("Q65 Library Installation…"), self._on_q65lib_help)
             help_menu.addAction(_("Direwolf Installation…"), self._on_direwolf_help)
             help_menu.addAction(_("gr-satellites Installation…"), self._on_gr_satellites_help)
             help_menu.addSeparator()
@@ -3724,6 +3725,12 @@ class MainWindow(QMainWindow):
         from ui.ft8lib_dialog import Ft8LibDialog
 
         dlg = Ft8LibDialog(self)
+        dlg.exec()
+
+    def _on_q65lib_help(self) -> None:
+        from ui.q65lib_dialog import Q65LibDialog
+
+        dlg = Q65LibDialog(self)
         dlg.exec()
 
     def _on_direwolf_help(self) -> None:
