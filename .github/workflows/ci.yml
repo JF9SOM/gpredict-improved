@@ -801,6 +801,7 @@ jobs:
           mkdir build && cd build
           cmake -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_INSTALL_PREFIX=/tmp/direwolf-install \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
                 ..
           make -j$(nproc)
           make install
@@ -849,6 +850,7 @@ jobs:
           cmake -G "MinGW Makefiles" `
                 -DCMAKE_BUILD_TYPE=Release `
                 -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\direwolf-install" `
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5 `
                 ..
           cmake --build . --config Release -j
           cmake --install .
@@ -895,6 +897,7 @@ jobs:
           mkdir build && cd build
           cmake -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_INSTALL_PREFIX=/tmp/direwolf-install \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
                 ..
           make -j$(sysctl -n hw.logicalcpu)
           make install
