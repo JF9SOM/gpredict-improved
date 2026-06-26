@@ -190,6 +190,20 @@ jobs:
           chmod +x direwolf-bundle/direwolf
           echo "Direwolf version: $(cat /tmp/dw-dl/version.txt)"
 
+      - name: Download q65lib bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARCH=$(uname -m)
+          mkdir -p q65lib-bundle
+          gh release download q65lib-bundle \
+            --repo "${{ github.repository }}" \
+            --pattern "q65lib-linux-${ARCH}.tar.gz" \
+            --dir /tmp/q65-dl 2>/dev/null || { echo "q65lib bundle not found; skipping"; exit 0; }
+          tar -xzf /tmp/q65-dl/q65lib-linux-${ARCH}.tar.gz -C /tmp/q65-dl
+          cp /tmp/q65-dl/*.so q65lib-bundle/ 2>/dev/null || true
+          echo "q65lib version: $(cat /tmp/q65-dl/version.txt 2>/dev/null || echo unknown)"
+
       - name: Build with PyInstaller
         run: |
           echo "${{ github.ref_name }}" | sed 's/^v//' > src/version.txt
@@ -580,6 +594,26 @@ jobs:
           $ver = Get-Content "direwolf-bundle\version.txt" -ErrorAction SilentlyContinue
           Write-Host "Direwolf version: $ver"
 
+      - name: Download q65lib bundle
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force -Path q65lib-bundle | Out-Null
+          try {
+            gh release download q65lib-bundle `
+              --repo "${{ github.repository }}" `
+              --pattern "q65lib-windows-x86_64.zip" `
+              --dir "$env:RUNNER_TEMP\q65-dl"
+            Expand-Archive -Path "$env:RUNNER_TEMP\q65-dl\q65lib-windows-x86_64.zip" `
+              -DestinationPath "$env:RUNNER_TEMP\q65-dl\q65-extracted"
+            Copy-Item "$env:RUNNER_TEMP\q65-dl\q65-extracted\*" q65lib-bundle\ -Force
+            $ver = Get-Content "q65lib-bundle\version.txt" -ErrorAction SilentlyContinue
+            Write-Host "q65lib version: $ver"
+          } catch {
+            Write-Host "q65lib bundle not found; skipping (Q65 decode disabled in this build)"
+          }
+
       - name: Disable Windows Defender and install NSIS
         shell: pwsh
         run: |
@@ -794,6 +828,20 @@ jobs:
           cp /tmp/dw-dl/*.dylib direwolf-bundle/ 2>/dev/null || true
           chmod +x direwolf-bundle/direwolf
           echo "Direwolf version: $(cat /tmp/dw-dl/version.txt)"
+
+      - name: Download q65lib bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ARCH=$(uname -m)
+          mkdir -p q65lib-bundle
+          gh release download q65lib-bundle \
+            --repo "${{ github.repository }}" \
+            --pattern "q65lib-macos-${ARCH}.tar.gz" \
+            --dir /tmp/q65-dl 2>/dev/null || { echo "q65lib bundle not found; skipping"; exit 0; }
+          tar -xzf /tmp/q65-dl/q65lib-macos-${ARCH}.tar.gz -C /tmp/q65-dl
+          cp /tmp/q65-dl/*.dylib q65lib-bundle/ 2>/dev/null || true
+          echo "q65lib version: $(cat /tmp/q65-dl/version.txt 2>/dev/null || echo unknown)"
 
       - name: Build with PyInstaller
         run: |

@@ -571,6 +571,7 @@ class MainWindow(QMainWindow):
             comm_menu.addAction(_("Telemetry"), self._on_open_telemetry)
             comm_menu.addAction(_("SSTV / SSDV"), self._on_open_sstv)
             comm_menu.addAction(_("FT4"), self._on_open_ft4)
+            comm_menu.addAction(_("Q65"), self._on_open_q65)
 
         # Autotrack / Record
         # macOS Cocoa ignores QMenuBar.addAction() — wrap in a single-item menu.
@@ -1516,6 +1517,20 @@ class MainWindow(QMainWindow):
         from ui.ft4_tab import Ft4Tab
 
         tab = Ft4Tab(self._conn, self._radio_control, parent=self)
+        idx = self._tab_widget.addTab(tab, tab_label)
+        self._tab_widget.setCurrentIndex(idx)
+
+    def _on_open_q65(self) -> None:
+        """Open the Q65 tab (Communications > Q65)."""
+        tab_label = _("Q65")
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == tab_label:
+                self._tab_widget.setCurrentIndex(i)
+                return
+
+        from ui.q65_tab import Q65Tab
+
+        tab = Q65Tab(self._conn, self._radio_control, parent=self)
         idx = self._tab_widget.addTab(tab, tab_label)
         self._tab_widget.setCurrentIndex(idx)
 
