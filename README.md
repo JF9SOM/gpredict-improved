@@ -53,6 +53,7 @@ Access via the **Communications** menu (between Radio and Autotrack/Record). Eac
 - **Telemetry** — decode AX.25 telemetry frames from amateur satellites. Binary format definitions included for 12 satellites (ISS, FO-29, SO-50, AO-73, JO-97, RS-44, MO-122, etc.). Raw hex display for undefined satellites. CSV export.
 - **SSTV / SSDV** — receive SSTV images (Robot36, PD120, Martin, Scottie) and SSDV packets from amateur satellites (e.g. ISS 145.800 MHz PD120 or 437.550 MHz Robot36). Works with SDR audio or a rig sound card. Auto-opens when a transponder description contains "SSTV", "SSDV", or "IMAGING".
 - **FT4** — encode and decode FT4 using the built-in ft8_lib (ctypes — no WSJT-X required). Transmit via Rig + PTT. Auto-opens for RS-44, JO-97, MO-122, and other FT4-active satellites. ADIF export.
+- **Q65** — EME (Earth-Moon-Earth) weak-signal digital mode. Decode via libq65 (built from WSJT-X source; pre-built bundles available via **Help → Q65 Library Installation**). Encode and transmit in pure Python — no libq65 required for TX. QSO state machine (IDLE→CALLING→EXCHANGE→CONFIRM→LOGGED) with PTT via CAT and Doppler freeze during transmission. Submodes A–E, periods 15/30/60 s. ADIF export.
 - **Help → Direwolf Installation…** — detect, install, or update Direwolf on all platforms
 - **Help → gr-satellites…** — detect gr-satellites installation and show install instructions (apt / brew / pip)
 
@@ -260,7 +261,7 @@ fbsat59/
 │   ├── web/      # FastAPI + WebSocket (LAN browser access on port 8080)
 │   ├── rig/      # Hamlib radio/rotator control + SdrRigAdapter
 │   ├── sdr/      # SoapySDR backend — device, pipeline, demodulator, recorder
-│   ├── comms/    # Digital communications — APRS engine, Direwolf, Bell 202 AFSK, AX.25
+│   ├── comms/    # Digital communications — APRS, Direwolf, Bell 202 AFSK, AX.25, FT4, Q65
 │   ├── data/     # TLE/SATNOGS sync, SQLite DB, manual entries
 │   └── i18n/     # Internationalization (gettext-based)
 ├── locale/
@@ -385,3 +386,7 @@ GPL-2.0-or-later (compatible with GPredict)
 - [ft8_lib](https://github.com/kgoba/ft8_lib) — Kārlis Goba YL3JG — FT4/FT8 codec (C library, GPL-2.0)
 - [pySSTV](https://github.com/dholm/pySSTV) — Dominik Heidler DL2DH — SSTV encoder/decoder
 - [gr-satellites](https://github.com/daniestevez/gr-satellites) — Daniel Estévez EA4GPZ — amateur satellite telemetry decoders
+- [WSJT-X](https://wsjt.sourceforge.io/) — Joe Taylor K1JT and the WSJT-X Development Group —
+  The Q65 protocol, libq65 source code (`lib/qra/q65/`), and the GF(64) encoding algorithm implemented
+  in `src/comms/q65/encoder.py` are derived from WSJT-X (GPL-2.0).
+  FBSAT59 does not bundle WSJT-X; libq65 is compiled separately from the WSJT-X source tree.

@@ -53,6 +53,7 @@ FBSAT59 は、長年アマチュア無線家に愛用されてきた
 - **Telemetry** — アマチュア衛星のAX.25テレメトリーフレームをデコード。12衛星分のバイナリフォーマット定義を同梱（ISS、FO-29、SO-50、AO-73、JO-97、RS-44、MO-122 等）。定義のない衛星は生Hex表示。CSV出力対応。
 - **SSTV / SSDV** — アマチュア衛星（例：ISS 145.800 MHz PD120・437.550 MHz Robot36）のSSTV画像（Robot36、PD120、Martin、Scottie）とSSDVパケットを受信。SDR音声またはリグのサウンドカード入力に対応。トランスポンダー説明に「SSTV」「SSDV」「IMAGING」が含まれると自動オープン。
 - **FT4** — 内蔵 ft8_lib（ctypes）でFT4の送受信が可能（WSJT-X不要）。Rig + PTTで送信。RS-44・JO-97・MO-122 等のFT4運用衛星で自動オープン。ADIF出力対応。
+- **Q65** — EME（地球-月-地球）弱信号デジタルモード。libq65（WSJT-X ソースからビルド）でデコード（**Help → Q65 Library Installation** でバンドル版を自動インストール）。送信（TX）は純 Python 実装のため libq65 なしでも動作。QSOステートマシン（IDLE→CALLING→EXCHANGE→CONFIRM→LOGGED）、PTTはCAT制御・送信中ドップラー凍結。サブモード A〜E、周期 15/30/60 秒。ADIF出力対応。
 - **Help → Direwolf Installation…** — 全プラットフォームでDirewolfの検出・インストール・更新が可能
 - **Help → gr-satellites…** — gr-satellitesのインストール状態確認・インストール案内（apt / brew / pip）
 
@@ -245,7 +246,7 @@ fbsat59/
 │   ├── web/      # FastAPI + WebSocket（LAN内ブラウザアクセス、ポート8080）
 │   ├── rig/      # Hamlib 無線機・ローテーター制御 + SdrRigAdapter
 │   ├── sdr/      # SoapySDR バックエンド — デバイス・パイプライン・復調・録音
-│   ├── comms/    # デジタル通信 — APRSエンジン・Direwolf管理・Bell 202 AFSK復調・AX.25パーサー
+│   ├── comms/    # デジタル通信 — APRS・Direwolf・Bell 202 AFSK復調・AX.25・FT4・Q65
 │   ├── data/     # TLE/SATNOGS同期・SQLite DB・手動入力
 │   └── i18n/     # 多言語対応（gettextベース）
 ├── locale/
@@ -369,3 +370,7 @@ GPL-2.0-or-later（GPredict互換）
 - [ft8_lib](https://github.com/kgoba/ft8_lib) — Kārlis Goba YL3JG — FT4/FT8コーデック（C ライブラリ、GPL-2.0）
 - [pySSTV](https://github.com/dholm/pySSTV) — Dominik Heidler DL2DH — SSTVエンコーダー/デコーダー
 - [gr-satellites](https://github.com/daniestevez/gr-satellites) — Daniel Estévez EA4GPZ — アマチュア衛星テレメトリーデコーダー
+- [WSJT-X](https://wsjt.sourceforge.io/) — Joe Taylor K1JT および WSJT-X 開発チーム —
+  Q65 プロトコル、libq65 ソースコード（`lib/qra/q65/`）、および `src/comms/q65/encoder.py` に実装した
+  GF(64) 符号化アルゴリズムは WSJT-X（GPL-2.0）から派生しています。
+  FBSAT59 は WSJT-X 本体を同梱せず、libq65 のみ WSJT-X ソースツリーから別途コンパイルしています。

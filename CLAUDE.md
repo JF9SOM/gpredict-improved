@@ -669,7 +669,7 @@ sudo usermod -aG dialout $USER
 
 ---
 
-## 実装済み機能一覧（2026年6月25日時点・v0.1.0）
+## 実装済み機能一覧（2026年6月26日時点・v0.1.0）
 
 - 衛星追尾エンジン（Skyfield）
 - **Moon/EME追尾**（JPL DE421エフェメリス・CelestialEngine）— 詳細は「Moon/EME 追尾設計」セクション参照
@@ -723,11 +723,13 @@ sudo usermod -aG dialout $USER
 - **Open in SatNOGS（クロスプラットフォーム）**: 右クリックメニューから衛星の SatNOGS ページをアプリモードで開く。`_open_url_app_mode` に統一済み（Linux: `shutil.which` / macOS: `.app` 絶対パス / Windows: `Program Files` 絶対パス）。Chromium系が見つからない場合は `QDesktopServices.openUrl` にフォールバック
 - **メニューバー構成**（v0.2.0 以降）
   - File / Satellite / Radio / **Communications** / **Autotrack/Record** / View / Help
-  - **Communications**: サブメニュー APRS / Telemetry / SSTV・SSDV / FT4（クリックで非常駐タブを開く。× で閉じる）
+  - **Communications**: サブメニュー APRS / Telemetry / SSTV・SSDV / FT4 / Q65（クリックで非常駐タブを開く。× で閉じる）
   - **Autotrack/Record**: サブメニューなし。クリックで AutotrackRecordDialog を開く
   - **View メニュー**: Language（English 動作 / Japanese は「To be prepared later.」）・Time Zone（UTC / Local Time）
   - Radar・Pass Chart エントリは削除済み（タブ直接選択で十分。Dashboard追加によるインデックスずれ問題を根本解決）
 - **フッター RIG ラベル**（`_update_rig_label`）: Hamlib リグだけでなく SDR（SdrRigAdapter）接続時も「RIG: 1」「RIG: 2」「RIG: 1+2」に更新。`RadioControlWidget` に `rig_disconnected` / `rig2_disconnected` シグナルを追加し、切断時も「RIG: Off」に戻るよう修正済み
+- **Q65 Phase 1（RX）**（`src/comms/q65/codec.py` + `src/ui/q65_tab.py`）— libq65 ctypes デコーダー。WSJT-X ソースから CI でビルド（build-q65lib.yml / ソースパス: `lib/qra/q65/`）。Help > Q65 Library Installation でバンドル版を自動インストール
+- **Q65 Phase 2（TX/QSO）**（`src/comms/q65/encoder.py` + `src/comms/q65/qso.py`）— 純 Python TX エンコーダー。GF(64) 線形符号・CRC-12・65-FSK 音声合成（WSJT-X `q65_encoding_modules.f90` をポート）。QSO ステートマシン（IDLE→CALLING→EXCHANGE→CONFIRM→LOGGED）。SQLite `q65_log` 永続化・ADIF エクスポート
 - CI緑（mypy strict + pytest）
 
 ### SDR 機能（v0.1.0 時点で実装済み）
@@ -804,10 +806,15 @@ src/
 │   ├── sstv/
 │   │   ├── decoder.py      # SstvDecoder — pySSTV ラッパー（Robot36/PD120 等）
 │   │   └── ssdv.py         # SsdvDecoder — ssdv CLI サブプロセス管理
-│   └── ft4/
-│       ├── codec.py        # Ft4Codec — ft8_lib ctypes ラッパー（エンコード・デコード）
-│       ├── scheduler.py    # Ft4Scheduler — 6秒周期タイミング管理（UTC アライン）
-│       └── qso.py          # Ft4QsoManager — QSO ステートマシン・ft4_log DB 操作
+│   ├── ft4/
+│   │   ├── codec.py        # Ft4Codec — ft8_lib ctypes ラッパー（エンコード・デコード）
+│   │   ├── scheduler.py    # Ft4Scheduler — 6秒周期タイミング管理（UTC アライン）
+│   │   └── qso.py          # Ft4QsoManager — QSO ステートマシン・ft4_log DB 操作
+│   └── q65/
+│       ├── codec.py        # Q65Codec — libq65 ctypes RX デコーダー（Phase 1）
+│       ├── encoder.py      # 純 Python TX エンコーダー — GF(64)・CRC-12・65-FSK 音声合成（Phase 2）
+│       ├── scheduler.py    # Q65Scheduler — 15/30/60 秒周期タイミング管理
+│       └── qso.py          # Q65QsoManager — QSO ステートマシン・q65_log DB 操作・ADIF エクスポート
 ├── data/
 │   └── telemetry_formats/  # 衛星ごとのバイナリテレメトリーフォーマット定義（JSON）
 ```
@@ -853,6 +860,23 @@ src/
 - SQLite `ft4_log` テーブルへ永続化・ADIF エクスポート
 - Radio Control でトランスポンダー説明に「FT4」「FT8」が含まれると自動オープン
 - ft8_lib 未インストール時は赤バナー表示・TX Enable 無効化。インストール先: `~/.local/share/fbsat59/ft8lib/`
+
+**メニュー: Communications > Q65**（`src/ui/q65_tab.py`）
+- **Phase 1（RX）**: libq65 ctypes デコーダー（WSJT-X ソースからビルド）
+  - libq65 未インストール時はバナー表示・デコード無効化。インストール先: `~/.local/share/fbsat59/q65lib/`
+  - **Help → Q65 Library Installation…** でバンドル版を自動ダウンロード・インストール
+  - CI で build-q65lib.yml が毎週 WSJT-X 最新リリースを監視してビルド（ソース: `lib/qra/q65/`）
+- **Phase 2（TX/QSO）**: 純 Python エンコーダー（libq65 なしで TX 可能）
+  - `encoder.py`: GF(64) 線形符号（生成行列 15×50）・CRC-12・65-FSK 音声合成（numpy）
+    - WSJT-X `lib/qra/q65/q65_encoding_modules.f90` のアルゴリズムを Python に移植
+    - `pack77()` は ft8_lib（FT4 と共用）を利用してメッセージを 77 ビットにパック
+    - `synthesize_audio()`: 85 シンボル × nsps サンプル、連続位相累積 FSK + テーパー窓
+  - `qso.py`: QSO ステートマシン（IDLE→CALLING→EXCHANGE→CONFIRM→LOGGED）
+    - SQLite `q65_log` テーブルへ永続化・ADIF エクスポート（`PROP_MODE=SAT`, `MODE=Q65`）
+  - **サブモード**: A（×1）/ B（×2）/ C（×4）/ D（×8）/ E（×16）トーン間隔
+  - **周期**: 15s / 30s / 60s（nsps: 1800 / 3600 / 7200 サンプル @ 12000 Hz）
+  - TX クイックボタン: CQ / RST / R+RST / RR73 / 73 + Free text
+  - TX Enable（偶数/奇数スロット選択）・Halt TX・Log QSO・Export ADIF
 
 **テレメトリーフォーマット定義**（`src/data/telemetry_formats/`）
 | NORAD | 衛星名 | コールサイン | フィールド |
@@ -1216,6 +1240,8 @@ QT_LOGGING_RULES="qt.qpa.*=true" ./FBSAT59.AppImage 2>&1 | head -100
 9. **テレメトリーフォーマット定義の追加・検証** — 実際に受信したパケットでオフセット・スケールの検証。未定義衛星のフォーマット調査
 10. ~~**CI: Direwolf バンドルビルド**~~ **→ feature/communications で完了**（Linux/Windows/macOS 3ジョブ、タグ push 時に direwolf-{platform}-{arch}.{tar.gz|zip} を Releases にアップロード）
 11. ~~**FT4 タブ実装**~~ **→ feature/communications（v0.2.0）で完了**（Ft4Codec/ctypes + ft8_lib・Ft4Scheduler・Ft4QsoManager・Ft4Tab UI・ADIF エクスポート。ft8_lib CI バンドルビルドは v0.2.0 タグ時に Direwolf と同時実施）
+11c. ~~**Q65 Phase 1（RX）実装**~~ **→ 2026-06-26 で完了**（Q65Codec/libq65 ctypes・build-q65lib.yml CI・Help > Q65 Library Installation ダイアログ）
+11d. ~~**Q65 Phase 2（TX/QSO）実装**~~ **→ 2026-06-26 で完了**（純 Python encoder.py: GF(64)・CRC-12・65-FSK / Q65QsoManager: QSOステートマシン・q65_log DB・ADIF / q65_tab.py: TX UI・TX Enable・Halt TX・Log QSO・Export ADIF）
 11b. **SDR フェーズ2（将来）— アマチュア衛星・デジタルモード** — HRPT/LRPT 画像・gr-satellites・AI-CW（設計方針は「SDR 機能設計方針」セクション参照）
 12. **SDR フェーズ2（将来）— 業務用衛星受信** — Inmarsat-C (STD-C)・Cospas-Sarsat L帯・Iridium L帯 ACARS・Orbcomm・みちびき（QZSS）データ放送（詳細は「業務用衛星受信」セクション参照）
 13. ~~**SDR Device Installation ダイアログ**~~ **→ v0.1.0 で実装済み**（src/ui/sdr_install_dialog.py — USB VID/PID スキャン・apt/brew/Zadig 誘導）
