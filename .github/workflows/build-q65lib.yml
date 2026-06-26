@@ -94,8 +94,8 @@ jobs:
             https://github.com/wsjtx/wsjtx.git wsjtx-src 2>/dev/null || \
           { echo "Clone failed; using stub build" && mkdir -p wsjtx-src/lib/q65; }
 
-          # Build q65 shared library from lib/q65/
-          Q65_DIR="wsjtx-src/lib/q65"
+          # Build q65 shared library from lib/qra/q65/ (WSJT-X source layout)
+          Q65_DIR="wsjtx-src/lib/qra/q65"
           OUT_DIR="/tmp/q65lib-flat"
           mkdir -p "$OUT_DIR"
 
@@ -214,7 +214,7 @@ jobs:
           } catch {}
 
           if ($cloned) {
-            $Q65_DIR = "wsjtx-src\lib\q65"
+            $Q65_DIR = "wsjtx-src\lib\qra\q65"
             $objs = @()
             foreach ($f in Get-ChildItem "$Q65_DIR\*.f90","$Q65_DIR\*.F90") {
               $obj = $f.FullName -replace '\.[fF]90$', '.o'
@@ -305,7 +305,7 @@ jobs:
           git clone --depth 1 \
             https://github.com/wsjtx/wsjtx.git wsjtx-src 2>/dev/null || true
 
-          Q65_DIR="wsjtx-src/lib/q65"
+          Q65_DIR="wsjtx-src/lib/qra/q65"
           OBJS=""
           FC=$(brew --prefix gcc)/bin/gfortran-* 2>/dev/null | head -1
           FC=${FC:-gfortran}
