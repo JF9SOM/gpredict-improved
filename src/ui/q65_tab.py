@@ -15,6 +15,7 @@ import sqlite3
 import threading
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -698,7 +699,7 @@ class Q65Tab(QWidget):
                 with contextlib.suppress(Exception):
                     rig.set_ptt(False)
 
-    def _get_rig(self) -> object | None:
+    def _get_rig(self) -> Any | None:
         """Return RigController for Rig 1 if connected, else None."""
         if self._radio_control is None:
             return None
