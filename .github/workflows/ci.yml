@@ -223,11 +223,25 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          files: |
-            dist/FBSAT59-x86_64.AppImage
-            ${{ env.HAMLIB_PORTABLE_PKG }}
+          files: dist/FBSAT59-x86_64.AppImage
           make_latest: true
           overwrite_files: true
+
+      - name: Upload Hamlib bundle to hamlib-bundle release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view hamlib-bundle \
+            --repo "${{ github.repository }}" 2>/dev/null || \
+          gh release create hamlib-bundle \
+            --repo "${{ github.repository }}" \
+            --title "Hamlib Bundle" \
+            --notes "Pre-built Hamlib for use with Help > Hamlib Update…" \
+            --prerelease
+          gh release upload hamlib-bundle \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "${{ env.HAMLIB_PORTABLE_PKG }}"
 
   build-windows:
     name: Build Windows (.zip)
@@ -684,11 +698,28 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          files: |
-            dist/FBSAT59-Setup.exe
-            ${{ env.HAMLIB_PORTABLE_PKG }}
+          files: dist/FBSAT59-Setup.exe
           make_latest: true
           overwrite_files: true
+
+      - name: Upload Hamlib bundle to hamlib-bundle release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $exists = gh release view hamlib-bundle `
+            --repo "${{ github.repository }}" 2>$null
+          if (-not $exists) {
+            gh release create hamlib-bundle `
+              --repo "${{ github.repository }}" `
+              --title "Hamlib Bundle" `
+              --notes "Pre-built Hamlib for use with Help > Hamlib Update…" `
+              --prerelease
+          }
+          gh release upload hamlib-bundle `
+            --repo "${{ github.repository }}" `
+            --clobber `
+            "${{ env.HAMLIB_PORTABLE_PKG }}"
 
   build-macos:
     name: Build macOS (.dmg)
@@ -861,10 +892,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          files: |
-            dist/FBSAT59.dmg
-            ${{ env.HAMLIB_PORTABLE_PKG }}
+          files: dist/FBSAT59.dmg
           make_latest: true
+
+      - name: Upload Hamlib bundle to hamlib-bundle release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view hamlib-bundle \
+            --repo "${{ github.repository }}" 2>/dev/null || \
+          gh release create hamlib-bundle \
+            --repo "${{ github.repository }}" \
+            --title "Hamlib Bundle" \
+            --notes "Pre-built Hamlib for use with Help > Hamlib Update…" \
+            --prerelease
+          gh release upload hamlib-bundle \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            "${{ env.HAMLIB_PORTABLE_PKG }}"
 
   # Direwolf ビルドは build-direwolf.yml（週次自動チェック）に移行済み。
   # タグ push 時には direwolf-bundle リリースから取得してアプリに同梱する。
