@@ -315,6 +315,10 @@ class _RigPanel(QWidget):
     enables or disables the form below it.
     """
 
+    # Emitted when the SDR radio button is toggled: value is True (SDR selected)
+    # or False (Hamlib Direct/NET selected).
+    sdr_mode_changed = Signal(bool)
+
     def __init__(
         self,
         rig_index: int,
@@ -370,10 +374,14 @@ class _RigPanel(QWidget):
         mode_layout = QVBoxLayout(mode_group)
         self._radio_direct = QRadioButton(_("Direct (Hamlib built-in)"))
         self._radio_net = QRadioButton(_("NET (rigctld compatible)"))
+        self._radio_sdr = QRadioButton(_("SDR"))
         self._radio_direct.setChecked(True)
         self._radio_direct.toggled.connect(self._on_mode_toggled)
+        self._radio_net.toggled.connect(self._on_mode_toggled)
+        self._radio_sdr.toggled.connect(self._on_mode_toggled)
         mode_layout.addWidget(self._radio_direct)
         mode_layout.addWidget(self._radio_net)
+        mode_layout.addWidget(self._radio_sdr)
         form.addWidget(mode_group)
 
         # --- Direct connection settings ---
@@ -513,11 +521,16 @@ class _RigPanel(QWidget):
         """Enable or disable the entire form based on the Rig 2 checkbox."""
         self._form_widget.setEnabled(checked)
 
-    def _on_mode_toggled(self, _checked: bool) -> None:
+    def _on_mode_toggled(self, _checked: bool = False) -> None:
+        is_sdr = self._radio_sdr.isChecked()
         is_direct = self._radio_direct.isChecked()
-        self._direct_group.setVisible(is_direct)
-        self._net_group.setVisible(not is_direct)
-        self._ctcss_group.setEnabled(not is_direct)
+        self._direct_group.setVisible(is_direct and not is_sdr)
+        self._net_group.setVisible(not is_direct and not is_sdr)
+        self._ctcss_group.setEnabled(not is_direct and not is_sdr)
+        # Gray out Hamlib-specific groups when SDR is selected
+        for grp in (self._direct_group, self._net_group, self._ctcss_group):
+            grp.setEnabled(not is_sdr)
+        self.sdr_mode_changed.emit(is_sdr)
 
     def _on_scan_ports(self) -> None:
         """Scan serial ports and update the COM port combo box."""
@@ -746,7 +759,9 @@ class _RigPanel(QWidget):
             self._form_widget.setEnabled(checked)
 
         # Connection mode
-        if s.get("mode") == "net":
+        if s.get("mode") == "sdr":
+            self._radio_sdr.setChecked(True)
+        elif s.get("mode") == "net":
             self._radio_net.setChecked(True)
         else:
             self._radio_direct.setChecked(True)
@@ -816,8 +831,14 @@ class _RigPanel(QWidget):
             key set to the checkbox state.
         """
         model_id: int = self._model_combo.currentData() or 1
+        if self._radio_sdr.isChecked():
+            _mode = "sdr"
+        elif self._radio_net.isChecked():
+            _mode = "net"
+        else:
+            _mode = "direct"
         s: dict[str, Any] = {
-            "mode": "direct" if self._radio_direct.isChecked() else "net",
+            "mode": _mode,
             "port": self._port_combo.currentText(),
             "baud_rate": int(self._baud_combo.currentText()),
             "model_id": model_id,
@@ -1063,6 +1084,25 @@ class _SdrSettingsPanel(QWidget):
             self.assigned_rig_changed.emit(2)
         else:
             self.assigned_rig_changed.emit(None)
+
+    def set_assigned_rig(self, rig: int | None) -> None:
+        """Set the assigned rig slot programmatically (without triggering loops).
+
+        Called by RigSettingsDialog when the user toggles the SDR button on a
+        Rig tab so that this panel stays in sync.
+        """
+        if not hasattr(self, "_rig1_rb"):
+            return
+        for rb in (self._rig1_rb, self._rig2_rb, self._rig_none_rb):
+            rb.blockSignals(True)
+        if rig == 1:
+            self._rig1_rb.setChecked(True)
+        elif rig == 2:
+            self._rig2_rb.setChecked(True)
+        else:
+            self._rig_none_rb.setChecked(True)
+        for rb in (self._rig1_rb, self._rig2_rb, self._rig_none_rb):
+            rb.blockSignals(False)
 
     def _on_browse_iq_dir(self) -> None:
         from PySide6.QtWidgets import QFileDialog
@@ -1382,8 +1422,10 @@ class RigSettingsDialog(QDialog):
         self._tabs.addTab(self._soundcard_panel, _("Sound Card"))
         layout.addWidget(self._tabs)
 
-        # Gray out Rig 1 / Rig 2 tab when SDR is assigned to that slot
+        # Bidirectional sync: SDR tab ↔ Rig tabs
         self._sdr_panel.assigned_rig_changed.connect(self._on_sdr_assignment_changed)
+        self._panel1.sdr_mode_changed.connect(lambda on: self._on_rig_sdr_toggled(1, on))
+        self._panel2.sdr_mode_changed.connect(lambda on: self._on_rig_sdr_toggled(2, on))
 
         # Hamlib info row: shown only on Rig 1 / Rig 2 tabs, hidden on SDR tab
         from PySide6.QtWidgets import QWidget as _QWidget
@@ -1435,14 +1477,41 @@ class RigSettingsDialog(QDialog):
         self._hamlib_info_widget.setVisible(index < 2)
 
     def _on_sdr_assignment_changed(self, assigned_rig: object) -> None:
-        """Enable/disable Rig 1 / Rig 2 tabs based on SDR assignment.
+        """Sync Rig tab SDR radio buttons when the SDR panel assignment changes."""
+        # Update Rig 1 tab without re-triggering the loop
+        panel1_is_sdr = assigned_rig == 1
+        if self._panel1._radio_sdr.isChecked() != panel1_is_sdr:
+            self._panel1._radio_sdr.blockSignals(True)
+            if panel1_is_sdr:
+                self._panel1._radio_sdr.setChecked(True)
+            elif self._panel1._radio_sdr.isChecked():
+                self._panel1._radio_direct.setChecked(True)
+            self._panel1._radio_sdr.blockSignals(False)
+            self._panel1._on_mode_toggled()
 
-        When SDR is assigned to a slot, that slot's Hamlib tab is grayed out
-        to prevent conflicting configuration.
-        """
-        # Tab indices: 0 = Rig 1, 1 = Rig 2
-        self._tabs.setTabEnabled(0, assigned_rig != 1)
-        self._tabs.setTabEnabled(1, assigned_rig != 2)
+        panel2_is_sdr = assigned_rig == 2
+        if self._panel2._radio_sdr.isChecked() != panel2_is_sdr:
+            self._panel2._radio_sdr.blockSignals(True)
+            if panel2_is_sdr:
+                self._panel2._radio_sdr.setChecked(True)
+            elif self._panel2._radio_sdr.isChecked():
+                self._panel2._radio_direct.setChecked(True)
+            self._panel2._radio_sdr.blockSignals(False)
+            self._panel2._on_mode_toggled()
+
+    def _on_rig_sdr_toggled(self, rig_index: int, sdr_on: bool) -> None:
+        """Sync the SDR panel assignment when a Rig tab SDR button is toggled."""
+        if sdr_on:
+            self._sdr_panel.set_assigned_rig(rig_index)
+        else:
+            # Only clear if this rig was the one assigned
+            current = None
+            if hasattr(self._sdr_panel, "_rig1_rb") and self._sdr_panel._rig1_rb.isChecked():
+                current = 1
+            elif hasattr(self._sdr_panel, "_rig2_rb") and self._sdr_panel._rig2_rb.isChecked():
+                current = 2
+            if current == rig_index:
+                self._sdr_panel.set_assigned_rig(None)
 
     def _load_settings(self) -> None:
         """Load Rig 1 and Rig 2 settings from the DB.
@@ -1492,8 +1561,11 @@ class RigSettingsDialog(QDialog):
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 self._sdr_panel.load(json.loads(row_sdr["value"]))
 
-        # Apply initial tab enable/disable state based on loaded SDR assignment
+        # Sync initial state: fire assignment signal so Rig tabs reflect loaded SDR setting
         self._sdr_panel._on_assignment_changed()
+        # Also restore SDR radio button state on Rig panels from their own saved mode
+        self._panel1._on_mode_toggled()
+        self._panel2._on_mode_toggled()
 
         # --- Sound Card ---
         row_sc = self._conn.execute(
