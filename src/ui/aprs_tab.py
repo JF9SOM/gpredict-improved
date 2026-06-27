@@ -165,7 +165,7 @@ class AprsTab(QWidget):
         self._callsign_edit.setPlaceholderText("")
         self._callsign_edit.setMaxLength(6)
         self._callsign_edit.setFixedWidth(90)
-        row1.addWidget(QLabel(_("Callsign:")))
+        row1.addWidget(QLabel(_("My Call:")))
         row1.addWidget(self._callsign_edit)
 
         row1.addSpacing(12)
