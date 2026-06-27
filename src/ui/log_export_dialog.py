@@ -8,9 +8,9 @@ merges the records in chronological order, and writes a single .adi file.
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDateEdit,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -86,8 +87,8 @@ class LogExportDialog(QDialog):
         range_box = QGroupBox(_("Date Range (UTC)"))
         form = QFormLayout(range_box)
 
-        today = date.today()
-        first_of_month = today.replace(day=1)
+        today = QDate.currentDate()
+        first_of_month = today.addDays(-(today.day() - 1))
 
         self._from_edit = QDateEdit()
         self._from_edit.setCalendarPopup(True)
@@ -331,10 +332,8 @@ class LogExportDialog(QDialog):
             return
         adif_write_or_append(path, "".join(r for _, r in records))
         self.accept()
-        from PySide6.QtWidgets import QMessageBox
-
         QMessageBox.information(
-            self.parent(),
+            self,
             _("Export"),
             _("Exported {n} QSOs to {f}").format(n=len(records), f=path),
         )

@@ -86,7 +86,7 @@ class AprsTab(QWidget):
 
         # Callsigns we have sent a message to this session (base call, no SSID).
         # A QSO is logged only when the remote station replies with a real message.
-        self._pending_qso: set[str] = {}
+        self._pending_qso: set[str] = set()
 
         # Auto-beacon timer for position transmission
         self._pos_timer = QTimer(self)
