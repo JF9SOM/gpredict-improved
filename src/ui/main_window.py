@@ -2468,7 +2468,13 @@ class MainWindow(QMainWindow):
 
                 threading.Thread(target=_do_direct_cat, daemon=True).start()
             else:
-                if rig.is_connected and self._ctcss_method != "ft991":
+                # Always disconnect so the Doppler loop is stopped before
+                # freq preset and mode/CTCSS are written.  Mirrors satmode-rig
+                # behaviour: the user must press Connect again after switching
+                # transponders.  Avoids the "ガチャガチャ" (jitter) caused by
+                # the Doppler loop and freq-preset independent socket interleaving
+                # inside rigctld when the rig stays connected.
+                if rig.is_connected:
                     self._disconnect_rig()  # must run on UI thread
 
                 # Increment generation so any in-flight thread can detect it is
@@ -2481,8 +2487,10 @@ class MainWindow(QMainWindow):
                 def _do_nonsatmode(_gen: int = _gen) -> None:
                     if self._nonsatmode_gen != _gen:
                         return
-                    # For NET rigs: write DL/UL frequencies before mode/CTCSS,
-                    # matching the Stage-1 freq-anchor behaviour of satmode rigs.
+                    # Rig is guaranteed disconnected here (disconnected above on
+                    # the UI thread before this background thread was started).
+                    # Write DL/UL frequencies and mode/CTCSS without racing the
+                    # Doppler loop.
                     if isinstance(rig, HamlibNetController):
                         rig._send_split_init_independent()
                         rig._send_freq_preset_independent()
