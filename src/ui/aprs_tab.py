@@ -84,6 +84,10 @@ class AprsTab(QWidget):
         # Positioned APRS stations received this session: {callsign: (lat, lon)}
         self._aprs_stations: dict[str, tuple[float, float]] = {}
 
+        # Callsigns we have sent a message to this session (base call, no SSID).
+        # A QSO is logged only when the remote station replies with a real message.
+        self._pending_qso: set[str] = {}
+
         # Auto-beacon timer for position transmission
         self._pos_timer = QTimer(self)
         self._pos_timer.timeout.connect(self._on_send_position)
@@ -442,6 +446,12 @@ class AprsTab(QWidget):
 
         if not isinstance(packet, AprsPacket):
             return
+
+        # Determine whether to persist this packet to the DB.
+        # Only log when the remote station sends us a real message text reply
+        # after we have messaged them first (bidirectional QSO confirmation).
+        log_to_db = self._is_confirmed_reply(packet)
+
         self.append_packet(
             callsign=packet.callsign,
             via=packet.via,
@@ -449,11 +459,44 @@ class AprsTab(QWidget):
             raw_frame=packet.raw_info,
             lat=packet.latitude,
             lon=packet.longitude,
+            log=log_to_db,
         )
         # Update map pin when the packet carries a position
         if packet.latitude is not None and packet.longitude is not None:
             self._aprs_stations[packet.callsign] = (packet.latitude, packet.longitude)
             self.aprs_stations_updated.emit(dict(self._aprs_stations))
+
+    def _is_confirmed_reply(self, packet: object) -> bool:
+        """Return True when *packet* completes a bidirectional QSO.
+
+        Conditions (all must hold):
+          1. The packet is an APRS message (data_type == ':').
+          2. The message text is non-empty and is not a bare ack.
+          3. The addressee matches our own callsign (ignoring SSID).
+          4. We previously sent a message to the sender's base callsign.
+        """
+        from comms.aprs.parser import AprsPacket
+
+        if not isinstance(packet, AprsPacket):
+            return False
+        if packet.data_type != ":":
+            return False
+        msg_text = (packet.message_text or "").strip()
+        if not msg_text or msg_text.lower().startswith("ack"):
+            return False
+
+        my_call = self._callsign_edit.text().strip().upper().split("-")[0]
+        addressee = (packet.message_addressee or "").strip().upper().split("-")[0]
+        if addressee != my_call:
+            return False
+
+        sender_base = packet.callsign.split("-")[0].upper()
+        if sender_base not in self._pending_qso:
+            return False
+
+        # Confirmed — remove from pending so duplicate replies don't re-log
+        self._pending_qso.discard(sender_base)
+        return True
 
     def _on_engine_status(self, status: str) -> None:
         self._input_label.setText(status)
@@ -554,12 +597,16 @@ class AprsTab(QWidget):
         lat: float | None = None,
         lon: float | None = None,
         norad: int | None = None,
+        log: bool = False,
     ) -> None:
-        """Add a decoded APRS packet to the log and persist it to the DB."""
+        """Add a decoded APRS packet to the receive log widget.
+
+        Persists to the DB only when *log* is True (bidirectional QSO confirmed).
+        """
         ts = datetime.now(tz=UTC).strftime("%H:%M:%S")
         self._append_log_item(ts, callsign, via, comment)
 
-        if hasattr(self._conn, "execute"):
+        if log and hasattr(self._conn, "execute"):
             self._conn.execute(
                 "INSERT INTO aprs_log "
                 "(received_at, callsign, via, latitude_deg, longitude_deg, "
@@ -602,6 +649,9 @@ class AprsTab(QWidget):
 
         if self._engine.is_running:
             self._engine.send_message(my_call, ssid, via, to_call, msg)
+
+        # Track outgoing message so a reply triggers QSO logging
+        self._pending_qso.add(to_call.split("-")[0].upper())
 
         # Echo to receive log as sent marker
         src = f"{my_call}-{ssid}" if ssid else my_call
