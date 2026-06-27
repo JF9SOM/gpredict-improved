@@ -301,6 +301,8 @@ class MainWindow(QMainWindow):
         self._ctcss_method: str = "hamlib"
         self._ctcss_cat_on: str = ""
         self._ctcss_cat_off: str = ""
+        # Generation counter to cancel superseded _do_nonsatmode() threads.
+        self._nonsatmode_gen: int = 0
         # Lock indicating whether the rig control thread is currently running.
         # If acquire(blocking=False) fails, the previous cycle is still executing.
         self._rig_busy_lock = threading.Lock()
@@ -2455,11 +2457,26 @@ class MainWindow(QMainWindow):
                 if rig.is_connected and self._ctcss_method != "ft991":
                     self._disconnect_rig()  # must run on UI thread
 
+                # Increment generation so any in-flight thread can detect it is
+                # superseded and exit before spending seconds on rigctld w commands.
+                self._nonsatmode_gen += 1
+                _gen = self._nonsatmode_gen
                 cat_on = self._ctcss_cat_on
                 cat_off = self._ctcss_cat_off
 
-                def _do_nonsatmode() -> None:
+                def _do_nonsatmode(_gen: int = _gen) -> None:
+                    if self._nonsatmode_gen != _gen:
+                        return
+                    # For NET rigs: write DL/UL frequencies before mode/CTCSS,
+                    # matching the Stage-1 freq-anchor behaviour of satmode rigs.
+                    if isinstance(rig, HamlibNetController):
+                        rig._send_split_init_independent()
+                        rig._send_freq_preset_independent()
+                    if self._nonsatmode_gen != _gen:
+                        return
                     rig.send_mode_only(dl_mode, ul_mode)
+                    if self._nonsatmode_gen != _gen:
+                        return
                     rig.send_ctcss_cat(ctcss_hz, cat_on, cat_off)
 
                 threading.Thread(target=_do_nonsatmode, daemon=True).start()
