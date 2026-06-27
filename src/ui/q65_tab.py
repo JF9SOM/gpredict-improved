@@ -194,8 +194,8 @@ class Q65Tab(QWidget):
 
         cfg_lay.addWidget(QLabel(_("RX:")))
         self._input_combo = QComboBox()
-        self._input_combo.addItem(_("SDR"))
         self._input_combo.addItem(_("Rig Soundcard"))
+        self._input_combo.addItem(_("SDR"))
         cfg_lay.addWidget(self._input_combo)
 
         cfg_lay.addStretch()
