@@ -61,6 +61,7 @@ class RadioControlWidget(QWidget):
     south_init_changed: Signal = Signal(bool)
     ctcss_send_requested: Signal = Signal(float)
     ctcss_activate_requested: Signal = Signal()  # activation-tone button pressed
+    cw_mode_requested: Signal = Signal(str, str)  # dl_cw_mode, ul_cw_mode
     _rig1_connect_done: Signal = Signal(bool)  # internal: True = connected successfully
     # Emitted when a transponder whose description implies SSTV/SSDV or APRS
     # is selected — MainWindow uses these to auto-open the matching tab.
@@ -76,6 +77,12 @@ class RadioControlWidget(QWidget):
         self._transmitters: list[dict[str, Any]] = []
         self._current_ctcss_hz: float | None = None
         self._ctcss_activation_hz: float | None = None
+        # CW toggle button state
+        self._cw_mode_active: bool = False
+        self._orig_dl_mode: str = ""
+        self._orig_ul_mode: str = ""
+        self._cw_dl_mode: str = ""
+        self._cw_ul_mode: str = ""
         self._setup_ui()
         self._rig1_connect_done.connect(self._finish_rig1_connect)
 
@@ -178,7 +185,13 @@ class RadioControlWidget(QWidget):
         mode_ctcss_layout.setSpacing(4)
         self._mode_label.setMinimumWidth(40)
         mode_ctcss_layout.addWidget(self._mode_label)
-        mode_ctcss_layout.addSpacing(20)
+        self._cw_btn = QPushButton()
+        self._cw_btn.setToolTip(_("Toggle CW mode on both VFOs"))
+        self._cw_btn.setVisible(False)
+        self._cw_btn.setMaximumWidth(52)
+        self._cw_btn.clicked.connect(self._on_cw_toggle)
+        mode_ctcss_layout.addWidget(self._cw_btn)
+        mode_ctcss_layout.addSpacing(12)
         mode_ctcss_layout.addWidget(QLabel("CTCSS:"))
         self._ctcss_send_btn = QPushButton("—")
         self._ctcss_send_btn.setToolTip(_("Send current CTCSS tone to rig"))
@@ -679,6 +692,52 @@ class RadioControlWidget(QWidget):
             if self._rig2.is_connected:
                 self.rig2_connected.emit()
         self._update_rig2_status()
+
+    def update_cw_button(self, dl_mode: str, ul_mode: str) -> None:
+        """Show/configure the CW toggle button when dl_mode is USB or LSB.
+
+        dl_mode / ul_mode are the already-computed transponder modes (invert
+        already applied by the caller).  The button is hidden for FM and other
+        non-linear modes.
+
+        CW mode mapping:
+          USB/SSB DL → CW   (CW-Upper); LSB DL → CW-R (CW-Lower)
+          ul_mode USB/SSB   → CW;       ul_mode LSB    → CW-R
+        """
+        self._cw_mode_active = False
+        self._orig_dl_mode = dl_mode
+        self._orig_ul_mode = ul_mode
+
+        _CW_MAP: dict[str, str] = {"USB": "CW", "SSB": "CW", "LSB": "CW-R"}
+        cw_dl = _CW_MAP.get(dl_mode, "")
+        cw_ul = _CW_MAP.get(ul_mode, "")
+        if not cw_dl:
+            self._cw_btn.setVisible(False)
+            return
+
+        self._cw_dl_mode = cw_dl
+        self._cw_ul_mode = cw_ul if cw_ul else cw_dl
+        # Button label shows CW subtype matching DL VFO (what you receive on)
+        btn_label = "CW-U" if cw_dl == "CW" else "CW-L"
+        self._cw_btn.setText(btn_label)
+        self._cw_btn.setStyleSheet("")
+        self._cw_btn.setVisible(True)
+
+    def _on_cw_toggle(self) -> None:
+        """Toggle between CW mode and the original transponder mode."""
+        if not self._cw_mode_active:
+            self.cw_mode_requested.emit(self._cw_dl_mode, self._cw_ul_mode)
+            self._cw_mode_active = True
+            # Show original mode name so user can revert with next click
+            revert_label = self._orig_dl_mode if self._orig_dl_mode else "SSB"
+            self._cw_btn.setText(revert_label)
+            self._cw_btn.setStyleSheet("font-weight: bold; color: #f39c12;")
+        else:
+            self.cw_mode_requested.emit(self._orig_dl_mode, self._orig_ul_mode)
+            self._cw_mode_active = False
+            cw_label = "CW-U" if self._cw_dl_mode == "CW" else "CW-L"
+            self._cw_btn.setText(cw_label)
+            self._cw_btn.setStyleSheet("")
 
     def _on_ctcss_send(self) -> None:
         if self._current_ctcss_hz is not None:

@@ -397,6 +397,7 @@ class MainWindow(QMainWindow):
         self._radio_control.sstv_transponder_selected.connect(self._on_open_sstv)
         self._radio_control.aprs_transponder_selected.connect(self._on_open_aprs)
         self._radio_control.ft4_transponder_selected.connect(self._on_open_ft4)
+        self._radio_control.cw_mode_requested.connect(self._on_cw_mode_requested)
         self._restore_satellite_filter()
         # Load bundled community transmitters immediately (no network required).
         # This runs on the main thread so satellites are visible before any
@@ -2407,6 +2408,9 @@ class MainWindow(QMainWindow):
         ul_mode = _MODE_INVERT.get(mode, mode) if invert else mode
         ctcss_hz = float(self._ctcss_tone_hz or 0.0)
 
+        # Update CW toggle button visibility/label in Radio Control tab.
+        self._radio_control.update_cw_button(dl_mode, ul_mode)
+
         # Notify NET rig of DL/UL frequencies (same-band detection) and
         # current mode (UL update throttle threshold).
         if isinstance(rig, HamlibNetController):
@@ -3334,6 +3338,20 @@ class MainWindow(QMainWindow):
     def _on_sdr_tune_offset(self, offset_hz: float) -> None:
         """Store the passband tune offset emitted by SdrControlWidget."""
         self._sdr_tune_offset = offset_hz
+
+    def _on_cw_mode_requested(self, dl_mode: str, ul_mode: str) -> None:
+        """Apply CW (or original) mode to both VFOs in a background thread."""
+        rig = self._rig_controller
+        if rig is None:
+            return
+
+        def _send() -> None:
+            try:
+                rig.send_mode_only(dl_mode, ul_mode)
+            except Exception as exc:
+                self._rig_error.emit(str(exc))
+
+        threading.Thread(target=_send, daemon=True).start()
 
     def _on_ctcss_activate(self) -> None:
         """Send the satellite's activation tone (tone_hz from CTCSS_DB)."""
