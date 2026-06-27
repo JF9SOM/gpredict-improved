@@ -15,7 +15,6 @@ This commit provides the complete UI and settings persistence.
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,7 +22,6 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -687,89 +685,13 @@ class AprsTab(QWidget):
     # ------------------------------------------------------------------ #
 
     def _on_export_adif(self) -> None:
-        """Export the full aprs_log to an ADIF (.adi) file."""
-        if not hasattr(self._conn, "execute"):
-            return
-
-        rows = self._conn.execute(
-            "SELECT received_at, callsign, via, latitude_deg, longitude_deg, "
-            "       comment, raw_frame, norad_sat "
-            "FROM aprs_log ORDER BY id ASC"
-        ).fetchall()
-
-        from ui.adif_utils import adif_default_filename, adif_write_or_append
-
-        path, _filter = QFileDialog.getSaveFileName(
-            self,
-            _("Export ADIF"),
-            os.path.expanduser(f"~/{adif_default_filename()}"),
-            "ADIF (*.adi);;All files (*)",
-        )
-        if not path:
-            return
+        """Open the unified date-range ADIF export dialog."""
+        from ui.log_export_dialog import LogExportDialog
 
         my_call = self._callsign_edit.text().strip().upper()
         ssid = self._ssid_spin.value()
-        my_station = f"{my_call}-{ssid}" if ssid else my_call
-
-        def _f(tag: str, value: str) -> str:
-            v = value.strip()
-            return f"<{tag}:{len(v)}>{v}\n" if v else ""
-
-        parts: list[str] = []
-        for row in rows:
-            ts_raw = str(row["received_at"] or "")
-            try:
-                dt = datetime.fromisoformat(ts_raw.replace(" ", "T"))
-            except ValueError:
-                dt = datetime.now(tz=UTC)
-
-            qso_date = dt.strftime("%Y%m%d")
-            time_on = dt.strftime("%H%M%S")
-
-            callsign = str(row["callsign"] or "").split(">")[0].split("-")[0]
-            comment = str(row["comment"] or "")
-            via = str(row["via"] or "")
-            sat_name = ""
-            if row["norad_sat"] and hasattr(self._conn, "execute"):
-                sat_row = self._conn.execute(
-                    "SELECT name FROM satellites WHERE norad_cat_id = ?",
-                    (row["norad_sat"],),
-                ).fetchone()
-                if sat_row:
-                    sat_name = str(sat_row["name"])
-
-            entry = (
-                _f("CALL", callsign)
-                + _f("QSO_DATE", qso_date)
-                + _f("TIME_ON", time_on)
-                + _f("BAND", "2M")
-                + _f("MODE", "APRS")
-                + _f("COMMENT", comment)
-                + _f("MY_CALL", my_station)
-            )
-            if via:
-                entry += _f("VIA", via)
-            if sat_name:
-                entry += _f("SAT_NAME", sat_name)
-                entry += _f("PROP_MODE", "SAT")
-            if row["latitude_deg"] is not None:
-                entry += _f(
-                    "GRIDSQUARE",
-                    _latlon_to_grid(
-                        float(row["latitude_deg"]),
-                        float(row["longitude_deg"] or 0),
-                    ),
-                )
-            entry += "<EOR>\n\n"
-            parts.append(entry)
-
-        adif_write_or_append(path, "".join(parts))
-        self._qso_count_label.setText(
-            _("Exported {n} QSOs → {f}").format(n=len(rows), f=os.path.basename(path))
-        )
-        # Reset label after 5 s
-        QTimer.singleShot(5000, self._refresh_qso_count)
+        dlg = LogExportDialog(self._conn, my_call=my_call, my_ssid=ssid, parent=self)
+        dlg.exec()
 
 
 # ---------------------------------------------------------------------------

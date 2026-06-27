@@ -23,7 +23,6 @@ from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QColor, QFont
 from PySide6.QtWidgets import (
     QComboBox,
-    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -656,47 +655,10 @@ class Q65Tab(QWidget):
             self._qso.log_qso_manually()
 
     def _on_export_adif(self) -> None:
-        from ui.adif_utils import adif_default_filename, adif_write_or_append
+        from ui.log_export_dialog import LogExportDialog
 
-        path, _filter = QFileDialog.getSaveFileName(
-            self,
-            _("Export Q65 Log as ADIF"),
-            adif_default_filename(),
-            "ADIF Files (*.adi *.adif)",
-        )
-        if not path or not self._qso:
-            return
-
-        rows = self._conn.execute(
-            "SELECT qso_date,time_on,time_off,call,gridsquare,"
-            "rst_sent,rst_rcvd,freq_hz,sat_name FROM q65_log ORDER BY qso_date,time_on"
-        ).fetchall()
-
-        def _f(tag: str, value: str) -> str:
-            return f"<{tag}:{len(value)}>{value}" if value else ""
-
-        parts: list[str] = []
-        for row in rows:
-            qso_date, time_on, time_off, call, grid, rst_s, rst_r, freq_hz, sat = row
-            freq_mhz = f"{freq_hz / 1e6:.6f}" if freq_hz else ""
-            tokens = [
-                _f("CALL", call or ""),
-                _f("QSO_DATE", qso_date or ""),
-                _f("TIME_ON", time_on or ""),
-                _f("TIME_OFF", time_off or time_on or ""),
-                _f("MODE", "Q65"),
-                _f("PROP_MODE", "SAT"),
-                _f("FREQ", freq_mhz),
-                _f("SAT_NAME", sat or ""),
-                _f("RST_SENT", rst_s or ""),
-                _f("RST_RCVD", rst_r or ""),
-                _f("GRIDSQUARE", grid or ""),
-            ]
-            parts.append(" ".join(t for t in tokens if t) + " <EOR>\n")
-
-        adif_write_or_append(path, "".join(parts))
-        n = len(rows)
-        self._status_label.setText(_("Exported {n} QSO(s) to {path}").format(n=n, path=path))
+        dlg = LogExportDialog(self._conn, parent=self)
+        dlg.exec()
 
     # ------------------------------------------------------------------
     # QSO state machine callbacks (called from QSO manager)

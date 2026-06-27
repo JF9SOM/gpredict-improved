@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -889,44 +888,10 @@ class Ft4Tab(QWidget):
 
     @Slot()
     def _on_export_adif(self) -> None:
-        from PySide6.QtWidgets import QFileDialog
+        from ui.log_export_dialog import LogExportDialog
 
-        from ui.adif_utils import adif_default_filename, adif_write_or_append
-
-        path, _filt = QFileDialog.getSaveFileName(
-            self, _("Export ADIF"), adif_default_filename(), "ADIF (*.adi)"
-        )
-        if not path:
-            return
-        rows = self._conn.execute(
-            "SELECT qso_date,time_on,time_off,call,gridsquare,"
-            "rst_sent,rst_rcvd,freq_hz,sat_name FROM ft4_log ORDER BY id ASC"
-        ).fetchall()
-        parts: list[str] = []
-        for r in rows:
-            qso_date, time_on, time_off, call, grid, rst_s, rst_r, freq_hz, sat = r
-            freq_mhz = f"{freq_hz / 1e6:.6f}" if freq_hz else ""
-            entry = (
-                f"<CALL:{len(call)}>{call} "
-                f"<QSO_DATE:8>{qso_date} "
-                f"<TIME_ON:6>{time_on} "
-                f"<MODE:3>FT4 "
-                f"<PROP_MODE:3>SAT "
-            )
-            if sat:
-                entry += f"<SAT_NAME:{len(sat)}>{sat} "
-            if freq_mhz:
-                entry += f"<FREQ:{len(freq_mhz)}>{freq_mhz} "
-            if rst_s:
-                entry += f"<RST_SENT:{len(rst_s)}>{rst_s} "
-            if rst_r:
-                entry += f"<RST_RCVD:{len(rst_r)}>{rst_r} "
-            if grid:
-                entry += f"<GRIDSQUARE:{len(grid)}>{grid} "
-            entry += "<EOR>\n"
-            parts.append(entry)
-        adif_write_or_append(path, "".join(parts))
-        QMessageBox.information(self, _("Export"), _("Exported ") + str(len(rows)) + _(" QSOs."))
+        dlg = LogExportDialog(self._conn, parent=self)
+        dlg.exec()
 
     # ------------------------------------------------------------------ #
     # Cleanup on tab close                                                 #
