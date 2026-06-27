@@ -322,6 +322,7 @@ class QTHDialog(QDialog):
                     QMessageBox.warning(self, _("Error"), _("Please enter a grid locator."))
                     return
                 self._location_manager.from_grid(grid, self._grid_elev_spin.value())
+                self._location_manager.save_grid(grid)
 
             callsign = self._call_edit.text().strip().upper()
             self._location_manager.save_callsign(callsign)

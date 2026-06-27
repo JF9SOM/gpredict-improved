@@ -162,7 +162,7 @@ class AprsTab(QWidget):
         # Row 1: Callsign + SSID + Via
         row1 = QHBoxLayout()
         self._callsign_edit = QLineEdit()
-        self._callsign_edit.setPlaceholderText("JF9SOM")
+        self._callsign_edit.setPlaceholderText("")
         self._callsign_edit.setMaxLength(6)
         self._callsign_edit.setFixedWidth(90)
         row1.addWidget(QLabel(_("Callsign:")))
@@ -491,12 +491,27 @@ class AprsTab(QWidget):
             "SELECT value FROM app_settings WHERE key = 'aprs_settings'"
         ).fetchone()
         if not row or not row["value"]:
+            # No APRS settings yet — pre-fill callsign from Set QTH
+            r = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'callsign'"
+            ).fetchone()
+            cs = str(r["value"]) if r else ""
+            if cs:
+                self._callsign_edit.setText(cs.upper())
+            self._load_log_from_db()
             return
         try:
             data = json.loads(row["value"])
         except (json.JSONDecodeError, TypeError):
             return
-        if cs := data.get("callsign"):
+        cs = data.get("callsign", "")
+        if not cs:
+            # Fall back to global callsign from Set QTH
+            r = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'callsign'"
+            ).fetchone()
+            cs = str(r["value"]) if r else ""
+        if cs:
             self._callsign_edit.setText(str(cs).upper())
         self._ssid_spin.setValue(int(data.get("ssid", 9)))
         if via := data.get("via"):

@@ -168,14 +168,12 @@ class Q65Tab(QWidget):
         cfg_lay.addWidget(QLabel(_("My Call:")))
         self._call_edit = QLineEdit()
         self._call_edit.setMaximumWidth(100)
-        self._call_edit.setPlaceholderText("JF9SOM")
         self._call_edit.textChanged.connect(self._on_call_changed)
         cfg_lay.addWidget(self._call_edit)
 
         cfg_lay.addWidget(QLabel(_("Grid:")))
         self._grid_edit = QLineEdit()
         self._grid_edit.setMaximumWidth(70)
-        self._grid_edit.setPlaceholderText("PM86")
         self._grid_edit.textChanged.connect(self._on_call_changed)
         cfg_lay.addWidget(self._grid_edit)
 
@@ -354,10 +352,23 @@ class Q65Tab(QWidget):
             from core.app_settings import AppSettings
 
             d = json.loads(AppSettings().get(_Q65_SETTINGS_KEY, "{}") or "{}")
-            if "callsign" in d:
-                self._call_edit.setText(d["callsign"])
-            if "grid" in d:
-                self._grid_edit.setText(d["grid"])
+            callsign = d.get("callsign", "")
+            grid = d.get("grid", "")
+            # Fall back to global callsign / grid from Set QTH if not yet set per-tab
+            if not callsign:
+                r = self._conn.execute(
+                    "SELECT value FROM app_settings WHERE key = 'callsign'"
+                ).fetchone()
+                callsign = str(r[0]) if r else ""
+            if not grid:
+                r = self._conn.execute(
+                    "SELECT value FROM app_settings WHERE key = 'grid_locator'"
+                ).fetchone()
+                grid = str(r[0]) if r else ""
+            if callsign:
+                self._call_edit.setText(callsign)
+            if grid:
+                self._grid_edit.setText(grid)
             if "mode" in d and d["mode"] in _MODE_PRESETS:
                 self._mode_combo.setCurrentText(d["mode"])
             if "rx_input" in d:

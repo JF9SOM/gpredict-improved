@@ -283,6 +283,27 @@ class LocationManager:
         )
         self._conn.commit()
 
+    def get_grid(self) -> str:
+        """Return the saved grid locator string from app_settings. Returns '' if not set."""
+        row = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = 'grid_locator'",
+        ).fetchone()
+        if row is None:
+            return ""
+        return str(row[0])
+
+    def save_grid(self, grid: str) -> None:
+        """Save the grid locator string to app_settings."""
+        self._conn.execute(
+            """INSERT INTO app_settings (key, value, updated_at)
+               VALUES ('grid_locator', ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   updated_at = excluded.updated_at""",
+            (grid.upper().strip(),),
+        )
+        self._conn.commit()
+
     def save(self, loc: Location) -> None:
         """Persist the location to the app_settings table."""
         data: dict[str, Any] = {

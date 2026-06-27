@@ -208,14 +208,12 @@ class Ft4Tab(QWidget):
         cfg_lay.addWidget(QLabel(_("My Call:")))
         self._call_edit = QLineEdit(self._my_call)
         self._call_edit.setMaximumWidth(100)
-        self._call_edit.setPlaceholderText("JF9SOM")
         self._call_edit.textChanged.connect(self._on_settings_changed)
         cfg_lay.addWidget(self._call_edit)
 
         cfg_lay.addWidget(QLabel(_("Grid:")))
         self._grid_edit = QLineEdit(self._my_grid)
         self._grid_edit.setMaximumWidth(70)
-        self._grid_edit.setPlaceholderText("PM86")
         self._grid_edit.textChanged.connect(self._on_settings_changed)
         cfg_lay.addWidget(self._grid_edit)
 
@@ -390,6 +388,17 @@ class Ft4Tab(QWidget):
             self._my_grid = data.get("my_grid", "")
             self._audio_freq = float(data.get("audio_freq_hz", _DEFAULT_AUDIO_FREQ))
             self._rx_source = data.get("rx_source", "soundcard")
+        # Fall back to global callsign / grid from Set QTH if not yet set per-tab
+        if not self._my_call:
+            r = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'callsign'"
+            ).fetchone()
+            self._my_call = str(r[0]) if r else ""
+        if not self._my_grid:
+            r = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'grid_locator'"
+            ).fetchone()
+            self._my_grid = str(r[0]) if r else ""
         # Load soundcard device indices from shared soundcard_settings
         row2 = self._conn.execute(
             "SELECT value FROM app_settings WHERE key = 'soundcard_settings'"
