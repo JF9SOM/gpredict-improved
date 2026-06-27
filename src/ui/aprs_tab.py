@@ -697,11 +697,12 @@ class AprsTab(QWidget):
             "FROM aprs_log ORDER BY id ASC"
         ).fetchall()
 
-        default_name = f"aprs_log_{datetime.now(tz=UTC).strftime('%Y%m%d')}.adi"
+        from ui.adif_utils import adif_default_filename, adif_write_or_append
+
         path, _filter = QFileDialog.getSaveFileName(
             self,
             _("Export ADIF"),
-            os.path.expanduser(f"~/{default_name}"),
+            os.path.expanduser(f"~/{adif_default_filename()}"),
             "ADIF (*.adi);;All files (*)",
         )
         if not path:
@@ -711,62 +712,59 @@ class AprsTab(QWidget):
         ssid = self._ssid_spin.value()
         my_station = f"{my_call}-{ssid}" if ssid else my_call
 
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("<ADIF_VER:5>3.1.4\n")
-            f.write("<PROGRAMID:18>FBSAT59\n")
-            f.write("<EOH>\n\n")
+        def _f(tag: str, value: str) -> str:
+            v = value.strip()
+            return f"<{tag}:{len(v)}>{v}\n" if v else ""
 
-            for row in rows:
-                # Parse timestamp — stored as ISO-like string from SQLite
-                ts_raw = str(row["received_at"] or "")
-                try:
-                    dt = datetime.fromisoformat(ts_raw.replace(" ", "T"))
-                except ValueError:
-                    dt = datetime.now(tz=UTC)
+        parts: list[str] = []
+        for row in rows:
+            ts_raw = str(row["received_at"] or "")
+            try:
+                dt = datetime.fromisoformat(ts_raw.replace(" ", "T"))
+            except ValueError:
+                dt = datetime.now(tz=UTC)
 
-                qso_date = dt.strftime("%Y%m%d")
-                time_on = dt.strftime("%H%M%S")
+            qso_date = dt.strftime("%Y%m%d")
+            time_on = dt.strftime("%H%M%S")
 
-                callsign = str(row["callsign"] or "").split(">")[0].split("-")[0]
-                comment = str(row["comment"] or "")
-                via = str(row["via"] or "")
-                sat_name = ""
-                if row["norad_sat"] and hasattr(self._conn, "execute"):
-                    sat_row = self._conn.execute(
-                        "SELECT name FROM satellites WHERE norad_cat_id = ?",
-                        (row["norad_sat"],),
-                    ).fetchone()
-                    if sat_row:
-                        sat_name = str(sat_row["name"])
+            callsign = str(row["callsign"] or "").split(">")[0].split("-")[0]
+            comment = str(row["comment"] or "")
+            via = str(row["via"] or "")
+            sat_name = ""
+            if row["norad_sat"] and hasattr(self._conn, "execute"):
+                sat_row = self._conn.execute(
+                    "SELECT name FROM satellites WHERE norad_cat_id = ?",
+                    (row["norad_sat"],),
+                ).fetchone()
+                if sat_row:
+                    sat_name = str(sat_row["name"])
 
-                def field(tag: str, value: str) -> str:
-                    v = value.strip()
-                    return f"<{tag}:{len(v)}>{v}\n" if v else ""
+            entry = (
+                _f("CALL", callsign)
+                + _f("QSO_DATE", qso_date)
+                + _f("TIME_ON", time_on)
+                + _f("BAND", "2M")
+                + _f("MODE", "APRS")
+                + _f("COMMENT", comment)
+                + _f("MY_CALL", my_station)
+            )
+            if via:
+                entry += _f("VIA", via)
+            if sat_name:
+                entry += _f("SAT_NAME", sat_name)
+                entry += _f("PROP_MODE", "SAT")
+            if row["latitude_deg"] is not None:
+                entry += _f(
+                    "GRIDSQUARE",
+                    _latlon_to_grid(
+                        float(row["latitude_deg"]),
+                        float(row["longitude_deg"] or 0),
+                    ),
+                )
+            entry += "<EOR>\n\n"
+            parts.append(entry)
 
-                f.write(field("CALL", callsign))
-                f.write(field("QSO_DATE", qso_date))
-                f.write(field("TIME_ON", time_on))
-                f.write(field("BAND", "2M"))
-                f.write(field("MODE", "APRS"))
-                f.write(field("COMMENT", comment))
-                f.write(field("MY_CALL", my_station))
-                if via:
-                    f.write(field("VIA", via))
-                if sat_name:
-                    f.write(field("SAT_NAME", sat_name))
-                    f.write(field("PROP_MODE", "SAT"))
-                if row["latitude_deg"] is not None:
-                    f.write(
-                        field(
-                            "GRIDSQUARE",
-                            _latlon_to_grid(
-                                float(row["latitude_deg"]),
-                                float(row["longitude_deg"] or 0),
-                            ),
-                        )
-                    )
-                f.write("<EOR>\n\n")
-
+        adif_write_or_append(path, "".join(parts))
         self._qso_count_label.setText(
             _("Exported {n} QSOs → {f}").format(n=len(rows), f=os.path.basename(path))
         )

@@ -891,15 +891,18 @@ class Ft4Tab(QWidget):
     def _on_export_adif(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
-        default = f"ft4_log_{datetime.now(UTC).strftime('%Y%m%d')}.adi"
-        path, _filt = QFileDialog.getSaveFileName(self, _("Export ADIF"), default, "ADIF (*.adi)")
+        from ui.adif_utils import adif_default_filename, adif_write_or_append
+
+        path, _filt = QFileDialog.getSaveFileName(
+            self, _("Export ADIF"), adif_default_filename(), "ADIF (*.adi)"
+        )
         if not path:
             return
         rows = self._conn.execute(
             "SELECT qso_date,time_on,time_off,call,gridsquare,"
             "rst_sent,rst_rcvd,freq_hz,sat_name FROM ft4_log ORDER BY id ASC"
         ).fetchall()
-        lines = ["<ADIF_VER:5>3.1.4\n<EOH>\n"]
+        parts: list[str] = []
         for r in rows:
             qso_date, time_on, time_off, call, grid, rst_s, rst_r, freq_hz, sat = r
             freq_mhz = f"{freq_hz / 1e6:.6f}" if freq_hz else ""
@@ -921,9 +924,8 @@ class Ft4Tab(QWidget):
             if grid:
                 entry += f"<GRIDSQUARE:{len(grid)}>{grid} "
             entry += "<EOR>\n"
-            lines.append(entry)
-        with open(path, "w", encoding="utf-8") as f:
-            f.writelines(lines)
+            parts.append(entry)
+        adif_write_or_append(path, "".join(parts))
         QMessageBox.information(self, _("Export"), _("Exported ") + str(len(rows)) + _(" QSOs."))
 
     # ------------------------------------------------------------------ #
