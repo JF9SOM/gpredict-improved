@@ -149,11 +149,13 @@ class Ft4Tab(QWidget):
         self._out_device: int | None = None
         self._in_device: int | None = None
         self._rx_source: str = "soundcard"  # "soundcard" or "sdr"
+        self._sdr_connected: bool = False
 
         self._load_settings()
         self._ensure_table()
         self._setup_ui()
         self._connect_rig_signals()
+        self._connect_sdr_audio()
         self._refresh_codec_status()
 
         # Scheduler signals
@@ -223,6 +225,7 @@ class Ft4Tab(QWidget):
         hdr_layout.addWidget(QLabel(_("RX Input:")))
         self._rx_src_combo = QComboBox()
         self._rx_src_combo.addItem(_("Rig Soundcard"), "soundcard")
+        self._rx_src_combo.addItem(_("SDR"), "sdr")
         self._rx_src_combo.currentIndexChanged.connect(self._on_rx_source_changed)
         hdr_layout.addWidget(self._rx_src_combo)
         hdr_layout.addStretch()
@@ -459,6 +462,36 @@ class Ft4Tab(QWidget):
         """Return the Rig 1 controller, or None."""
         return getattr(self._radio_control, "_rig1", None)
 
+    # ------------------------------------------------------------------ #
+    # SDR audio connection                                                #
+    # ------------------------------------------------------------------ #
+
+    def _connect_sdr_audio(self) -> None:
+        """Connect to SDR pipeline audio_ready signal if available."""
+        if self._radio_control is None:
+            return
+        try:
+            sdr_ctrl = getattr(self._radio_control, "_sdr_control", None)
+            if sdr_ctrl is None:
+                return
+            pipeline = getattr(sdr_ctrl, "_pipeline", None)
+            if pipeline is None:
+                return
+            pipeline.audio_ready.connect(self._on_sdr_audio_chunk)
+            self._sdr_connected = True
+        except Exception:
+            pass
+
+    @Slot(object)
+    def _on_sdr_audio_chunk(self, chunk: NDArray[np.float32]) -> None:
+        if self._rx_source != "sdr":
+            return
+        self._rx_buffer.append(chunk.astype(np.float32))
+
+    # ------------------------------------------------------------------ #
+    # Sounddevice audio capture                                            #
+    # ------------------------------------------------------------------ #
+
     def _start_audio_capture(self) -> None:
         """Open sounddevice InputStream for RX accumulation."""
         if self._audio_stream is not None:
@@ -522,7 +555,8 @@ class Ft4Tab(QWidget):
         elif not is_tx:
             # Start accumulating RX audio
             self._rx_buffer.clear()
-            self._start_audio_capture()
+            if self._rx_source != "sdr":
+                self._start_audio_capture()
 
     @Slot()
     def _on_rx_period_ended(self) -> None:
