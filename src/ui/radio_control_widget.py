@@ -77,6 +77,8 @@ class RadioControlWidget(QWidget):
         self._transmitters: list[dict[str, Any]] = []
         self._current_ctcss_hz: float | None = None
         self._ctcss_activation_hz: float | None = None
+        # Pending comms tab to open after rig connects ("sstv", "aprs", "ft4")
+        self._pending_comms_tab: str | None = None
         # CW toggle button state
         self._cw_mode_active: bool = False
         self._orig_dl_mode: str = ""
@@ -500,18 +502,20 @@ class RadioControlWidget(QWidget):
             self._check_comms_auto_open(xpdr)
 
     def _check_comms_auto_open(self, xpdr: Any) -> None:
-        """Emit auto-open signals based on transponder description / mode."""
+        """Store the comms tab to open once the rig connects (not immediately)."""
         desc = (xpdr.get("description") or "").upper()
         mode = (xpdr.get("mode") or "").upper()
         # "SSTV" / "SSDV" explicit, plus "IMAGING" for ISS
         # (SATNOGS labels ISS 145.800 MHz SSTV as "Mode V imaging")
         # NOTE: "MODE V" alone is too broad — it also matches "Mode V APRS"
         if "SSTV" in desc or "SSDV" in desc or "IMAGING" in desc:
-            self.sstv_transponder_selected.emit()
+            self._pending_comms_tab = "sstv"
         elif "APRS" in desc or mode == "AFSK":
-            self.aprs_transponder_selected.emit()
+            self._pending_comms_tab = "aprs"
         elif "FT4" in desc or "FT8" in desc:
-            self.ft4_transponder_selected.emit()
+            self._pending_comms_tab = "ft4"
+        else:
+            self._pending_comms_tab = None
 
     def _update_rig1_status(self) -> None:
         """Refresh the Rig 1 status row and button label."""
@@ -677,6 +681,13 @@ class RadioControlWidget(QWidget):
         self._connect_rig1_btn.setEnabled(True)
         if success:
             self.rig_connected.emit()
+            if self._pending_comms_tab == "sstv":
+                self.sstv_transponder_selected.emit()
+            elif self._pending_comms_tab == "aprs":
+                self.aprs_transponder_selected.emit()
+            elif self._pending_comms_tab == "ft4":
+                self.ft4_transponder_selected.emit()
+            self._pending_comms_tab = None
         self._update_rig1_status()
 
     def _on_connect_rig2(self) -> None:
