@@ -25,15 +25,16 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 from PySide6.QtCore import QObject, Qt, Signal, Slot
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -169,9 +170,10 @@ class Ft4Tab(QWidget):
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setSpacing(6)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(5)
 
-        # -- Input source indicator (inline label, same style as APRS/SSTV tabs) --
+        # -- Top: input/codec banners --
         self._input_banner = QLabel()
         self._input_banner.setStyleSheet("color: #f44336;")
         _ft4_help = QLabel(" ? ")
@@ -192,101 +194,77 @@ class Ft4Tab(QWidget):
         _banner_row.addStretch()
         root.addLayout(_banner_row)
 
-        # -- Codec status banner (shown when ft8lib not installed) --
         self._codec_banner = QLabel()
         self._codec_banner.setWordWrap(True)
         self._codec_banner.setStyleSheet("background:#e74c3c;color:white;padding:4px;")
         self._codec_banner.setVisible(False)
         root.addWidget(self._codec_banner)
 
-        # -- Header: callsign / grid / RX source --
-        hdr_grp = QGroupBox(_("Station"))
-        hdr_layout = QHBoxLayout(hdr_grp)
-        hdr_layout.addWidget(QLabel(_("My Call:")))
+        # -- Configuration row (single GroupBox, all settings inline) --
+        cfg_grp = QGroupBox(_("Configuration"))
+        cfg_lay = QHBoxLayout(cfg_grp)
+        cfg_lay.setSpacing(6)
+
+        cfg_lay.addWidget(QLabel(_("My Call:")))
         self._call_edit = QLineEdit(self._my_call)
-        self._call_edit.setMaximumWidth(120)
+        self._call_edit.setMaximumWidth(100)
         self._call_edit.setPlaceholderText("JF9SOM")
         self._call_edit.textChanged.connect(self._on_settings_changed)
-        hdr_layout.addWidget(self._call_edit)
-        hdr_layout.addSpacing(16)
-        hdr_layout.addWidget(QLabel(_("Grid:")))
+        cfg_lay.addWidget(self._call_edit)
+
+        cfg_lay.addWidget(QLabel(_("Grid:")))
         self._grid_edit = QLineEdit(self._my_grid)
-        self._grid_edit.setMaximumWidth(80)
+        self._grid_edit.setMaximumWidth(70)
         self._grid_edit.setPlaceholderText("PM86")
         self._grid_edit.textChanged.connect(self._on_settings_changed)
-        hdr_layout.addWidget(self._grid_edit)
-        hdr_layout.addSpacing(16)
-        hdr_layout.addWidget(QLabel(_("Audio freq (Hz):")))
+        cfg_lay.addWidget(self._grid_edit)
+
+        cfg_lay.addWidget(QLabel(_("Audio Hz:")))
         self._audio_freq_edit = QLineEdit(str(int(self._audio_freq)))
-        self._audio_freq_edit.setMaximumWidth(70)
+        self._audio_freq_edit.setMaximumWidth(60)
         self._audio_freq_edit.textChanged.connect(self._on_settings_changed)
-        hdr_layout.addWidget(self._audio_freq_edit)
-        hdr_layout.addSpacing(16)
-        hdr_layout.addWidget(QLabel(_("RX Input:")))
+        cfg_lay.addWidget(self._audio_freq_edit)
+
+        cfg_lay.addWidget(QLabel(_("RX:")))
         self._rx_src_combo = QComboBox()
         self._rx_src_combo.addItem(_("Rig Soundcard"), "soundcard")
         self._rx_src_combo.addItem(_("SDR"), "sdr")
         self._rx_src_combo.currentIndexChanged.connect(self._on_rx_source_changed)
-        hdr_layout.addWidget(self._rx_src_combo)
-        hdr_layout.addStretch()
-        root.addWidget(hdr_grp)
+        cfg_lay.addWidget(self._rx_src_combo)
 
-        # -- Period indicator --
-        period_grp = QGroupBox(_("Period"))
-        period_layout = QHBoxLayout(period_grp)
-        self._period_label = QLabel("RX")
-        self._period_label.setStyleSheet("font-size:16px;font-weight:bold;")
-        period_layout.addWidget(self._period_label)
-        period_layout.addSpacing(12)
-        self._countdown_label = QLabel("6.0 s")
-        self._countdown_label.setMinimumWidth(60)
-        period_layout.addWidget(self._countdown_label)
-        period_layout.addSpacing(20)
-        self._tx_enable_btn = QPushButton(_("▶ TX Enable"))
-        self._tx_enable_btn.setCheckable(True)
-        self._tx_enable_btn.setStyleSheet(
-            "QPushButton:checked{background:#2ecc71;color:white;font-weight:bold;}"
-        )
-        self._tx_enable_btn.toggled.connect(self._on_tx_enable_toggled)
-        period_layout.addWidget(self._tx_enable_btn)
-        self._halt_btn = QPushButton(_("■ Halt TX"))
-        self._halt_btn.clicked.connect(self._on_halt)
-        period_layout.addWidget(self._halt_btn)
-        period_layout.addStretch()
-        self._status_label = QLabel("")
-        self._status_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        period_layout.addWidget(self._status_label)
-        root.addWidget(period_grp)
+        cfg_lay.addStretch()
+        root.addWidget(cfg_grp)
 
-        # -- Decoded messages table --
-        decode_grp = QGroupBox(_("Decoded Messages"))
-        dv = QVBoxLayout(decode_grp)
-        self._table = QTableWidget(0, _COL_COUNT)
-        self._table.setHorizontalHeaderLabels([_("UTC"), _("dB"), _("DT"), _("Hz"), _("Message")])
-        self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.setColumnWidth(_COL_UTC, 62)
-        self._table.setColumnWidth(_COL_DB, 46)
-        self._table.setColumnWidth(_COL_DT, 46)
-        self._table.setColumnWidth(_COL_FREQ, 56)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setMaximumHeight(180)
-        self._table.cellDoubleClicked.connect(self._on_message_double_clicked)
-        dv.addWidget(self._table)
-        dv.addWidget(
-            QLabel(_("Double-click a decoded CQ to reply, or an exchange message to advance QSO"))
-        )
-        root.addWidget(decode_grp)
+        # -- Period / TX status row (no GroupBox, same as Q65) --
+        status_row = QHBoxLayout()
 
-        # -- TX controls --
-        tx_grp = QGroupBox(_("TX Message"))
-        tv = QVBoxLayout(tx_grp)
-        tx_row = QHBoxLayout()
-        self._tx_edit = QLineEdit()
-        self._tx_edit.setMaximumWidth(260)
-        self._tx_edit.setPlaceholderText(_("FT4 message (max 22 chars)"))
-        tx_row.addWidget(self._tx_edit)
-        tx_row.addSpacing(8)
+        self._period_label = QLabel("FT4")
+        self._period_label.setStyleSheet("font-weight:bold;font-size:13px;")
+        status_row.addWidget(self._period_label)
+
+        self._countdown_label = QLabel("6.0 s / 6")
+        self._countdown_label.setStyleSheet("font-size:13px;")
+        status_row.addWidget(self._countdown_label)
+
+        status_row.addStretch()
+
+        self._rx_indicator = QLabel(_("● RX"))
+        self._rx_indicator.setStyleSheet("color:#00cc44;font-weight:bold;")
+        status_row.addWidget(self._rx_indicator)
+
+        self._tx_indicator = QLabel(_("● TX"))
+        self._tx_indicator.setStyleSheet("color:gray;font-weight:bold;")
+        status_row.addWidget(self._tx_indicator)
+
+        root.addLayout(status_row)
+
+        # -- Transmit GroupBox (buttons + TX line + QSO row) --
+        tx_grp = QGroupBox(_("Transmit"))
+        tx_lay = QVBoxLayout(tx_grp)
+        tx_lay.setSpacing(4)
+
+        # Quick buttons + TX Enable / Halt TX
+        btn_row = QHBoxLayout()
         for label, slot in [
             ("CQ", self._on_btn_cq),
             ("RST", self._on_btn_rst),
@@ -295,35 +273,90 @@ class Ft4Tab(QWidget):
             ("73", self._on_btn_73),
         ]:
             btn = QPushButton(label)
-            btn.setMaximumWidth(60)
             btn.clicked.connect(slot)
-            tx_row.addWidget(btn)
-        tv.addLayout(tx_row)
-        root.addWidget(tx_grp)
+            btn_row.addWidget(btn)
 
-        # -- Active QSO --
-        qso_grp = QGroupBox(_("Active QSO"))
-        qv = QHBoxLayout(qso_grp)
-        self._qso_label = QLabel(_("No active QSO"))
-        qv.addWidget(self._qso_label)
-        qv.addStretch()
+        btn_row.addStretch()
+
+        self._tx_enable_btn = QPushButton(_("TX Enable"))
+        self._tx_enable_btn.setCheckable(True)
+        self._tx_enable_btn.setStyleSheet(
+            "QPushButton:checked{background:#006600;color:white;font-weight:bold;}"
+        )
+        self._tx_enable_btn.toggled.connect(self._on_tx_enable_toggled)
+        btn_row.addWidget(self._tx_enable_btn)
+
+        self._halt_btn = QPushButton(_("Halt TX"))
+        self._halt_btn.clicked.connect(self._on_halt)
+        self._halt_btn.setStyleSheet("QPushButton{color:#cc3300;}")
+        btn_row.addWidget(self._halt_btn)
+
+        tx_lay.addLayout(btn_row)
+
+        # TX message line
+        tx_msg_row = QHBoxLayout()
+        tx_msg_row.addWidget(QLabel(_("TX:")))
+        self._tx_edit = QLineEdit()
+        self._tx_edit.setPlaceholderText(_("FT4 message (auto-filled by state machine)"))
+        tx_msg_row.addWidget(self._tx_edit, stretch=1)
+        tx_lay.addLayout(tx_msg_row)
+
+        # QSO state row
+        qso_row = QHBoxLayout()
+        self._qso_label = QLabel(_("State: IDLE"))
+        self._qso_label.setStyleSheet("font-weight:bold;")
+        qso_row.addWidget(self._qso_label)
+
+        qso_row.addStretch()
+
+        self._clear_btn = QPushButton(_("Clear"))
+        self._clear_btn.clicked.connect(self._on_clear_qso)
+        qso_row.addWidget(self._clear_btn)
+
         self._log_btn = QPushButton(_("Log QSO"))
         self._log_btn.setEnabled(False)
         self._log_btn.clicked.connect(self._on_log_qso)
-        qv.addWidget(self._log_btn)
-        self._clear_btn = QPushButton(_("Clear"))
-        self._clear_btn.clicked.connect(self._on_clear_qso)
-        qv.addWidget(self._clear_btn)
-        root.addWidget(qso_grp)
+        qso_row.addWidget(self._log_btn)
 
-        # -- Log count + ADIF export --
+        self._adif_btn = QPushButton(_("Export ADIF…"))
+        self._adif_btn.clicked.connect(self._on_export_adif)
+        qso_row.addWidget(self._adif_btn)
+
+        tx_lay.addLayout(qso_row)
+        root.addWidget(tx_grp)
+
+        # -- Separator --
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        root.addWidget(sep)
+
+        # -- Decoded messages table (expands to fill space) --
+        root.addWidget(QLabel(_("Decoded Messages")))
+        self._table = QTableWidget(0, _COL_COUNT)
+        self._table.setHorizontalHeaderLabels([_("UTC"), _("dB"), _("DT"), _("Hz"), _("Message")])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnWidth(_COL_UTC, 70)
+        self._table.setColumnWidth(_COL_DB, 46)
+        self._table.setColumnWidth(_COL_DT, 46)
+        self._table.setColumnWidth(_COL_FREQ, 56)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setAlternatingRowColors(True)
+        self._table.setFont(QFont("Courier New", 9))
+        self._table.cellDoubleClicked.connect(self._on_message_double_clicked)
+        root.addWidget(self._table, stretch=1)
+
+        # -- Bottom row --
         bot_row = QHBoxLayout()
+        _clr = QPushButton(_("Clear"))
+        _clr.clicked.connect(self._table.clearContents)
+        _clr.clicked.connect(lambda: self._table.setRowCount(0))
+        bot_row.addWidget(_clr)
         self._log_count_label = QLabel("")
         bot_row.addWidget(self._log_count_label)
         bot_row.addStretch()
-        self._adif_btn = QPushButton(_("Export ADIF…"))
-        self._adif_btn.clicked.connect(self._on_export_adif)
-        bot_row.addWidget(self._adif_btn)
+        self._status_label = QLabel("")
+        bot_row.addWidget(self._status_label)
         root.addLayout(bot_row)
 
         self._refresh_log_count()
@@ -443,7 +476,7 @@ class Ft4Tab(QWidget):
     def _update_qso_display(self) -> None:
         qso = self._qso
         if qso is None or qso.state == QsoState.IDLE:
-            self._qso_label.setText(_("No active QSO"))
+            self._qso_label.setText(_("State: IDLE"))
             self._log_btn.setEnabled(False)
             return
         sess = qso.session
@@ -542,11 +575,13 @@ class Ft4Tab(QWidget):
 
     @Slot(bool, float)
     def _on_period_tick(self, is_tx: bool, seconds_remaining: float) -> None:
-        label = _("TX") if is_tx else _("RX")
-        color = "#e74c3c" if is_tx else "#2ecc71"
-        self._period_label.setText(label)
-        self._period_label.setStyleSheet(f"font-size:16px;font-weight:bold;color:{color};")
-        self._countdown_label.setText(f"{seconds_remaining:.1f} s")
+        self._countdown_label.setText(f"{seconds_remaining:.1f} s / 6")
+        if is_tx:
+            self._rx_indicator.setStyleSheet("color:gray;font-weight:bold;")
+            self._tx_indicator.setStyleSheet("color:#e74c3c;font-weight:bold;")
+        else:
+            self._rx_indicator.setStyleSheet("color:#00cc44;font-weight:bold;")
+            self._tx_indicator.setStyleSheet("color:gray;font-weight:bold;")
 
     @Slot(bool)
     def _on_period_changed(self, is_tx: bool) -> None:
