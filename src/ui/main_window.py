@@ -2448,9 +2448,23 @@ class MainWindow(QMainWindow):
 
             _raw_cat_ids = _FTX1_MODEL_IDS | _FT991_DIRECT_MODEL_IDS
             if isinstance(rig, HamlibDirectController) and rig._model_id in _raw_cat_ids:
-                # FTX-1F / FT-991 Direct: raw CAT path, no disconnect required
-                def _do_direct_cat() -> None:
-                    rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
+                # FTX-1F / FT-991 Direct: raw CAT path, no disconnect required.
+                # Use the same generation counter as the NET path so that rapid
+                # transponder changes cancel the in-flight thread before it spends
+                # time on serial port access.
+                self._nonsatmode_gen += 1
+                _gen = self._nonsatmode_gen
+                _dl_hz = float((self._current_transmitter or {}).get("downlink_low") or 0)
+                _ul_hz = float((self._current_transmitter or {}).get("uplink_low") or _dl_hz)
+                _direct_rig = rig  # narrowed type for closure
+
+                def _do_direct_cat(_gen: int = _gen) -> None:
+                    if self._nonsatmode_gen != _gen:
+                        return
+                    _direct_rig._send_freq_preset_direct(_dl_hz, _ul_hz)
+                    if self._nonsatmode_gen != _gen:
+                        return
+                    _direct_rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
 
                 threading.Thread(target=_do_direct_cat, daemon=True).start()
             else:

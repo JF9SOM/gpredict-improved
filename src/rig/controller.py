@@ -1519,6 +1519,37 @@ class HamlibDirectController(RigController):
         except Exception as exc:
             logger.warning("RigDirect._resend_mode_ctcss_via_rig: %s", exc)
 
+    def _send_freq_preset_direct(self, dl_hz: float, ul_hz: float) -> None:
+        """Briefly open the rig to write DL/UL frequencies at transponder selection.
+
+        Mirrors NET-mode _send_freq_preset_independent() so the rig display
+        shows the correct frequencies immediately, before the user presses Connect.
+        Skipped when the rig is already connected (Doppler loop writes frequencies).
+        Uses _port_lock so it cannot race with connect() / apply_transponder_state().
+        """
+        with self._port_lock:
+            if self._rig is not None:
+                return  # Doppler loop is running; let it handle frequencies
+            try:
+                import Hamlib as _H  # lazy — avoids Qt TLS collision at startup
+
+                r = _H.Rig(self._model_id)
+                r.set_conf("rig_pathname", self._port)
+                r.set_conf("serial_speed", str(self._baud_rate))
+                r.open()
+                time.sleep(0.1)
+                r.set_split_vfo(_H.RIG_VFO_CURR, 1, _H.RIG_VFO_B)
+                r.set_freq(_H.RIG_VFO_A, int(dl_hz))
+                r.set_freq(_H.RIG_VFO_B, int(ul_hz))
+                r.close()
+                logger.info(
+                    "RigDirect: freq preset DL=%.3fMHz UL=%.3fMHz done",
+                    dl_hz / 1e6,
+                    ul_hz / 1e6,
+                )
+            except Exception as exc:
+                logger.error("RigDirect: freq preset failed: %s", exc)
+
     def apply_transponder_state(self, dl_mode: str, ul_mode: str, ctcss_hz: float) -> None:
         """Apply mode and CTCSS atomically for Direct-mode rigs.
 
