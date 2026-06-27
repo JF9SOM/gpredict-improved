@@ -346,62 +346,58 @@ class Q65Tab(QWidget):
     # ------------------------------------------------------------------
 
     def _load_settings(self) -> None:
-        try:
-            import json
+        import json
 
-            from core.app_settings import AppSettings
+        row = self._conn.execute(
+            "SELECT value FROM app_settings WHERE key = ?", (_Q65_SETTINGS_KEY,)
+        ).fetchone()
+        d: dict[str, str] = json.loads(row[0]) if row else {}
 
-            d = json.loads(AppSettings().get(_Q65_SETTINGS_KEY, "{}") or "{}")
-            callsign = d.get("callsign", "")
-            grid = d.get("grid", "")
-            # Fall back to global callsign / grid from Set QTH if not yet set per-tab
-            if not callsign:
-                r = self._conn.execute(
-                    "SELECT value FROM app_settings WHERE key = 'callsign'"
-                ).fetchone()
-                callsign = str(r[0]) if r else ""
-            if not grid:
-                r = self._conn.execute(
-                    "SELECT value FROM app_settings WHERE key = 'grid_locator'"
-                ).fetchone()
-                grid = str(r[0]) if r else ""
-            if callsign:
-                self._call_edit.setText(callsign)
-            if grid:
-                self._grid_edit.setText(grid)
-            if "mode" in d and d["mode"] in _MODE_PRESETS:
-                self._mode_combo.setCurrentText(d["mode"])
-            if "rx_input" in d:
-                idx = self._input_combo.findText(d["rx_input"])
-                if idx >= 0:
-                    self._input_combo.setCurrentIndex(idx)
-            if "tx_slot" in d:
-                idx = self._slot_combo.findText(d["tx_slot"])
-                if idx >= 0:
-                    self._slot_combo.setCurrentIndex(idx)
-        except Exception:
-            pass
+        callsign = d.get("callsign", "")
+        grid = d.get("grid", "")
+        # Fall back to global callsign / grid from Set QTH if not yet set per-tab
+        if not callsign:
+            r = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'callsign'"
+            ).fetchone()
+            callsign = str(r[0]) if r else ""
+        if not grid:
+            r = self._conn.execute(
+                "SELECT value FROM app_settings WHERE key = 'grid_locator'"
+            ).fetchone()
+            grid = str(r[0]) if r else ""
+        if callsign:
+            self._call_edit.setText(callsign)
+        if grid:
+            self._grid_edit.setText(grid)
+        if "mode" in d and d["mode"] in _MODE_PRESETS:
+            self._mode_combo.setCurrentText(d["mode"])
+        if "rx_input" in d:
+            idx = self._input_combo.findText(d["rx_input"])
+            if idx >= 0:
+                self._input_combo.setCurrentIndex(idx)
+        if "tx_slot" in d:
+            idx = self._slot_combo.findText(d["tx_slot"])
+            if idx >= 0:
+                self._slot_combo.setCurrentIndex(idx)
 
     def _save_settings(self) -> None:
-        try:
-            import json
+        import json
 
-            from core.app_settings import AppSettings
-
-            AppSettings().set(
-                _Q65_SETTINGS_KEY,
-                json.dumps(
-                    {
-                        "callsign": self._call_edit.text().strip(),
-                        "grid": self._grid_edit.text().strip(),
-                        "mode": self._mode_combo.currentText(),
-                        "rx_input": self._input_combo.currentText(),
-                        "tx_slot": self._slot_combo.currentText(),
-                    }
-                ),
-            )
-        except Exception:
-            pass
+        data = json.dumps(
+            {
+                "callsign": self._call_edit.text().strip(),
+                "grid": self._grid_edit.text().strip(),
+                "mode": self._mode_combo.currentText(),
+                "rx_input": self._input_combo.currentText(),
+                "tx_slot": self._slot_combo.currentText(),
+            }
+        )
+        self._conn.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+            (_Q65_SETTINGS_KEY, data),
+        )
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Slot: configuration changes
