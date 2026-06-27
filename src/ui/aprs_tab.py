@@ -169,7 +169,7 @@ class AprsTab(QWidget):
         row1.addSpacing(12)
         self._ssid_spin = QSpinBox()
         self._ssid_spin.setRange(_SSID_MIN, _SSID_MAX)
-        self._ssid_spin.setValue(9)
+        self._ssid_spin.setValue(0)
         self._ssid_spin.setFixedWidth(55)
         row1.addWidget(QLabel("SSID:"))
         row1.addWidget(self._ssid_spin)
@@ -511,7 +511,7 @@ class AprsTab(QWidget):
             cs = str(r["value"]) if r else ""
         if cs:
             self._callsign_edit.setText(str(cs).upper())
-        self._ssid_spin.setValue(int(data.get("ssid", 9)))
+        self._ssid_spin.setValue(int(data.get("ssid", 0)))
         if via := data.get("via"):
             self._via_edit.setText(str(via))
         self._load_log_from_db()
