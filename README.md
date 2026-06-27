@@ -41,7 +41,7 @@ satellite tracker by Alexandru Csete OZ9AEC — built on a modern Python stack.
 - **Pass chart** — graphical elevation curve with quality colour coding (excellent/good/fair/low)
 - **Group Pass Chart** — multi-satellite pass overview with hover tooltips
 - **Upcoming Passes** — target or group search, calendar picker, CSV export
-- **Radio Control** — Doppler correction, mode/CTCSS auto-set, transponder list
+- **Radio Control** — Doppler correction, mode/CTCSS auto-set, transponder list; **CW toggle button** (one-click CW-U/CW-L on USB/LSB transponders, reverts to original mode with a second click); **frequency preset** (DL/UL written to rig at transponder selection so frequencies are correct before pressing Connect)
 - **SDR Control** — real-time spectrum analyser, NFM/USB/LSB/CW demodulation, IQ recorder, passband tuning with transponder lock
 - **Autotrack/Record** — automatic sequential satellite tracking with scheduled timer (start/stop time), auto rig+rotator connect at AOS / disconnect at LOS, and automatic SDR audio/IQ recording between AOS and LOS
 - **AOS/LOS desktop notifications** (Linux: notify-send / macOS: osascript / Windows: PowerShell)

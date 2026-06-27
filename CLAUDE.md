@@ -707,6 +707,9 @@ sudo usermod -aG dialout $USER
   - `_sat_name_cache` で毎秒の DB SELECT を排除
   - `_last_elevations` で仰角データを Autotrack と共有
 - Radio Control レイアウト縦幅圧縮（Name/NORAD・DL/Doppler・UL/Doppler・Mode/CTCSS・AZ/EL を各1行に）
+- **CW トグルボタン**（src/ui/radio_control_widget.py）— Mode 行にボタンを追加。USB/SSB/LSB トランスポンダー選択時のみ表示（FM 等は非表示）。クリックで両 VFO を CW-U（"CW"）/ CW-L（"CW-R"）に切り替え、もう一度クリックで元のモードへ復帰。FTX-1F / FT-991 Direct モードは raw CAT パス（`apply_transponder_state()`）経由。NET モードおよびその他は `send_mode_only()` 経由。
+- **非 SATMODE リグの周波数プリセット**（v0.2.0 以降）— トランスポンダー選択時にリグが未接続でも DL/UL 周波数をリグに書き込む。NET モード: `_send_freq_preset_independent()` で独立 TCP ソケット経由。Direct モード: `_send_freq_preset_direct()` で短時間 Hamlib open/set_freq/close。Connect 前からリグの表示が正しい周波数になる。
+- **`_nonsatmode_gen` 世代カウンター** — トランスポンダーを素早く切り替えた際の二重スレッド競合を防止（旧スレッドが新しい世代を検出して即時終了）。
 - **スマホ Web UI 大幅強化**（Antenna タブ・コンパス切り替え・RIG 遠隔制御）
 - **Dashboard タブ**（src/ui/dashboard_view.py）— ズームマップ＋レーダー＋ステータスバーの統合ビュー
   - Dashboard 表示中は Satellite Detail パネルを自動非表示
