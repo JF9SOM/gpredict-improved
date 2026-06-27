@@ -192,7 +192,7 @@ class QTHDialog(QDialog):
         call_group = QGroupBox(_("Station"))
         call_form = QFormLayout(call_group)
         self._call_edit = QLineEdit()
-        self._call_edit.setPlaceholderText("JF9SOM")
+        self._call_edit.setPlaceholderText("")
         self._call_edit.setMaxLength(20)
         call_form.addRow(_("Callsign:"), self._call_edit)
         layout.addWidget(call_group)
