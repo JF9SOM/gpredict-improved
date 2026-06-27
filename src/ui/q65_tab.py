@@ -122,6 +122,7 @@ class Q65Tab(QWidget):
         self._decoded_signal.connect(self._on_decoded)
         self._load_settings()
         self._connect_sdr_audio()
+        self._connect_rig_signals()
 
         self._tick_timer = QTimer(self)
         self._tick_timer.setInterval(500)
@@ -141,6 +142,11 @@ class Q65Tab(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(5)
+
+        # Input / rig connection banner (same style as FT4 tab)
+        self._input_banner = QLabel(_("Input: No audio source — connect Rig in Radio Control"))
+        self._input_banner.setStyleSheet("color: #f44336;")
+        root.addWidget(self._input_banner)
 
         # Lib status banner (shown only when libq65 is not installed)
         if not is_available():
@@ -406,6 +412,41 @@ class Q65Tab(QWidget):
             self._audio_buffer.clear()
 
     # ------------------------------------------------------------------
+    # Rig connection signals
+    # ------------------------------------------------------------------
+
+    def _connect_rig_signals(self) -> None:
+        rc = self._radio_control
+        if rc is None:
+            return
+        for sig_name in ("rig_connected", "rig1_connected"):
+            sig = getattr(rc, sig_name, None)
+            if sig is not None:
+                sig.connect(self._on_rig_connected)
+        for sig_name in ("rig_disconnected", "rig1_disconnected"):
+            sig = getattr(rc, sig_name, None)
+            if sig is not None:
+                sig.connect(self._on_rig_disconnected)
+        rig = getattr(rc, "_rig1", None)
+        already_connected = rig is not None and getattr(rig, "_connected", False)
+        self._refresh_input_source(already_connected)
+
+    @Slot()
+    def _on_rig_connected(self) -> None:
+        self._refresh_input_source(connected=True)
+
+    @Slot()
+    def _on_rig_disconnected(self) -> None:
+        self._refresh_input_source(connected=False)
+
+    def _refresh_input_source(self, connected: bool) -> None:
+        if connected:
+            self._input_banner.setText(_("Input: Rig connected"))
+            self._input_banner.setStyleSheet("color: #4caf50;")
+        else:
+            self._input_banner.setText(_("Input: No audio source — connect Rig in Radio Control"))
+            self._input_banner.setStyleSheet("color: #f44336;")
+
     # SDR audio connection
     # ------------------------------------------------------------------
 
