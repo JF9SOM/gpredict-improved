@@ -3340,18 +3340,43 @@ class MainWindow(QMainWindow):
         self._sdr_tune_offset = offset_hz
 
     def _on_cw_mode_requested(self, dl_mode: str, ul_mode: str) -> None:
-        """Apply CW (or original) mode to both VFOs in a background thread."""
+        """Apply CW (or original) mode to both VFOs in a background thread.
+
+        FTX-1F / FT-991 Direct mode use raw CAT commands (MD1/MD0 or SV swap)
+        via apply_transponder_state() — the generic Hamlib send_mode_only() path
+        (VFO-B set_vfo + set_mode) does not correctly set VFO-B mode on those
+        rigs.  All other rigs (NET, satmode) use send_mode_only().
+        """
         rig = self._rig_controller
         if rig is None:
             return
 
-        def _send() -> None:
-            try:
-                rig.send_mode_only(dl_mode, ul_mode)
-            except Exception as exc:
-                self._rig_error.emit(str(exc))
+        from rig.controller import (
+            _FT991_DIRECT_MODEL_IDS,
+            _FTX1_MODEL_IDS,
+            HamlibDirectController,
+        )
 
-        threading.Thread(target=_send, daemon=True).start()
+        _raw_cat_ids = _FTX1_MODEL_IDS | _FT991_DIRECT_MODEL_IDS
+        if isinstance(rig, HamlibDirectController) and rig._model_id in _raw_cat_ids:
+            # Route through the same raw CAT path as transponder selection.
+            # Preserve the current CTCSS tone when reverting to the original
+            # mode; suppress it when switching to CW (CW has no CTCSS).
+            ctcss_hz = 0.0 if dl_mode in ("CW", "CW-R") else float(self._ctcss_tone_hz or 0.0)
+
+            def _send_direct() -> None:
+                rig.apply_transponder_state(dl_mode, ul_mode, ctcss_hz)
+
+            threading.Thread(target=_send_direct, daemon=True).start()
+        else:
+
+            def _send() -> None:
+                try:
+                    rig.send_mode_only(dl_mode, ul_mode)
+                except Exception as exc:
+                    self._rig_error.emit(str(exc))
+
+            threading.Thread(target=_send, daemon=True).start()
 
     def _on_ctcss_activate(self) -> None:
         """Send the satellite's activation tone (tone_hz from CTCSS_DB)."""
