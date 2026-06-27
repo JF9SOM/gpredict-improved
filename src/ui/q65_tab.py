@@ -43,7 +43,6 @@ from comms.q65.codec import (
     Q65Codec,
     Q65Message,
     is_available,
-    lib_version,
 )
 from comms.q65.qso import Q65QsoManager, Q65QsoState
 from comms.q65.scheduler import Q65Scheduler
@@ -143,7 +142,7 @@ class Q65Tab(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(5)
 
-        # Lib status banner
+        # Lib status banner (shown only when libq65 is not installed)
         if not is_available():
             banner = QLabel(
                 _(
@@ -151,14 +150,9 @@ class Q65Tab(QWidget):
                     "TX encoding uses pure Python and works without libq65."
                 )
             )
-            banner.setStyleSheet("background:#5a3a00;color:white;padding:5px;border-radius:3px;")
+            banner.setStyleSheet("background:#e74c3c;color:white;padding:4px;")
             banner.setWordWrap(True)
             root.addWidget(banner)
-        else:
-            ver = lib_version()
-            info = QLabel(_("libq65 ready") + (f"  ({ver})" if ver else ""))
-            info.setStyleSheet("color:#00cc44;font-weight:bold;")
-            root.addWidget(info)
 
         # ---- Config row ----
         cfg = QGroupBox(_("Configuration"))
