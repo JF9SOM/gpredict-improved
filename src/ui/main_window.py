@@ -1454,6 +1454,26 @@ class MainWindow(QMainWindow):
         if widget is not None:
             widget.deleteLater()
 
+    def _notify_comms_tab_of_rig_state(self, tab: object) -> None:
+        """Call _on_rig_connected / _on_rig2_connected on a newly created comms
+        tab if the corresponding rig is already connected when the tab opens.
+        Without this, the tab misses the signal that was emitted before it existed."""
+        rc = self._radio_control
+        rig1 = getattr(rc, "_rig1", None)
+        rig2 = getattr(rc, "_rig2", None)
+        if (
+            rig1 is not None
+            and getattr(rig1, "is_connected", False)
+            and hasattr(tab, "_on_rig_connected")
+        ):
+            tab._on_rig_connected()  # type: ignore[union-attr]
+        if (
+            rig2 is not None
+            and getattr(rig2, "is_connected", False)
+            and hasattr(tab, "_on_rig2_connected")
+        ):
+            tab._on_rig2_connected()  # type: ignore[union-attr]
+
     def _on_open_aprs(self) -> None:
         """Open the APRS tab (Communications > APRS).
 
@@ -1475,6 +1495,7 @@ class MainWindow(QMainWindow):
         tab.aprs_stations_cleared.connect(self._world_map.clear_aprs_stations)
         idx = self._tab_widget.addTab(tab, _("APRS"))
         self._tab_widget.setCurrentIndex(idx)
+        self._notify_comms_tab_of_rig_state(tab)
 
     def _on_open_telemetry(self) -> None:
         """Open the Telemetry tab (Communications > Telemetry)."""
@@ -1488,6 +1509,7 @@ class MainWindow(QMainWindow):
         tab = TelemetryTab(self._conn, self._radio_control, parent=self)
         idx = self._tab_widget.addTab(tab, _("Telemetry"))
         self._tab_widget.setCurrentIndex(idx)
+        self._notify_comms_tab_of_rig_state(tab)
 
     def _on_open_sstv(self) -> None:
         """Open the SSTV / SSDV tab (Communications > SSTV / SSDV)."""
@@ -1510,6 +1532,7 @@ class MainWindow(QMainWindow):
         tab = SstvTab(self._conn, self._radio_control, aprs_engine=aprs_engine, parent=self)
         idx = self._tab_widget.addTab(tab, tab_label)
         self._tab_widget.setCurrentIndex(idx)
+        self._notify_comms_tab_of_rig_state(tab)
 
     def _on_open_ft4(self) -> None:
         """Open the FT4 tab (Communications > FT4)."""
@@ -1524,6 +1547,7 @@ class MainWindow(QMainWindow):
         tab = Ft4Tab(self._conn, self._radio_control, parent=self)
         idx = self._tab_widget.addTab(tab, tab_label)
         self._tab_widget.setCurrentIndex(idx)
+        self._notify_comms_tab_of_rig_state(tab)
 
     def _on_open_q65(self) -> None:
         """Open the Q65 tab (Communications > Q65)."""
