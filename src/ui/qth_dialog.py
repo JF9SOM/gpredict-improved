@@ -166,7 +166,7 @@ class QTHDialog(QDialog):
         grid_form = QFormLayout(grid_tab)
 
         self._grid_edit = QLineEdit()
-        self._grid_edit.setPlaceholderText("PM86 / PM86ih")
+        self._grid_edit.setPlaceholderText("")
         self._grid_edit.setMaxLength(6)
         grid_form.addRow(_("Grid Locator:"), self._grid_edit)
 
