@@ -193,8 +193,8 @@ _SATMODE_USE_VFO_SUB: frozenset[int] = frozenset(
 # ---------------------------------------------------------------------------
 _FTX1_MODEL_IDS: frozenset[int] = frozenset({1051})  # FTX-1F (Hamlib model 1051)
 
-# FT-991 (1035) and FT-991A (1036 in rig_dialog custom list) Direct mode raw CAT path.
-_FT991_DIRECT_MODEL_IDS: frozenset[int] = frozenset({1035, 1036})
+# FT-991 / FT-991A / FT-991AM (Hamlib model 1035) Direct mode raw CAT path.
+_FT991_DIRECT_MODEL_IDS: frozenset[int] = frozenset({1035})
 
 # FTX-1F CAT mode codes: MD P1 P2; where P1=0=MAIN, P1=1=SUB
 _FTX1_MODE_CODES: dict[str, str] = {
@@ -1576,7 +1576,7 @@ class HamlibDirectController(RigController):
           no Hamlib call.  (The long freeze seen during development was caused
           by an incorrect baud rate setting, not a fundamental GIL issue.)
 
-        FT-991 / FT-991A (models 1035 / 1036):
+        FT-991 / FT-991A / FT-991AM (model 1035):
           Raw CAT via pyserial — SV swap for UL mode, CN/CT for CTCSS (no swap).
 
         Non-satmode rigs (other):
