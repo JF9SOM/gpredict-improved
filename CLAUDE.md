@@ -780,7 +780,12 @@ sudo usermod -aG dialout $USER
   - FTX-1F（Hamlib 4.7.1 モデル1051、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
   - FTX-1F（Hamlib 4.7.1 モデル1051、Direct モード）: モード・CTCSS（raw CAT `MD1/MD0/CN1/CT1` via `os.open()`）動作確認済み（2026-06-18）
   - FT-991AM（Hamlib 4.7.1 モデル1036、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
-  - FT-991/FT-991A（Direct モード）: モード・CTCSS（raw CAT `SV/MD0/CN0/CT0` via pyserial）実装済み・実機確認待ち（2026-06-18）
+  - FT-991/FT-991A/FT-991AM（Direct モード、Hamlib model 1035）: スプリット・周波数・モード・CTCSS すべて動作確認済み（2026-06-28）
+    - スプリット ON/OFF: `FT3;` / `FT2;`（`ST` コマンドは FT-991A 非対応で `?;` を返す）
+    - トランスポンダー選択時: pyserial で `FA`/`FB`/`FT3;` をプリセット（Connect 前からリグ表示に反映）
+    - アプリ終了時: `FT2;` でシンプレックスに復帰
+    - モード: `SV/MD0` via pyserial（VFO-B は SV スワップ必須）
+    - CTCSS: `CN0/CT0` via pyserial（SV スワップ不要・TX-VFO にグローバル適用）
   - IC-9100（Hamlib 4.7.1 モデル3068、Direct モード）: クロスバンド・同バンド両方の周波数・モード・CTCSS 動作確認済み（v0.1.27・2026-06-25）— SAT モード ON/OFF・ドップラー補正・VFO 逆転バグ修正済み
   - IC-9100（Hamlib 4.7.1 モデル3068、NET Control）: クロスバンド・同バンド両方の周波数・モード・CTCSS 動作確認済み（v0.1.27・2026-06-25）
   - IC-9700（Hamlib 4.7.1 モデル3081、Direct/NET モード）: Linux・Windows 両方で IC-9100 と同様に動作確認済み（v0.1.27・2026-06-25）— `_SATMODE_USE_VFO_SUB` 分岐（VFO_SUB for UL）使用
@@ -1223,6 +1228,26 @@ rr = obs.range_rate_km_s * (2.0 if self._selected_norad == MOON_ID else 1.0)
 ```bash
 QT_LOGGING_RULES="qt.qpa.*=true" ./FBSAT59.AppImage 2>&1 | head -100
 ```
+
+---
+
+### アップリンクなし衛星（テレメトリー専用）でドップラー補正がリグに反映されない
+
+**症状**: OTP-2（NORAD 63235、400.5 MHz DL）・CORVUS-BC1/BC2（2 GHz帯 DL）など、アップリンク周波数がない衛星を選択すると、リグの表示周波数が変わらない。Connect後もドップラー補正がリグに反映されず、リグは以前のキャッシュ周波数（例: 6.99920 MHz）を表示し続ける。
+
+**再現条件**: `uplink_low = NULL` の衛星 + FT-991A（NET モード）構成で確認。RS-44 ビーコン（435 MHz）は同じくアップリンクなしだが正常動作する。
+
+**原因の手がかり**:
+- `src/ui/main_window.py` `_apply_transponder_state_to_rig()` 内で `ul_hz = float(uplink_low or dl_hz)` と代入しているため、`uplink_low=None` の衛星では `ul_hz = dl_hz` となる
+- `set_transponder_freqs(dl_hz, dl_hz)` が呼ばれると `_is_same_band = True` になり、`_send_split_init_independent()` が `S 1 VFOB`（非 satmode リグには不正）を送る
+- さらに FT-991A の対応周波数帯（HF/2m/70cm）外の周波数（400 MHz・2 GHz 帯）に対して `F` コマンドを送っても、リグが無視する可能性がある
+- RS-44 ビーコン（435 MHz）が正常なのは FT-991A の 70cm 帯（430–450 MHz）に収まるため
+
+**未調査点**: 上記2つの要因（`S 1 VFOB` の誤送信・対応外周波数の無視）のどちらが支配的か、または両方が絡むか未確定。
+
+**関連ファイル**:
+- `src/ui/main_window.py` — `_apply_transponder_state_to_rig()` 約2441–2443行目
+- `src/rig/controller.py` — `set_transponder_freqs()`・`_send_split_init_independent()`・`_send_freq_preset_independent()`
 
 ---
 
