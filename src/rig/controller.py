@@ -1080,7 +1080,21 @@ class HamlibDirectController(RigController):
                 if vfob_hz is not None:
                     last_ul = self._last_ul_hz
                     if last_ul is None or abs(vfob_hz - last_ul) >= 1.0:
-                        self._rig.set_split_freq(rx_vfo, int(vfob_hz))
+                        if self._model_id in _FT991_DIRECT_MODEL_IDS:
+                            # Hamlib set_split_freq returns -11 (ENAVAIL) for
+                            # FT-991/991A and silently does nothing.  Send the
+                            # raw CAT FB command directly instead.
+                            import os as _os
+
+                            cmd = f"FB{int(vfob_hz):010d};".encode()
+                            _fd = _os.open(self._port, _os.O_WRONLY | _os.O_NOCTTY | _os.O_NONBLOCK)
+                            try:
+                                _os.write(_fd, cmd)
+                            finally:
+                                _os.close(_fd)
+                            logger.debug("RigDirect FT-991 UL raw FB: %d Hz", int(vfob_hz))
+                        else:
+                            self._rig.set_split_freq(rx_vfo, int(vfob_hz))
                         self._last_ul_hz = vfob_hz
             return True
         except Exception as exc:
