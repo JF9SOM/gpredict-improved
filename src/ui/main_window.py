@@ -4007,6 +4007,82 @@ class MainWindow(QMainWindow):
     # Window lifecycle
     # ------------------------------------------------------------------ #
 
+    def _send_simplex_to_configured_rigs(self) -> None:
+        """Read rig settings from DB and send a split-off command directly.
+
+        This is completely independent of RigController state — it works
+        whether or not the user ever pressed Connect.  For NET mode a fresh
+        TCP socket is opened to rigctld and 'S 0 VFOA' is sent.  For Direct
+        mode a temporary Hamlib rig handle is opened, split is disabled, then
+        the handle is closed.
+        """
+        import socket as _socket
+        import time as _time
+
+        for key in ("rig1_settings", "rig2_settings"):
+            try:
+                row = self._conn.execute(
+                    "SELECT value FROM app_settings WHERE key = ?", (key,)
+                ).fetchone()
+                if not row and key == "rig1_settings":
+                    row = self._conn.execute(
+                        "SELECT value FROM app_settings WHERE key = 'rig_settings'"
+                    ).fetchone()
+                if not row:
+                    continue
+                settings: dict[str, Any] = json.loads(row[0])
+                mode = settings.get("mode", "net")
+                if settings.get("is_sdr"):
+                    continue
+
+                if mode == "net":
+                    host = str(settings.get("host", "localhost"))
+                    port = int(settings.get("net_port", 4532))
+                    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+                    sock.settimeout(2.0)
+                    sock.connect((host, port))
+                    sock.sendall(b"S 0 VFOA\n")
+                    buf = b""
+                    deadline = _time.monotonic() + 2.0
+                    while _time.monotonic() < deadline:
+                        try:
+                            chunk = sock.recv(256)
+                        except OSError:
+                            break
+                        if not chunk:
+                            break
+                        buf += chunk
+                        if b"RPRT" in buf:
+                            break
+                    sock.close()
+                    logger.info("closeEvent: split released via rigctld %s:%d", host, port)
+
+                else:
+                    try:
+                        import Hamlib as _H
+                    except ImportError:
+                        continue
+                    model_id = int(settings.get("model_id", 1))
+                    serial_port = str(settings.get("port", "/dev/ttyUSB0"))
+                    baud_rate = int(settings.get("baud_rate", 9600))
+                    rig = _H.Rig(model_id)
+                    rig.set_conf("rig_pathname", serial_port)
+                    rig.set_conf("serial_speed", str(baud_rate))
+                    rig.open()
+                    _time.sleep(0.2)
+                    with contextlib.suppress(Exception):
+                        rig.set_func(_H.RIG_FUNC_SATMODE, 0)
+                    with contextlib.suppress(Exception):
+                        rig.set_split_vfo(_H.RIG_VFO_CURR, 0, _H.RIG_VFO_B)
+                    rig.close()
+                    logger.info(
+                        "closeEvent: split released via Hamlib Direct %s (model %d)",
+                        serial_port,
+                        model_id,
+                    )
+            except Exception as exc:
+                logger.warning("closeEvent: could not release split for %s — %s", key, exc)
+
     def closeEvent(self, event: QCloseEvent) -> None:
         """Stop the timer, web server, and scheduler when the window is closed."""
         with contextlib.suppress(Exception):
@@ -4015,18 +4091,11 @@ class MainWindow(QMainWindow):
                 (self._filter_combo.currentText(),),
             )
             self._conn.commit()
-        # Stop the Doppler timer first so no new rig commands are queued.
+        # Stop Doppler timer so no new commands race with the simplex command.
         self._timer.stop()
-        # Give any in-progress Doppler cycle time to finish before we send
-        # the simplex command on the same connection.
-        import time as _time
-
-        _time.sleep(0.3)
-        # Return each connected rig to simplex mode before full teardown.
-        for rig in (self._rig_controller, self._rig2_controller):
-            if rig is not None and rig.is_connected:
-                with contextlib.suppress(Exception):
-                    rig.cancel_split()
+        # Send split-off directly from settings, independent of RigController state.
+        with contextlib.suppress(Exception):
+            self._send_simplex_to_configured_rigs()
         # Signal background threads to exit, then disconnect.
         self._shutdown_flag.set()
         for rig in (self._rig_controller, self._rig2_controller):
