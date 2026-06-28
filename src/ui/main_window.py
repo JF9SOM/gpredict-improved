@@ -4064,16 +4064,15 @@ class MainWindow(QMainWindow):
                         self._rig_controller if key == "rig1_settings" else self._rig2_controller
                     )
                     if model_id in _FT991_DIRECT_MODEL_IDS:
-                        # FT-991/991A: use raw CAT ST0; via pyserial.
-                        # Works whether or not HamlibDirectController is connected,
-                        # because pyserial opens at the OS level independently.
-                        # Hamlib and pyserial can coexist on the same port for a
-                        # single short write.
+                        # FT-991/991A/991AM: use raw CAT FT2; (VFO-A TX = split OFF).
+                        # ST command is not supported on FT-991A (?; response).
+                        # pyserial opens independently of Hamlib, safe to call
+                        # whether or not HamlibDirectController is still connected.
                         import serial as _serial
 
                         with _serial.Serial(serial_port, baud_rate, timeout=1) as ser:
-                            ser.write(b"ST0;")
-                        logger.info("exit: split released via raw CAT ST0; %s", serial_port)
+                            ser.write(b"FT2;")
+                        logger.info("exit: split released via raw CAT FT2; %s", serial_port)
                     elif slot_ctrl is not None and slot_ctrl.is_connected:
                         continue  # port is in use by Hamlib; skip to avoid double-open
                     else:

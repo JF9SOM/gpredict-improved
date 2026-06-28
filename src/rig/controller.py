@@ -1540,22 +1540,36 @@ class HamlibDirectController(RigController):
         shows the correct frequencies immediately, before the user presses Connect.
         Skipped when the rig is already connected (Doppler loop writes frequencies).
         Uses _port_lock so it cannot race with connect() / apply_transponder_state().
+
+        FT-991/991A/991AM: use raw CAT via pyserial (FA/FB/FT3) — Hamlib
+        set_split_vfo is unreliable for this model (ST command not supported).
+        Other models: use Hamlib open/set_freq/close as before.
         """
         with self._port_lock:
             if self._rig is not None:
                 return  # Doppler loop is running; let it handle frequencies
             try:
-                import Hamlib as _H  # lazy — avoids Qt TLS collision at startup
+                if self._model_id in _FT991_DIRECT_MODEL_IDS:
+                    import serial as _serial
 
-                r = _H.Rig(self._model_id)
-                r.set_conf("rig_pathname", self._port)
-                r.set_conf("serial_speed", str(self._baud_rate))
-                r.open()
-                time.sleep(0.1)
-                r.set_split_vfo(_H.RIG_VFO_CURR, 1, _H.RIG_VFO_B)
-                r.set_freq(_H.RIG_VFO_A, int(dl_hz))
-                r.set_freq(_H.RIG_VFO_B, int(ul_hz))
-                r.close()
+                    with _serial.Serial(self._port, self._baud_rate, timeout=1) as ser:
+                        ser.write(f"FA{int(dl_hz):09d};".encode())
+                        time.sleep(0.05)
+                        ser.write(f"FB{int(ul_hz):09d};".encode())
+                        time.sleep(0.05)
+                        ser.write(b"FT3;")  # VFO-B TX = split ON
+                else:
+                    import Hamlib as _H
+
+                    r = _H.Rig(self._model_id)
+                    r.set_conf("rig_pathname", self._port)
+                    r.set_conf("serial_speed", str(self._baud_rate))
+                    r.open()
+                    time.sleep(0.1)
+                    r.set_split_vfo(_H.RIG_VFO_CURR, 1, _H.RIG_VFO_B)
+                    r.set_freq(_H.RIG_VFO_A, int(dl_hz))
+                    r.set_freq(_H.RIG_VFO_B, int(ul_hz))
+                    r.close()
                 logger.info(
                     "RigDirect: freq preset DL=%.3fMHz UL=%.3fMHz done",
                     dl_hz / 1e6,
