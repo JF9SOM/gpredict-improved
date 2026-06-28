@@ -1086,7 +1086,7 @@ class HamlibDirectController(RigController):
                             # raw CAT FB command directly instead.
                             import os as _os
 
-                            cmd = f"FB{int(vfob_hz):010d};".encode()
+                            cmd = f"FB{int(vfob_hz):09d};".encode()
                             _fd = _os.open(self._port, _os.O_WRONLY | _os.O_NOCTTY | _os.O_NONBLOCK)
                             try:
                                 _os.write(_fd, cmd)
@@ -1754,22 +1754,21 @@ class HamlibDirectController(RigController):
                 self._satmode_active = True
                 logger.info("RigDirect: satmode active (entered via CI-V 16 5A before open)")
             elif self._model_id in _FT991_DIRECT_MODEL_IDS:
-                # FT-991/991A: Hamlib set_split_vfo is unreliable; use raw CAT
-                # ST1; instead.  We use os.open(O_NOCTTY) rather than pyserial
-                # here because Hamlib already has the serial port open after
-                # rig.open().  Opening via pyserial would call tcsetattr() which
-                # reconfigures termios and can corrupt Hamlib's connection.
-                # os.open(O_NOCTTY|O_NONBLOCK) just obtains a write-only fd
-                # without touching the port settings, matching the FTX-1F
-                # approach used in send_cat_ftx1_raw().
+                # FT-991/991A: Hamlib set_split_vfo is unreliable.
+                # The FT-991A does not implement the ST command (?; response).
+                # Split is controlled via the FT command:
+                #   FT2; = VFO-A TX (split OFF)
+                #   FT3; = VFO-B TX (split ON)
+                # We use os.open(O_NOCTTY|O_NONBLOCK) so Hamlib's termios
+                # settings are not disturbed while it holds the port open.
                 import os as _os
 
                 _fd = _os.open(self._port, _os.O_WRONLY | _os.O_NOCTTY | _os.O_NONBLOCK)
                 try:
-                    _os.write(_fd, b"ST1;")
+                    _os.write(_fd, b"FT3;")
                 finally:
                     _os.close(_fd)
-                logger.info("RigDirect: split enabled via raw CAT ST1; (FT-991)")
+                logger.info("RigDirect: split enabled via raw CAT FT3; (FT-991)")
             else:
                 import Hamlib as _H
 
