@@ -4015,15 +4015,24 @@ class MainWindow(QMainWindow):
                 (self._filter_combo.currentText(),),
             )
             self._conn.commit()
-        # Release split/satmode before stopping background threads so the
-        # connection is still alive and lock-free when the command is sent.
+        # Stop the Doppler timer first so no new rig commands are queued.
+        self._timer.stop()
+        # Give any in-progress Doppler cycle time to finish before we send
+        # the simplex command on the same connection.
+        import time as _time
+
+        _time.sleep(0.3)
+        # Return each connected rig to simplex mode before full teardown.
+        for rig in (self._rig_controller, self._rig2_controller):
+            if rig is not None and rig.is_connected:
+                with contextlib.suppress(Exception):
+                    rig.cancel_split()
+        # Signal background threads to exit, then disconnect.
+        self._shutdown_flag.set()
         for rig in (self._rig_controller, self._rig2_controller):
             if rig is not None and rig.is_connected:
                 with contextlib.suppress(Exception):
                     rig.disconnect()
-        # Signal background threads to exit after rigs are disconnected.
-        self._shutdown_flag.set()
-        self._timer.stop()
         if self._web_server is not None:
             with contextlib.suppress(Exception):
                 self._web_server.stop()

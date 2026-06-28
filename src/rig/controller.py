@@ -307,6 +307,14 @@ class RigController(ABC):
     def disconnect(self) -> None:
         """Disconnect."""
 
+    def cancel_split(self) -> None:
+        """Send a simplex/split-off command while still connected.
+
+        Called on app exit before full teardown.  Subclasses override this.
+        No-op by default (SDR adapters etc. do not need split management).
+        """
+        return  # noqa: PLR1711
+
     @property
     def state(self) -> RigState:
         """Current connection state."""
@@ -609,19 +617,33 @@ class HamlibDirectController(RigController):
             logger.error("RigDirect: connect failed — %s", exc)
             return False
 
+    def cancel_split(self) -> None:
+        """Disable split/satmode while the rig is still connected."""
+        if not self.is_connected or self._rig is None:
+            return
+        try:
+            import Hamlib as _H
+
+            acquired = self._port_lock.acquire(timeout=1.0)
+            if not acquired:
+                return
+            try:
+                if self._satmode and self._satmode_active:
+                    self._rig.set_func(_H.RIG_FUNC_SATMODE, 0)
+                self._rig.set_split_vfo(_H.RIG_VFO_CURR, 0, _H.RIG_VFO_B)
+                logger.info("RigDirect: split released")
+            finally:
+                self._port_lock.release()
+        except Exception as exc:
+            logger.warning("RigDirect.cancel_split: %s", exc)
+
     def disconnect(self) -> None:
-        """Disconnect from the serial port, releasing split/satmode first."""
+        """Disconnect from the serial port."""
         with self._lock:
             if self._state == RigState.DISCONNECTED:
                 return
         try:
             if self._rig is not None:
-                import Hamlib as _H
-
-                with contextlib.suppress(Exception):
-                    if self._satmode and self._satmode_active:
-                        self._rig.set_func(_H.RIG_FUNC_SATMODE, 0)
-                    self._rig.set_split_vfo(_H.RIG_VFO_CURR, 0, _H.RIG_VFO_B)
                 self._rig.close()
         except Exception as exc:
             logger.warning("RigDirect: disconnect error — %s", exc)
@@ -1968,12 +1990,10 @@ class HamlibNetController(RigController):
             logger.error("RigNet: connect failed — %s", exc)
             return False
 
-    def _cancel_split_independent(self) -> None:
-        """Send 'S 0 VFOA' via a fresh TCP socket, bypassing _cmd_lock.
-
-        Called from disconnect() so it works even when the Doppler thread
-        still holds _cmd_lock (e.g. during app shutdown).
-        """
+    def cancel_split(self) -> None:
+        """Send 'S 0 VFOA' via a fresh TCP socket to return the rig to simplex."""
+        if not self.is_connected:
+            return
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(2.0)
@@ -1989,14 +2009,13 @@ class HamlibNetController(RigController):
             sock.close()
             logger.info("RigNet: split released (S 0 VFOA)")
         except Exception as exc:
-            logger.warning("RigNet._cancel_split_independent: %s", exc)
+            logger.warning("RigNet.cancel_split: %s", exc)
 
     def disconnect(self) -> None:
-        """Disconnect the TCP connection, releasing split mode first."""
+        """Disconnect the TCP connection."""
         with self._lock:
             if self._state == RigState.DISCONNECTED:
                 return
-        self._cancel_split_independent()
         try:
             if self._sock:
                 self._sock.close()
