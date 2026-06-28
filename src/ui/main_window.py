@@ -4058,6 +4058,20 @@ class MainWindow(QMainWindow):
                     logger.info("closeEvent: split released via rigctld %s:%d", host, port)
 
                 else:
+                    # Direct mode: if the controller for this slot is already
+                    # connected, use its existing handle to avoid opening the
+                    # serial port twice (which corrupts the connection).
+                    slot_ctrl = (
+                        self._rig_controller if key == "rig1_settings" else self._rig2_controller
+                    )
+                    if slot_ctrl is not None and slot_ctrl.is_connected:
+                        with contextlib.suppress(Exception):
+                            slot_ctrl.cancel_split()
+                        logger.info(
+                            "closeEvent: split released via existing Direct connection (%s)", key
+                        )
+                        continue
+                    # Not connected — safe to open a fresh Hamlib handle.
                     try:
                         import Hamlib as _H
                     except ImportError:
@@ -4076,7 +4090,7 @@ class MainWindow(QMainWindow):
                         rig.set_split_vfo(_H.RIG_VFO_CURR, 0, _H.RIG_VFO_B)
                     rig.close()
                     logger.info(
-                        "closeEvent: split released via Hamlib Direct %s (model %d)",
+                        "closeEvent: split released via fresh Hamlib Direct %s (model %d)",
                         serial_port,
                         model_id,
                     )
