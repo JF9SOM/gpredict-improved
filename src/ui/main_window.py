@@ -4015,14 +4015,15 @@ class MainWindow(QMainWindow):
                 (self._filter_combo.currentText(),),
             )
             self._conn.commit()
-        # Signal background threads to exit before tearing down other resources.
-        self._shutdown_flag.set()
-        self._timer.stop()
-        # Release split/satmode on any connected rigs before closing.
+        # Release split/satmode before stopping background threads so the
+        # connection is still alive and lock-free when the command is sent.
         for rig in (self._rig_controller, self._rig2_controller):
             if rig is not None and rig.is_connected:
                 with contextlib.suppress(Exception):
                     rig.disconnect()
+        # Signal background threads to exit after rigs are disconnected.
+        self._shutdown_flag.set()
+        self._timer.stop()
         if self._web_server is not None:
             with contextlib.suppress(Exception):
                 self._web_server.stop()

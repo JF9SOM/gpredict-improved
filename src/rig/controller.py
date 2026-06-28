@@ -1968,13 +1968,35 @@ class HamlibNetController(RigController):
             logger.error("RigNet: connect failed — %s", exc)
             return False
 
+    def _cancel_split_independent(self) -> None:
+        """Send 'S 0 VFOA' via a fresh TCP socket, bypassing _cmd_lock.
+
+        Called from disconnect() so it works even when the Doppler thread
+        still holds _cmd_lock (e.g. during app shutdown).
+        """
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2.0)
+            sock.connect((self._host, self._port))
+            sock.sendall(b"S 0 VFOA\n")
+            buf = b""
+            with contextlib.suppress(OSError):
+                while b"RPRT" not in buf:
+                    chunk = sock.recv(256)
+                    if not chunk:
+                        break
+                    buf += chunk
+            sock.close()
+            logger.info("RigNet: split released (S 0 VFOA)")
+        except Exception as exc:
+            logger.warning("RigNet._cancel_split_independent: %s", exc)
+
     def disconnect(self) -> None:
         """Disconnect the TCP connection, releasing split mode first."""
         with self._lock:
             if self._state == RigState.DISCONNECTED:
                 return
-        with contextlib.suppress(Exception), self._cmd_lock:
-            self._cmd_raw("S 0 VFOA")
+        self._cancel_split_independent()
         try:
             if self._sock:
                 self._sock.close()
