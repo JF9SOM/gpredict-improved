@@ -4007,14 +4007,12 @@ class MainWindow(QMainWindow):
     # Window lifecycle
     # ------------------------------------------------------------------ #
 
-    def _send_simplex_to_configured_rigs(self) -> None:
-        """Read rig settings from DB and send a split-off command directly.
+    def _release_rig_split_on_exit(self) -> None:
+        """Send a split-off / simplex command to each configured rig on app exit.
 
-        This is completely independent of RigController state — it works
-        whether or not the user ever pressed Connect.  For NET mode a fresh
-        TCP socket is opened to rigctld and 'S 0 VFOA' is sent.  For Direct
-        mode a temporary Hamlib rig handle is opened, split is disabled, then
-        the handle is closed.
+        Reads rig settings directly from the DB and sends the command via a
+        brand-new connection, completely independent of RigController state.
+        This runs before background threads are stopped so nothing races.
         """
         import socket as _socket
         import time as _time
@@ -4031,9 +4029,9 @@ class MainWindow(QMainWindow):
                 if not row:
                     continue
                 settings: dict[str, Any] = json.loads(row[0])
-                mode = settings.get("mode", "net")
                 if settings.get("is_sdr"):
                     continue
+                mode = settings.get("mode", "net")
 
                 if mode == "net":
                     host = str(settings.get("host", "localhost"))
@@ -4055,23 +4053,18 @@ class MainWindow(QMainWindow):
                         if b"RPRT" in buf:
                             break
                     sock.close()
-                    logger.info("closeEvent: split released via rigctld %s:%d", host, port)
+                    logger.info("exit: split released via rigctld %s:%d", host, port)
 
                 else:
-                    # Direct mode: if the controller for this slot is already
-                    # connected, use its existing handle to avoid opening the
-                    # serial port twice (which corrupts the connection).
+                    # Direct mode: only attempt when the app has NOT opened the
+                    # serial port (i.e. user never pressed Connect this session).
+                    # If the port is already open via HamlibDirectController,
+                    # opening it again would corrupt the connection.
                     slot_ctrl = (
                         self._rig_controller if key == "rig1_settings" else self._rig2_controller
                     )
                     if slot_ctrl is not None and slot_ctrl.is_connected:
-                        with contextlib.suppress(Exception):
-                            slot_ctrl.cancel_split()
-                        logger.info(
-                            "closeEvent: split released via existing Direct connection (%s)", key
-                        )
-                        continue
-                    # Not connected — safe to open a fresh Hamlib handle.
+                        continue  # port is in use; skip to avoid double-open
                     try:
                         import Hamlib as _H
                     except ImportError:
@@ -4083,19 +4076,19 @@ class MainWindow(QMainWindow):
                     rig.set_conf("rig_pathname", serial_port)
                     rig.set_conf("serial_speed", str(baud_rate))
                     rig.open()
-                    _time.sleep(0.2)
+                    _time.sleep(0.3)
                     with contextlib.suppress(Exception):
                         rig.set_func(_H.RIG_FUNC_SATMODE, 0)
                     with contextlib.suppress(Exception):
                         rig.set_split_vfo(_H.RIG_VFO_CURR, 0, _H.RIG_VFO_B)
                     rig.close()
                     logger.info(
-                        "closeEvent: split released via fresh Hamlib Direct %s (model %d)",
+                        "exit: split released via Hamlib Direct %s model %d",
                         serial_port,
                         model_id,
                     )
             except Exception as exc:
-                logger.warning("closeEvent: could not release split for %s — %s", key, exc)
+                logger.warning("exit: could not release split for %s — %s", key, exc)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Stop the timer, web server, and scheduler when the window is closed."""
@@ -4105,17 +4098,12 @@ class MainWindow(QMainWindow):
                 (self._filter_combo.currentText(),),
             )
             self._conn.commit()
-        # Stop Doppler timer so no new commands race with the simplex command.
-        self._timer.stop()
-        # Send split-off directly from settings, independent of RigController state.
+        # Send simplex command to each configured rig before tearing down.
         with contextlib.suppress(Exception):
-            self._send_simplex_to_configured_rigs()
-        # Signal background threads to exit, then disconnect.
+            self._release_rig_split_on_exit()
+        # Signal background threads to exit before tearing down other resources.
         self._shutdown_flag.set()
-        for rig in (self._rig_controller, self._rig2_controller):
-            if rig is not None and rig.is_connected:
-                with contextlib.suppress(Exception):
-                    rig.disconnect()
+        self._timer.stop()
         if self._web_server is not None:
             with contextlib.suppress(Exception):
                 self._web_server.stop()
