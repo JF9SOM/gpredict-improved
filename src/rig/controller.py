@@ -1740,13 +1740,21 @@ class HamlibDirectController(RigController):
                 self._satmode_active = True
                 logger.info("RigDirect: satmode active (entered via CI-V 16 5A before open)")
             elif self._model_id in _FT991_DIRECT_MODEL_IDS:
-                # FT-991/991A: Hamlib set_split_vfo is unreliable for this
-                # backend.  Use raw CAT ST1; via pyserial (same mechanism as
-                # mode/CTCSS in _apply_mode_and_ctcss_cat_ft991).
-                import serial as _serial
+                # FT-991/991A: Hamlib set_split_vfo is unreliable; use raw CAT
+                # ST1; instead.  We use os.open(O_NOCTTY) rather than pyserial
+                # here because Hamlib already has the serial port open after
+                # rig.open().  Opening via pyserial would call tcsetattr() which
+                # reconfigures termios and can corrupt Hamlib's connection.
+                # os.open(O_NOCTTY|O_NONBLOCK) just obtains a write-only fd
+                # without touching the port settings, matching the FTX-1F
+                # approach used in send_cat_ftx1_raw().
+                import os as _os
 
-                with self._port_lock, _serial.Serial(self._port, self._baud_rate, timeout=1) as ser:
-                    ser.write(b"ST1;")
+                _fd = _os.open(self._port, _os.O_WRONLY | _os.O_NOCTTY | _os.O_NONBLOCK)
+                try:
+                    _os.write(_fd, b"ST1;")
+                finally:
+                    _os.close(_fd)
                 logger.info("RigDirect: split enabled via raw CAT ST1; (FT-991)")
             else:
                 import Hamlib as _H
