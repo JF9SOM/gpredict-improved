@@ -610,12 +610,18 @@ class HamlibDirectController(RigController):
             return False
 
     def disconnect(self) -> None:
-        """Disconnect from the serial port."""
+        """Disconnect from the serial port, releasing split/satmode first."""
         with self._lock:
             if self._state == RigState.DISCONNECTED:
                 return
         try:
             if self._rig is not None:
+                import Hamlib as _H
+
+                with contextlib.suppress(Exception):
+                    if self._satmode and self._satmode_active:
+                        self._rig.set_func(_H.RIG_FUNC_SATMODE, 0)
+                    self._rig.set_split_vfo(_H.RIG_VFO_CURR, 0, _H.RIG_VFO_B)
                 self._rig.close()
         except Exception as exc:
             logger.warning("RigDirect: disconnect error — %s", exc)
@@ -625,6 +631,7 @@ class HamlibDirectController(RigController):
             self._last_dl_hz = None
             self._last_dl_update_time = 0.0
             self._last_ul_hz = None
+            self._satmode_active = False
             with self._lock:
                 self._state = RigState.DISCONNECTED
 
@@ -1962,10 +1969,12 @@ class HamlibNetController(RigController):
             return False
 
     def disconnect(self) -> None:
-        """Disconnect the TCP connection."""
+        """Disconnect the TCP connection, releasing split mode first."""
         with self._lock:
             if self._state == RigState.DISCONNECTED:
                 return
+        with contextlib.suppress(Exception), self._cmd_lock:
+            self._cmd_raw("S 0 VFOA")
         try:
             if self._sock:
                 self._sock.close()
