@@ -62,6 +62,7 @@ from data.tle_manager import TLEManager
 from data.transmitter_manager import TransmitterManager
 from i18n import _
 from rig.controller import (
+    _FT991_DIRECT_MODEL_IDS,
     CTCSS_PRESET_TEMPLATES,
     HamlibDirectController,
     HamlibNetController,
@@ -4056,37 +4057,45 @@ class MainWindow(QMainWindow):
                     logger.info("exit: split released via rigctld %s:%d", host, port)
 
                 else:
-                    # Direct mode: only attempt when the app has NOT opened the
-                    # serial port (i.e. user never pressed Connect this session).
-                    # If the port is already open via HamlibDirectController,
-                    # opening it again would corrupt the connection.
-                    slot_ctrl = (
-                        self._rig_controller if key == "rig1_settings" else self._rig2_controller
-                    )
-                    if slot_ctrl is not None and slot_ctrl.is_connected:
-                        continue  # port is in use; skip to avoid double-open
-                    try:
-                        import Hamlib as _H
-                    except ImportError:
-                        continue
                     model_id = int(settings.get("model_id", 1))
                     serial_port = str(settings.get("port", "/dev/ttyUSB0"))
                     baud_rate = int(settings.get("baud_rate", 9600))
-                    rig = _H.Rig(model_id)
-                    rig.set_conf("rig_pathname", serial_port)
-                    rig.set_conf("serial_speed", str(baud_rate))
-                    rig.open()
-                    _time.sleep(0.3)
-                    with contextlib.suppress(Exception):
-                        rig.set_func(_H.RIG_FUNC_SATMODE, 0)
-                    with contextlib.suppress(Exception):
-                        rig.set_split_vfo(_H.RIG_VFO_CURR, 0, _H.RIG_VFO_B)
-                    rig.close()
-                    logger.info(
-                        "exit: split released via Hamlib Direct %s model %d",
-                        serial_port,
-                        model_id,
+                    slot_ctrl = (
+                        self._rig_controller if key == "rig1_settings" else self._rig2_controller
                     )
+                    if model_id in _FT991_DIRECT_MODEL_IDS:
+                        # FT-991/991A: use raw CAT ST0; via pyserial.
+                        # Works whether or not HamlibDirectController is connected,
+                        # because pyserial opens at the OS level independently.
+                        # Hamlib and pyserial can coexist on the same port for a
+                        # single short write.
+                        import serial as _serial
+
+                        with _serial.Serial(serial_port, baud_rate, timeout=1) as ser:
+                            ser.write(b"ST0;")
+                        logger.info("exit: split released via raw CAT ST0; %s", serial_port)
+                    elif slot_ctrl is not None and slot_ctrl.is_connected:
+                        continue  # port is in use by Hamlib; skip to avoid double-open
+                    else:
+                        try:
+                            import Hamlib as _H
+                        except ImportError:
+                            continue
+                        rig = _H.Rig(model_id)
+                        rig.set_conf("rig_pathname", serial_port)
+                        rig.set_conf("serial_speed", str(baud_rate))
+                        rig.open()
+                        _time.sleep(0.3)
+                        with contextlib.suppress(Exception):
+                            rig.set_func(_H.RIG_FUNC_SATMODE, 0)
+                        with contextlib.suppress(Exception):
+                            rig.set_split_vfo(_H.RIG_VFO_CURR, 0, _H.RIG_VFO_B)
+                        rig.close()
+                        logger.info(
+                            "exit: split released via Hamlib Direct %s model %d",
+                            serial_port,
+                            model_id,
+                        )
             except Exception as exc:
                 logger.warning("exit: could not release split for %s — %s", key, exc)
 

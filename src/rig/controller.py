@@ -1739,11 +1739,25 @@ class HamlibDirectController(RigController):
             if self._satmode:
                 self._satmode_active = True
                 logger.info("RigDirect: satmode active (entered via CI-V 16 5A before open)")
+            elif self._model_id in _FT991_DIRECT_MODEL_IDS:
+                # FT-991/991A: Hamlib set_split_vfo is unreliable for this
+                # backend.  Use raw CAT ST1; via pyserial (same mechanism as
+                # mode/CTCSS in _apply_mode_and_ctcss_cat_ft991).
+                import serial as _serial
+
+                with self._port_lock, _serial.Serial(self._port, self._baud_rate, timeout=1) as ser:
+                    ser.write(b"ST1;")
+                logger.info("RigDirect: split enabled via raw CAT ST1; (FT-991)")
             else:
+                import Hamlib as _H
+
                 rx_vfo = self._vfo_str_to_const("VFOA")
                 tx_vfo = self._vfo_str_to_const("VFOB")
-                self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
-                logger.info("RigDirect: split enabled (RX=VFOA, TX=VFOB)")
+                ret = self._rig.set_split_vfo(rx_vfo, 1, tx_vfo)
+                logger.info("RigDirect: set_split_vfo(VFOA,1,VFOB) ret=%d", ret)
+                if ret != 0:
+                    ret2 = self._rig.set_split_vfo(_H.RIG_VFO_CURR, 1, _H.RIG_VFO_B)
+                    logger.info("RigDirect: set_split_vfo(CURR,1,VFOB) ret=%d", ret2)
         except Exception as exc:
             logger.warning("RigDirect: _init_split failed — %s", exc)
 
