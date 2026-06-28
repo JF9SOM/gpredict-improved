@@ -1467,13 +1467,13 @@ class MainWindow(QMainWindow):
             and getattr(rig1, "is_connected", False)
             and hasattr(tab, "_on_rig_connected")
         ):
-            tab._on_rig_connected()  # type: ignore[union-attr]
+            tab._on_rig_connected()
         if (
             rig2 is not None
             and getattr(rig2, "is_connected", False)
             and hasattr(tab, "_on_rig2_connected")
         ):
-            tab._on_rig2_connected()  # type: ignore[union-attr]
+            tab._on_rig2_connected()
 
     def _on_open_aprs(self) -> None:
         """Open the APRS tab (Communications > APRS).
