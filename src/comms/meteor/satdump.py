@@ -25,14 +25,24 @@ METEOR_PIPELINES: list[dict[str, str | int]] = [
         "pipeline": "meteor_m2-x_lrpt",
         "frequency": 137_900_000,
         "samplerate": 1_200_000,
+        # NORAD ID and transponder keyword for Radio Control sync
+        "norad": 57166,
+        "xpdr_keyword": "LRPT",
+        "xpdr_freq": 137_900_000,
     },
     {
         "label": "METEOR-M N2-4  LRPT  137.1 MHz",
         "pipeline": "meteor_m2-x_lrpt",
         "frequency": 137_100_000,
         "samplerate": 1_200_000,
+        "norad": 59051,
+        "xpdr_keyword": "LRPT",
+        "xpdr_freq": 137_100_000,
     },
 ]
+
+# NORAD IDs of all METEOR satellites (for reverse detection from Radio Control)
+METEOR_NORAD_IDS: frozenset[int] = frozenset({35865, 40069, 44387, 57166, 59051})
 
 
 # ---------------------------------------------------------------------------

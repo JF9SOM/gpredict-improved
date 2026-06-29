@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QSize, QStandardPaths, Qt
+from PySide6.QtCore import QSize, QStandardPaths, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -113,6 +113,10 @@ class _ThumbItem(QListWidgetItem):
 class MeteorTab(QWidget):
     """Non-resident tab opened from Communications > METEOR / HRPT."""
 
+    # Emitted when the user changes the pipeline combo so main_window can
+    # sync the satellite list and Radio Control transponder selection.
+    satellite_selection_requested: Signal = Signal(int, int)  # norad, downlink_hz
+
     def __init__(
         self,
         sdr_control_tab: QWidget | None = None,
@@ -125,6 +129,7 @@ class MeteorTab(QWidget):
         self._process: SatDumpProcess | None = None
         self._watcher: ImageWatcher | None = None
         self._output_dir: Path | None = None
+        self._suppress_sync: bool = False  # prevents feedback loop during Radio Control sync
         self._setup_ui()
         self._check_satdump()
 
@@ -154,6 +159,7 @@ class MeteorTab(QWidget):
         self._combo_sat = QComboBox()
         for p in METEOR_PIPELINES:
             self._combo_sat.addItem(str(p["label"]), p)
+        self._combo_sat.currentIndexChanged.connect(self._on_pipeline_changed)
         row1.addWidget(self._combo_sat, 1)
         ctrl_layout.addLayout(row1)
 
@@ -267,6 +273,38 @@ class MeteorTab(QWidget):
         else:
             self._banner.setVisible(False)
             self._btn_start.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    # Pipeline combo → Radio Control sync
+    # ------------------------------------------------------------------
+
+    def _on_pipeline_changed(self, index: int) -> None:
+        """Emit satellite_selection_requested so main_window can sync Radio Control."""
+        if self._suppress_sync:
+            return
+        p = self._combo_sat.itemData(index)
+        if p:
+            self.satellite_selection_requested.emit(int(p["norad"]), int(p["xpdr_freq"]))
+
+    def select_pipeline_by_norad_and_freq(self, norad: int, downlink_hz: int) -> None:
+        """Select the combo entry matching *norad* and closest *downlink_hz*.
+
+        Called by main_window when Radio Control selects a METEOR transponder so
+        this tab mirrors the selection without triggering a feedback loop.
+        """
+        best_idx = -1
+        best_diff = float("inf")
+        for i in range(self._combo_sat.count()):
+            p = self._combo_sat.itemData(i)
+            if p and int(p["norad"]) == norad:
+                diff = abs(int(p["xpdr_freq"]) - downlink_hz)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_idx = i
+        if best_idx >= 0 and best_idx != self._combo_sat.currentIndex():
+            self._suppress_sync = True
+            self._combo_sat.setCurrentIndex(best_idx)
+            self._suppress_sync = False
 
     # ------------------------------------------------------------------
     # Start / Stop

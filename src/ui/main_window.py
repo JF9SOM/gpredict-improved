@@ -399,6 +399,9 @@ class MainWindow(QMainWindow):
         self._radio_control.sstv_transponder_selected.connect(self._on_open_sstv)
         self._radio_control.aprs_transponder_selected.connect(self._on_open_aprs)
         self._radio_control.ft4_transponder_selected.connect(self._on_open_ft4)
+        self._radio_control.meteor_transponder_selected.connect(
+            self._on_meteor_transponder_selected
+        )
         self._radio_control.cw_mode_requested.connect(self._on_cw_mode_requested)
         self._restore_satellite_filter()
         # Load bundled community transmitters immediately (no network required).
@@ -1568,15 +1571,23 @@ class MainWindow(QMainWindow):
         idx = self._tab_widget.addTab(tab, tab_label)
         self._tab_widget.setCurrentIndex(idx)
 
-    def _on_open_meteor(self) -> None:
-        """Open the METEOR / HRPT tab (Communications > METEOR / HRPT)."""
+    def _on_open_meteor(self, norad: int = 0, downlink_hz: int = 0) -> None:
+        """Open the METEOR / HRPT tab (Communications > METEOR / HRPT).
+
+        If *norad* and *downlink_hz* are provided the tab's pipeline combo is
+        synced to the matching entry (called from Radio Control auto-open).
+        """
+        from ui.meteor_tab import MeteorTab
+
         tab_label = _("METEOR / HRPT")
         for i in range(self._tab_widget.count()):
             if self._tab_widget.tabText(i) == tab_label:
                 self._tab_widget.setCurrentIndex(i)
+                # Sync pipeline combo if called with a specific transponder
+                w = self._tab_widget.widget(i)
+                if norad and isinstance(w, MeteorTab):
+                    w.select_pipeline_by_norad_and_freq(norad, downlink_hz)
                 return
-
-        from ui.meteor_tab import MeteorTab
 
         # Pass the SDR Control tab widget so MeteorTab can grey it out
         sdr_control_tab = self._tab_widget.widget(self._sdr_control_tab_idx)
@@ -1585,8 +1596,20 @@ class MainWindow(QMainWindow):
             sdr_widget=self._sdr_control,
             parent=self,
         )
+        # Connect MeteorTab → Radio Control / satellite list sync
+        tab.satellite_selection_requested.connect(self._on_meteor_satellite_requested)
         idx = self._tab_widget.addTab(tab, tab_label)
         self._tab_widget.setCurrentIndex(idx)
+        if norad:
+            tab.select_pipeline_by_norad_and_freq(norad, downlink_hz)
+
+    def _on_meteor_transponder_selected(self, norad: int, downlink_hz: int) -> None:
+        """Radio Control selected a METEOR LRPT/HRPT transponder — open/sync METEOR tab."""
+        self._on_open_meteor(norad=norad, downlink_hz=downlink_hz)
+
+    def _on_meteor_satellite_requested(self, norad: int, downlink_hz: int) -> None:  # noqa: ARG002
+        """METEOR tab pipeline combo changed — sync satellite list and Radio Control."""
+        self._select_satellite_by_norad(norad)
 
     def _on_satdump_help(self) -> None:
         """Open the Help > SatDump… dialog."""

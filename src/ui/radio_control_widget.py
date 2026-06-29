@@ -68,6 +68,7 @@ class RadioControlWidget(QWidget):
     sstv_transponder_selected: Signal = Signal()
     aprs_transponder_selected: Signal = Signal()
     ft4_transponder_selected: Signal = Signal()
+    meteor_transponder_selected: Signal = Signal(int, int)  # norad, downlink_hz
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -516,6 +517,14 @@ class RadioControlWidget(QWidget):
             self._pending_comms_tab = "ft4"
         else:
             self._pending_comms_tab = None
+
+        # METEOR LRPT/HRPT: emit immediately (no rig connection required)
+        from comms.meteor.satdump import METEOR_NORAD_IDS
+
+        norad = xpdr.get("norad_cat_id") or 0
+        if norad in METEOR_NORAD_IDS and (mode == "LRPT" or mode == "HRPT"):
+            dl_hz = xpdr.get("downlink_low") or 0
+            self.meteor_transponder_selected.emit(int(norad), int(dl_hz))
 
     def _update_rig1_status(self) -> None:
         """Refresh the Rig 1 status row and button label."""
