@@ -75,10 +75,9 @@ def _default_output_dir() -> Path:
 def _load_sdr_settings() -> dict[str, Any]:
     """Load SDR settings saved by Rig Settings dialog from app_settings DB."""
     try:
-        from PySide6.QtCore import QStandardPaths
+        from data.database import get_db_path
 
-        data_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
-        db_path = Path(data_dir) / "fbsat59.db"
+        db_path = get_db_path()
         if not db_path.exists():
             return {}
         conn = sqlite3.connect(str(db_path))
