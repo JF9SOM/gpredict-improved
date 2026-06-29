@@ -577,6 +577,8 @@ class MainWindow(QMainWindow):
             comm_menu.addAction(_("SSTV / SSDV"), self._on_open_sstv)
             comm_menu.addAction(_("FT4"), self._on_open_ft4)
             comm_menu.addAction(_("Q65"), self._on_open_q65)
+            comm_menu.addSeparator()
+            comm_menu.addAction(_("METEOR / HRPT"), self._on_open_meteor)
 
         # Autotrack / Record
         # macOS Cocoa ignores QMenuBar.addAction() — wrap in a single-item menu.
@@ -625,6 +627,7 @@ class MainWindow(QMainWindow):
             help_menu.addAction(_("ft8lib Installation…"), self._on_ft8lib_help)
             help_menu.addAction(_("Q65 Library Installation…"), self._on_q65lib_help)
             help_menu.addAction(_("Direwolf Installation…"), self._on_direwolf_help)
+            help_menu.addAction(_("SatDump…"), self._on_satdump_help)
             help_menu.addAction(_("gr-satellites Installation…"), self._on_gr_satellites_help)
             help_menu.addSeparator()
             help_menu.addAction(_("About"), self._on_about)
@@ -1564,6 +1567,33 @@ class MainWindow(QMainWindow):
         tab = Q65Tab(self._conn, self._radio_control, parent=self)
         idx = self._tab_widget.addTab(tab, tab_label)
         self._tab_widget.setCurrentIndex(idx)
+
+    def _on_open_meteor(self) -> None:
+        """Open the METEOR / HRPT tab (Communications > METEOR / HRPT)."""
+        tab_label = _("METEOR / HRPT")
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == tab_label:
+                self._tab_widget.setCurrentIndex(i)
+                return
+
+        from ui.meteor_tab import MeteorTab
+
+        # Pass the SDR Control tab widget so MeteorTab can grey it out
+        sdr_control_tab = self._tab_widget.widget(self._sdr_control_tab_idx)
+        tab = MeteorTab(
+            sdr_control_tab=sdr_control_tab,
+            sdr_widget=self._sdr_control,
+            parent=self,
+        )
+        idx = self._tab_widget.addTab(tab, tab_label)
+        self._tab_widget.setCurrentIndex(idx)
+
+    def _on_satdump_help(self) -> None:
+        """Open the Help > SatDump… dialog."""
+        from ui.satdump_dialog import SatDumpDialog
+
+        dlg = SatDumpDialog(self)
+        dlg.exec()
 
     def _update_world_map(self) -> None:
         """Fetch satellite subpoints for visible satellites and update the world map.

@@ -1,0 +1,154 @@
+"""Help > SatDump… dialog.
+
+Shows the current SatDump installation status and provides a link to the
+official download page.  No automatic bundling — users install SatDump
+themselves.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QGroupBox,
+    QLabel,
+    QPushButton,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
+
+from comms.meteor.satdump import find_satdump
+from i18n import _
+
+_DOWNLOAD_URL = "https://github.com/SatDump/SatDump/releases/latest"
+
+
+def _get_satdump_version(path: object) -> str:
+    """Run ``satdump --version`` and return the version string."""
+    from pathlib import Path
+
+    if not isinstance(path, Path):
+        return _("Unknown version")
+    try:
+        result = subprocess.run(
+            [str(path), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        output = (result.stdout + result.stderr).strip()
+        for line in output.splitlines():
+            if line.strip():
+                return line.strip()[:80]
+        return _("Unknown version")
+    except Exception:
+        return _("Unknown version")
+
+
+class SatDumpDialog(QDialog):
+    """Help > SatDump… dialog."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(_("SatDump"))
+        self.setMinimumWidth(500)
+        self._setup_ui()
+        self._refresh_status()
+
+    def _setup_ui(self) -> None:
+        root = QVBoxLayout(self)
+
+        # Status group
+        status_box = QGroupBox(_("Current Status"))
+        sl = QVBoxLayout(status_box)
+        self._lbl_status = QLabel(_("Checking…"))
+        self._lbl_status.setWordWrap(True)
+        self._lbl_path = QLabel()
+        self._lbl_path.setWordWrap(True)
+        self._lbl_version = QLabel()
+        self._lbl_version.setWordWrap(True)
+        sl.addWidget(self._lbl_status)
+        sl.addWidget(self._lbl_path)
+        sl.addWidget(self._lbl_version)
+        root.addWidget(status_box)
+
+        # Installation guidance
+        guide_box = QGroupBox(_("Installation"))
+        gl = QVBoxLayout(guide_box)
+
+        self._guide_text = QTextBrowser()
+        self._guide_text.setOpenExternalLinks(False)
+        self._guide_text.setFixedHeight(160)
+        gl.addWidget(self._guide_text)
+
+        self._btn_open = QPushButton(_("Open Download Page"))
+        self._btn_open.clicked.connect(self._on_open_download)
+        gl.addWidget(self._btn_open)
+        root.addWidget(guide_box)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+    def _refresh_status(self) -> None:
+        path = find_satdump()
+        if path is None:
+            self._lbl_status.setText(
+                "<b style='color:#e74c3c'>&#x2718; " + _("SatDump not found") + "</b>"
+            )
+            self._lbl_path.setText("")
+            self._lbl_version.setText("")
+        else:
+            version = _get_satdump_version(path)
+            self._lbl_status.setText(
+                "<b style='color:#27ae60'>&#x2714; " + _("SatDump found") + "</b>"
+            )
+            self._lbl_path.setText(_("Path: ") + str(path))
+            self._lbl_version.setText(_("Version: ") + version)
+
+        self._populate_guide()
+
+    def _populate_guide(self) -> None:
+        if sys.platform == "linux":
+            html = (
+                "<b>Ubuntu / Debian</b><br>"
+                "<code>sudo apt install satdump</code>"
+                "&nbsp;&nbsp;(if available in your repo)<br><br>"
+                "<b>AppImage (recommended)</b><br>"
+                "Download the <code>.AppImage</code> from the releases page, "
+                "make it executable, and place it anywhere on your PATH "
+                "(e.g. <code>~/bin/satdump</code>).<br><br>"
+                f"<a href='{_DOWNLOAD_URL}'>{_DOWNLOAD_URL}</a>"
+            )
+        elif sys.platform == "win32":
+            html = (
+                "Download the Windows installer (<code>.exe</code>) from:<br>"
+                f"<a href='{_DOWNLOAD_URL}'>{_DOWNLOAD_URL}</a><br><br>"
+                "After installation, make sure <code>satdump.exe</code> "
+                "is on your system PATH, or place it in:<br>"
+                "<code>%APPDATA%\\fbsat59\\satdump\\satdump.exe</code>"
+            )
+        elif sys.platform == "darwin":
+            html = (
+                "<b>macOS (Homebrew)</b><br>"
+                "<code>brew install satdump</code><br><br>"
+                "Or download the <code>.dmg</code> from:<br>"
+                f"<a href='{_DOWNLOAD_URL}'>{_DOWNLOAD_URL}</a>"
+            )
+        else:
+            html = (
+                "Please install SatDump from your distribution's package manager "
+                "or download it from:<br>"
+                f"<a href='{_DOWNLOAD_URL}'>{_DOWNLOAD_URL}</a>"
+            )
+
+        self._guide_text.setHtml(html)
+
+    def _on_open_download(self) -> None:
+        QDesktopServices.openUrl(QUrl(_DOWNLOAD_URL))
