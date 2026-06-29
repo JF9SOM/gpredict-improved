@@ -138,10 +138,13 @@ class MeteorTab(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
+        from PySide6.QtWidgets import QScrollArea
+
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(4)
 
-        # --- Warning banner (shown when SatDump is not found) ---
+        # --- Warning banner (fixed at top, hidden when SatDump is found) ---
         self._banner = QLabel()
         self._banner.setWordWrap(True)
         self._banner.setStyleSheet(
@@ -150,9 +153,10 @@ class MeteorTab(QWidget):
         self._banner.setVisible(False)
         root.addWidget(self._banner)
 
-        # --- Control row ---
+        # --- Control row (fixed height) ---
         ctrl_box = QGroupBox(_("Reception Control"))
         ctrl_layout = QVBoxLayout(ctrl_box)
+        ctrl_layout.setSpacing(3)
 
         row1 = QHBoxLayout()
         row1.addWidget(QLabel(_("Satellite / Pipeline:")))
@@ -169,7 +173,6 @@ class MeteorTab(QWidget):
         for src in _list_soapy_sources():
             self._combo_source.addItem(src)
         row2.addWidget(self._combo_source, 1)
-
         row2.addWidget(QLabel(_("Gain (dB):")))
         self._combo_gain = QComboBox()
         for g in [20, 30, 40, 48, 50]:
@@ -188,49 +191,50 @@ class MeteorTab(QWidget):
         self._btn_stop.clicked.connect(self._on_stop)
         self._lbl_lock = QLabel(_("Lock: —"))
         self._lbl_lock.setMinimumWidth(80)
-        btn_row.addWidget(self._btn_start)
-        btn_row.addWidget(self._btn_stop)
-        btn_row.addWidget(self._lbl_lock)
-        btn_row.addStretch()
-        ctrl_layout.addLayout(btn_row)
-
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setVisible(False)
-        ctrl_layout.addWidget(self._progress)
-
-        self._lbl_status = QLabel(_("Ready.  Select a satellite and press Start."))
-        ctrl_layout.addWidget(self._lbl_status)
+        self._progress.setMaximumWidth(180)
+        self._lbl_status = QLabel(_("Ready."))
+        btn_row.addWidget(self._btn_start)
+        btn_row.addWidget(self._btn_stop)
+        btn_row.addWidget(self._lbl_lock)
+        btn_row.addWidget(self._progress)
+        btn_row.addWidget(self._lbl_status, 1)
+        ctrl_layout.addLayout(btn_row)
 
         root.addWidget(ctrl_box)
 
-        # --- Main splitter: image area + history ---
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # --- Vertical splitter: image area (large) / log (small, scrollable) ---
+        v_split = QSplitter(Qt.Orientation.Vertical)
+        v_split.setChildrenCollapsible(False)
 
-        # Image display
+        # Upper pane: horizontal splitter — main image | thumbnail history
+        h_split = QSplitter(Qt.Orientation.Horizontal)
+
         image_widget = QWidget()
         image_layout = QVBoxLayout(image_widget)
         image_layout.setContentsMargins(0, 0, 0, 0)
+        image_layout.setSpacing(3)
         self._image_label = QLabel(_("No image received yet."))
         self._image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._image_label.setMinimumSize(400, 240)
+        self._image_label.setMinimumSize(300, 180)
         self._image_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._image_label.setStyleSheet("border: 1px solid #555; background: #111;")
         image_layout.addWidget(self._image_label, 1)
 
-        open_row = QHBoxLayout()
-        self._btn_open_folder = QPushButton(_("📁 Open Output Folder"))
+        btn_row2 = QHBoxLayout()
+        self._btn_open_folder = QPushButton(_("📁 Open Folder"))
         self._btn_open_folder.clicked.connect(self._on_open_folder)
-        self._btn_clear = QPushButton(_("🗑 Clear History"))
+        self._btn_clear = QPushButton(_("🗑 Clear"))
         self._btn_clear.clicked.connect(self._on_clear_history)
-        open_row.addWidget(self._btn_open_folder)
-        open_row.addWidget(self._btn_clear)
-        open_row.addStretch()
-        image_layout.addLayout(open_row)
-        splitter.addWidget(image_widget)
+        btn_row2.addWidget(self._btn_open_folder)
+        btn_row2.addWidget(self._btn_clear)
+        btn_row2.addStretch()
+        image_layout.addLayout(btn_row2)
+        h_split.addWidget(image_widget)
 
-        # History thumbnails
         history_widget = QWidget()
         hl = QVBoxLayout(history_widget)
         hl.setContentsMargins(0, 0, 0, 0)
@@ -240,21 +244,34 @@ class MeteorTab(QWidget):
         self._history_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self._history_list.currentItemChanged.connect(self._on_history_selection)
         hl.addWidget(self._history_list)
-        splitter.addWidget(history_widget)
+        h_split.addWidget(history_widget)
 
-        splitter.setSizes([600, 200])
-        root.addWidget(splitter, 1)
+        h_split.setSizes([600, 180])
+        v_split.addWidget(h_split)
 
-        # --- Log output ---
+        # Lower pane: SatDump log in a scroll area (can be squished small)
         log_box = QGroupBox(_("SatDump Log"))
         ll = QVBoxLayout(log_box)
+        ll.setContentsMargins(4, 4, 4, 4)
         self._log_view = QPlainTextEdit()
         self._log_view.setReadOnly(True)
         self._log_view.setMaximumBlockCount(500)
-        self._log_view.setFixedHeight(100)
+        self._log_view.setMinimumHeight(60)
         self._log_view.setStyleSheet("font-family: monospace; font-size: 10px;")
         ll.addWidget(self._log_view)
-        root.addWidget(log_box)
+
+        log_scroll = QScrollArea()
+        log_scroll.setWidgetResizable(True)
+        log_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        log_scroll.setWidget(log_box)
+        log_scroll.setMinimumHeight(80)
+        v_split.addWidget(log_scroll)
+
+        # Image area gets 4× the space of the log pane initially
+        v_split.setStretchFactor(0, 4)
+        v_split.setStretchFactor(1, 1)
+
+        root.addWidget(v_split, 1)
 
     # ------------------------------------------------------------------
     # SatDump availability check
