@@ -43,8 +43,31 @@ satellite tracker by Alexandru Csete OZ9AEC — built on a modern Python stack.
 - **Upcoming Passes** — target or group search, calendar picker, CSV export
 - **Radio Control** — Doppler correction, mode/CTCSS auto-set, transponder list; **CW toggle button** (one-click CW-U/CW-L on USB/LSB transponders, reverts to original mode with a second click); **frequency preset** (DL/UL written to rig at transponder selection so frequencies are correct before pressing Connect)
 - **SDR Control** — real-time spectrum analyser, NFM/USB/LSB/CW demodulation, IQ recorder, passband tuning with transponder lock
-- **Autotrack/Record** — automatic sequential satellite tracking with scheduled timer (start/stop time), auto rig+rotator connect at AOS / disconnect at LOS, and automatic SDR audio/IQ recording between AOS and LOS
+- **Autotrack/Record** — automatic sequential satellite tracking with scheduled timer (start/stop time), auto rig+rotator connect at AOS / disconnect at LOS, automatic SDR audio/IQ recording between AOS and LOS, and **METEOR / HRPT auto-reception** (starts SatDump at AOS, stops at LOS)
+  - Satellite picker with live text-search filter (type to narrow down the full satellite list)
 - **AOS/LOS desktop notifications** (Linux: notify-send / macOS: osascript / Windows: PowerShell)
+
+### METEOR / HRPT Weather Satellite Reception
+Access via the **METEOR / HRPT** tab (opened from Radio Control when a matching transponder is selected, or manually from the menu).
+
+Receives weather satellite imagery via [SatDump](https://github.com/SatDump/SatDump) running as a subprocess.
+
+| Satellite | Mode | Frequency | SDR required |
+|---|---|---|---|
+| METEOR-M N2-3 | LRPT | 137.9 MHz | RTL-SDR / HackRF |
+| METEOR-M N2-4 | LRPT | 137.1 MHz | RTL-SDR / HackRF |
+| METEOR-M N2-3 | HRPT | 1700.0 MHz | HackRF + dish + LNA |
+| METEOR-M N2-4 | HRPT | 1700.0 MHz | HackRF + dish + LNA |
+| NOAA 18 | HRPT | 1707.0 MHz | HackRF + dish + LNA |
+| NOAA 19 | HRPT | 1698.0 MHz | HackRF + dish + LNA |
+| Metop-B | HRPT | 1701.3 MHz | HackRF + dish + LNA |
+| Metop-C | HRPT | 1701.3 MHz | HackRF + dish + LNA |
+
+- **[SDR Connect]** reads your SDR settings from Rig Settings and connects automatically
+- **[📋 Log]** opens a floating log window showing SatDump stdout/stderr
+- **Autotrack integration** — enable "METEOR / HRPT Reception" in the Autotrack/Record dialog to start SatDump automatically at AOS and stop at LOS
+  - The **satellite** in your Autotrack list must match the satellite you want to receive (determines AOS/LOS timing)
+  - The transponder choice does not affect SatDump reception (SatDump uses its own fixed frequency)
 
 ### Communications (Digital Modes)
 Access via the **Communications** menu (between Radio and Autotrack/Record). Each mode opens as a closeable non-resident tab.
@@ -339,7 +362,7 @@ SoapySDR is incompatible with WinUSB on Windows; RTL-SDR and HackRF bypass it vi
 ### Phase 2 — Planned
 
 #### Digital Modes — Amateur Satellites (SDR)
-- **HRPT / LRPT** — weather satellite image reception via SatDump
+- ~~**HRPT / LRPT**~~ — **implemented** (METEOR-M / NOAA 18-19 / Metop-B/C via SatDump, with Autotrack integration)
 - **CW decode** — AI-based decoder (ML inference, no zero-crossing artefacts)
 - **gr-satellites deep integration** — 100+ satellite telemetry formats via gr-satellites subprocess
 

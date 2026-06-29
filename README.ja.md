@@ -43,8 +43,31 @@ FBSAT59 は、長年アマチュア無線家に愛用されてきた
 - **アップカミングパス** — 対象衛星またはグループで検索、カレンダー選択、CSV出力
 - **ラジオコントロール** — ドップラー補正、モード/CTCSS自動設定、トランスポンダーリスト；**CWトグルボタン**（USB/LSBトランスポンダー選択時にワンクリックでCW-U/CW-Lに切り替え、もう一度押すと元のモードに復帰）；**周波数プリセット**（トランスポンダー選択時にDL/UL周波数をリグに書き込み、Connect前から正しい周波数がセット済みになる）
 - **SDRコントロール** — リアルタイムスペクトラムアナライザー、NFM/USB/LSB/CW復調、IQ録音、トランスポンダーロック付きパスバンドチューニング
-- **Autotrack/Record** — 衛星を順次自動追尾。タイマーで開始・停止時刻を設定可能。AOS時にリグ・ローテーターを自動接続、LOS時に自動切断。SDR Audio/IQ録音をAOS〜LOS間で自動制御
+- **Autotrack/Record** — 衛星を順次自動追尾。タイマーで開始・停止時刻を設定可能。AOS時にリグ・ローテーターを自動接続、LOS時に自動切断。SDR Audio/IQ録音をAOS〜LOS間で自動制御。**METEOR / HRPT Reception** を有効にするとAOS時にSatDumpを自動起動、LOSで自動停止
+  - 衛星追加ダイアログに文字検索欄を実装 — 衛星名またはNORAD IDで絞り込み可能
 - **AOS/LOSデスクトップ通知**（Linux: notify-send / macOS: osascript / Windows: PowerShell）
+
+### METEOR / HRPT 気象衛星画像受信
+Radio Control でLRPT/HRPTトランスポンダーを選択すると自動オープン（またはメニューから手動で開くことも可能）。
+
+[SatDump](https://github.com/SatDump/SatDump) をサブプロセスとして起動し、気象衛星の画像を受信します。
+
+| 衛星 | モード | 周波数 | 必要なSDR |
+|---|---|---|---|
+| METEOR-M N2-3 | LRPT | 137.9 MHz | RTL-SDR / HackRF |
+| METEOR-M N2-4 | LRPT | 137.1 MHz | RTL-SDR / HackRF |
+| METEOR-M N2-3 | HRPT | 1700.0 MHz | HackRF + パラボラ + LNA |
+| METEOR-M N2-4 | HRPT | 1700.0 MHz | HackRF + パラボラ + LNA |
+| NOAA 18 | HRPT | 1707.0 MHz | HackRF + パラボラ + LNA |
+| NOAA 19 | HRPT | 1698.0 MHz | HackRF + パラボラ + LNA |
+| Metop-B | HRPT | 1701.3 MHz | HackRF + パラボラ + LNA |
+| Metop-C | HRPT | 1701.3 MHz | HackRF + パラボラ + LNA |
+
+- **[SDR Connect]** — Rig Settings の SDR 設定を読み込んで自動接続
+- **[📋 Log]** — SatDump の stdout/stderr を表示する浮動ログウィンドウを開く
+- **Autotrack 連携** — Autotrack/Record ダイアログの「METEOR / HRPT Reception」チェックを ON にすると、AOS 時に SatDump を自動起動、LOS で自動停止
+  - Autotrack リストに登録する**衛星は受信対象と一致させること**（AOS/LOS 計算の基準になる）
+  - トランスポンダーの選択は SatDump の受信には影響しない（SatDump は固定周波数を使用）
 
 ### Communications（デジタル通信）
 メニューバーの **Communications**（Radio と Autotrack/Record の間）からアクセス。各機能は × で閉じられる非常駐タブとして開きます。
@@ -312,7 +335,7 @@ Windows の SoapySDR は WinUSB との根本的な非互換性があるため、
 ## 今後の予定（フェーズ2）
 
 ### デジタルモード — アマチュア衛星（SDR）
-- **HRPT / LRPT** — SatDump連携による気象衛星画像受信
+- ~~**HRPT / LRPT**~~ — **実装済み**（METEOR-M / NOAA 18-19 / Metop-B/C、SatDump経由、Autotrack連携）
 - **CW解析** — AIベースのデコーダー（機械学習推論）
 - **gr-satellites 深度統合** — gr-satellites サブプロセス経由で100機種以上のテレメトリーフォーマットに対応
 
