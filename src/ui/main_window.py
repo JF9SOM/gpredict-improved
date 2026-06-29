@@ -1621,7 +1621,7 @@ class MainWindow(QMainWindow):
         # to downlink_hz so Radio Control mirrors the METEOR tab selection even when
         # the satellite was already selected (currentRowChanged does not fire then).
         self._refresh_radio_control(norad)
-        transmitters = self._radio_control._transmitters  # type: ignore[attr-defined]
+        transmitters = self._radio_control._transmitters
         if not transmitters:
             return
         best_idx = 0

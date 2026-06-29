@@ -71,7 +71,7 @@ def _list_soapy_sources() -> list[str]:
     """Return a list of SoapySDR driver strings available on this system."""
     sources: list[str] = []
     try:
-        import SoapySDR  # type: ignore[import-untyped]
+        import SoapySDR
 
         for dev in SoapySDR.Device.enumerate():
             driver = dev.get("driver", "")
@@ -495,7 +495,7 @@ class MeteorTab(QWidget):
     # Cleanup on tab close
     # ------------------------------------------------------------------
 
-    def closeEvent(self, event: Any) -> None:  # type: ignore[override]
+    def closeEvent(self, event: Any) -> None:
         self._on_stop()
         self._reenable_sdr_tab()
         super().closeEvent(event)
