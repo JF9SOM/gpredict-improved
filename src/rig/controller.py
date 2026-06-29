@@ -1549,7 +1549,7 @@ class HamlibDirectController(RigController):
             if self._rig is not None:
                 return  # Doppler loop is running; let it handle frequencies
             try:
-                if self._model_id in _FT991_DIRECT_MODEL_IDS:
+                if self._model_id in _FTX1_MODEL_IDS:
                     import serial as _serial
 
                     with _serial.Serial(self._port, self._baud_rate, timeout=1) as ser:
@@ -1557,7 +1557,16 @@ class HamlibDirectController(RigController):
                         time.sleep(0.05)
                         ser.write(f"FB{int(ul_hz):09d};".encode())
                         time.sleep(0.05)
-                        ser.write(b"FT3;")  # VFO-B TX = split ON
+                        ser.write(b"FT1;")  # VFO-B TX = split ON (FTX-1F)
+                elif self._model_id in _FT991_DIRECT_MODEL_IDS:
+                    import serial as _serial
+
+                    with _serial.Serial(self._port, self._baud_rate, timeout=1) as ser:
+                        ser.write(f"FA{int(dl_hz):09d};".encode())
+                        time.sleep(0.05)
+                        ser.write(f"FB{int(ul_hz):09d};".encode())
+                        time.sleep(0.05)
+                        ser.write(b"FT3;")  # VFO-B TX = split ON (FT-991)
                 else:
                     import Hamlib as _H
 
@@ -1767,6 +1776,19 @@ class HamlibDirectController(RigController):
             if self._satmode:
                 self._satmode_active = True
                 logger.info("RigDirect: satmode active (entered via CI-V 16 5A before open)")
+            elif self._model_id in _FTX1_MODEL_IDS:
+                # FTX-1F: Hamlib set_split_vfo returns None and does not
+                # reliably set VFO-B as TX.  Use raw CAT instead:
+                #   FT0; = VFO-A TX (Main TX — used on app exit)
+                #   FT1; = VFO-B TX (Sub TX — split ON)
+                import os as _os
+
+                _fd = _os.open(self._port, _os.O_WRONLY | _os.O_NOCTTY | _os.O_NONBLOCK)
+                try:
+                    _os.write(_fd, b"FT1;")
+                finally:
+                    _os.close(_fd)
+                logger.info("RigDirect: split enabled via raw CAT FT1; (FTX-1)")
             elif self._model_id in _FT991_DIRECT_MODEL_IDS:
                 # FT-991/991A: Hamlib set_split_vfo is unreliable.
                 # The FT-991A does not implement the ST command (?; response).

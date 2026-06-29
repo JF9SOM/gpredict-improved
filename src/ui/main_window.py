@@ -63,6 +63,7 @@ from data.transmitter_manager import TransmitterManager
 from i18n import _
 from rig.controller import (
     _FT991_DIRECT_MODEL_IDS,
+    _FTX1_MODEL_IDS,
     CTCSS_PRESET_TEMPLATES,
     HamlibDirectController,
     HamlibNetController,
@@ -4063,7 +4064,15 @@ class MainWindow(QMainWindow):
                     slot_ctrl = (
                         self._rig_controller if key == "rig1_settings" else self._rig2_controller
                     )
-                    if model_id in _FT991_DIRECT_MODEL_IDS:
+                    if model_id in _FTX1_MODEL_IDS:
+                        # FTX-1F: restore VFO-A (Main) as TX via raw CAT FT0;
+                        # FT0; = VFO-A TX, FT1; = VFO-B TX (FTX-1F convention).
+                        import serial as _serial
+
+                        with _serial.Serial(serial_port, baud_rate, timeout=1) as ser:
+                            ser.write(b"FT0;")
+                        logger.info("exit: TX restored to Main via raw CAT FT0; %s", serial_port)
+                    elif model_id in _FT991_DIRECT_MODEL_IDS:
                         # FT-991/991A/991AM: use raw CAT FT2; (VFO-A TX = split OFF).
                         # ST command is not supported on FT-991A (?; response).
                         # pyserial opens independently of Hamlib, safe to call
