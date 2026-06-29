@@ -86,7 +86,7 @@ def _load_sdr_settings() -> dict[str, Any]:
         row = conn.execute("SELECT value FROM app_settings WHERE key = 'sdr_settings'").fetchone()
         conn.close()
         if row and row["value"]:
-            return json.loads(row["value"])
+            return dict(json.loads(row["value"]))
     except Exception:
         pass
     return {}
