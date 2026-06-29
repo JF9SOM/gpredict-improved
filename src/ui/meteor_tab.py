@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -243,6 +244,12 @@ class MeteorTab(QWidget):
         self._btn_log.setToolTip(_("Show SatDump output log"))
         self._btn_log.clicked.connect(self._on_show_log)
         row1.addWidget(self._btn_log)
+
+        btn_help = QPushButton("?")
+        btn_help.setFixedSize(22, 22)
+        btn_help.setToolTip(_("About SatDump installation"))
+        btn_help.clicked.connect(self._on_help)
+        row1.addWidget(btn_help)
 
         ctrl_layout.addLayout(row1)
 
@@ -464,6 +471,17 @@ class MeteorTab(QWidget):
             self._log_window.activateWindow()
         else:
             self._log_window.show()
+
+    def _on_help(self) -> None:
+        QMessageBox.information(
+            self,
+            _("SatDump Required"),
+            _(
+                "To receive satellite images in this tab, SatDump must be installed.\n\n"
+                "Please refer to Help → SatDump… in the menu bar for\n"
+                "installation instructions."
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Process signal handlers
