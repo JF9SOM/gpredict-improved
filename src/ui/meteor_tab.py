@@ -8,7 +8,7 @@ Lifecycle
 ---------
 * User opens the tab via Communications > METEOR / HRPT.
 * User selects a satellite / pipeline from the combo box.
-* User selects the SoapySDR source string (e.g. ``rtlsdr``).
+* User clicks [SDR Connect] to verify the configured SDR is reachable.
 * User clicks [▶ Start]:
     - If an SDR is active, it is disconnected automatically.
     - The SDR Control tab is disabled.
@@ -22,17 +22,20 @@ Lifecycle
 
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QSize, QStandardPaths, Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -61,28 +64,81 @@ _THUMB_H = 100
 
 
 def _default_output_dir() -> Path:
+    from PySide6.QtCore import QStandardPaths
+
     pics = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.PicturesLocation)
     base = Path(pics) if pics else Path.home() / "Pictures"
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     return base / "fbsat59_meteor" / ts
 
 
-def _list_soapy_sources() -> list[str]:
-    """Return a list of SoapySDR driver strings available on this system."""
-    sources: list[str] = []
+def _load_sdr_settings() -> dict[str, Any]:
+    """Load SDR settings saved by Rig Settings dialog from app_settings DB."""
     try:
-        import SoapySDR
+        from PySide6.QtCore import QStandardPaths
 
-        for dev in SoapySDR.Device.enumerate():
-            driver = dev.get("driver", "")
-            if driver and driver not in sources:
-                sources.append(driver)
+        data_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+        db_path = Path(data_dir) / "fbsat59.db"
+        if not db_path.exists():
+            return {}
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT value FROM app_settings WHERE key = 'sdr_settings'").fetchone()
+        conn.close()
+        if row and row["value"]:
+            return json.loads(row["value"])
     except Exception:
         pass
-    # Fallback common drivers if SoapySDR not available or no devices found
-    if not sources:
-        sources = ["rtlsdr", "hackrf", "airspy"]
-    return sources
+    return {}
+
+
+def _sdr_source_from_settings(sdr: dict[str, Any]) -> str:
+    """Extract a SoapySDR source driver string from saved SDR settings."""
+    args: dict[str, str] = sdr.get("device_args") or {}
+    driver = args.get("driver", "")
+    if driver:
+        return driver
+    label: str = sdr.get("device_label") or ""
+    for token in label.lower().split():
+        if token in ("rtlsdr", "hackrf", "airspy", "sdrplay", "plutosdr", "limesdr"):
+            return token
+    return "rtlsdr"
+
+
+# ---------------------------------------------------------------------------
+# Floating log window
+# ---------------------------------------------------------------------------
+
+
+class _LogWindow(QDialog):
+    """Modeless floating window that shows SatDump stdout/stderr."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent, Qt.WindowType.Window)
+        self.setWindowTitle(_("SatDump Log"))
+        self.resize(640, 320)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        self._view = QPlainTextEdit()
+        self._view.setReadOnly(True)
+        self._view.setMaximumBlockCount(2000)
+        self._view.setStyleSheet("font-family: monospace; font-size: 10px;")
+        layout.addWidget(self._view)
+        btn_row = QHBoxLayout()
+        btn_clear = QPushButton(_("Clear"))
+        btn_clear.clicked.connect(self._view.clear)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_clear)
+        layout.addLayout(btn_row)
+
+    def append(self, line: str) -> None:
+        self._view.appendPlainText(line)
+        self._view.ensureCursorVisible()
+
+    def closeEvent(self, event: Any) -> None:  # noqa: N802
+        # Hide rather than destroy so log content is preserved
+        event.ignore()
+        self.hide()
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +186,7 @@ class MeteorTab(QWidget):
         self._watcher: ImageWatcher | None = None
         self._output_dir: Path | None = None
         self._suppress_sync: bool = False  # prevents feedback loop during Radio Control sync
+        self._log_window: _LogWindow | None = None
         self._setup_ui()
         self._check_satdump()
 
@@ -138,8 +195,6 @@ class MeteorTab(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        from PySide6.QtWidgets import QScrollArea
-
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(4)
@@ -153,64 +208,64 @@ class MeteorTab(QWidget):
         self._banner.setVisible(False)
         root.addWidget(self._banner)
 
-        # --- Control row (fixed height) ---
+        # --- Control row (compact single group box) ---
         ctrl_box = QGroupBox(_("Reception Control"))
         ctrl_layout = QVBoxLayout(ctrl_box)
+        ctrl_layout.setContentsMargins(6, 4, 6, 4)
         ctrl_layout.setSpacing(3)
 
+        # Row 1: pipeline combo + action buttons
         row1 = QHBoxLayout()
-        row1.addWidget(QLabel(_("Satellite / Pipeline:")))
+        row1.setSpacing(4)
+        row1.addWidget(QLabel(_("Pipeline:")))
         self._combo_sat = QComboBox()
         for p in METEOR_PIPELINES:
             self._combo_sat.addItem(str(p["label"]), p)
         self._combo_sat.currentIndexChanged.connect(self._on_pipeline_changed)
         row1.addWidget(self._combo_sat, 1)
-        ctrl_layout.addLayout(row1)
 
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel(_("SDR Source:")))
-        self._combo_source = QComboBox()
-        for src in _list_soapy_sources():
-            self._combo_source.addItem(src)
-        row2.addWidget(self._combo_source, 1)
-        row2.addWidget(QLabel(_("Gain (dB):")))
-        self._combo_gain = QComboBox()
-        for g in [20, 30, 40, 48, 50]:
-            self._combo_gain.addItem(str(g), g)
-        self._combo_gain.setCurrentIndex(2)  # default 40 dB
-        row2.addWidget(self._combo_gain)
-        ctrl_layout.addLayout(row2)
+        self._btn_sdr_connect = QPushButton(_("SDR Connect"))
+        self._btn_sdr_connect.setToolTip(
+            _("Verify the SDR configured in Rig Settings > SDR Settings is reachable")
+        )
+        self._btn_sdr_connect.clicked.connect(self._on_sdr_connect)
+        row1.addWidget(self._btn_sdr_connect)
 
-        btn_row = QHBoxLayout()
         self._btn_start = QPushButton(_("▶  Start"))
-        self._btn_start.setMinimumWidth(100)
         self._btn_start.clicked.connect(self._on_start)
+        row1.addWidget(self._btn_start)
+
         self._btn_stop = QPushButton(_("■  Stop"))
-        self._btn_stop.setMinimumWidth(100)
         self._btn_stop.setEnabled(False)
         self._btn_stop.clicked.connect(self._on_stop)
+        row1.addWidget(self._btn_stop)
+
+        self._btn_log = QPushButton(_("📋 Log"))
+        self._btn_log.setToolTip(_("Show SatDump output log"))
+        self._btn_log.clicked.connect(self._on_show_log)
+        row1.addWidget(self._btn_log)
+
+        ctrl_layout.addLayout(row1)
+
+        # Row 2: status + lock + progress (single line)
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
         self._lbl_lock = QLabel(_("Lock: —"))
-        self._lbl_lock.setMinimumWidth(80)
+        self._lbl_lock.setMinimumWidth(70)
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setVisible(False)
-        self._progress.setMaximumWidth(180)
-        self._lbl_status = QLabel(_("Ready."))
-        btn_row.addWidget(self._btn_start)
-        btn_row.addWidget(self._btn_stop)
-        btn_row.addWidget(self._lbl_lock)
-        btn_row.addWidget(self._progress)
-        btn_row.addWidget(self._lbl_status, 1)
-        ctrl_layout.addLayout(btn_row)
+        self._progress.setMaximumWidth(160)
+        self._lbl_status = QLabel(_("Ready.  Select a pipeline and press Start."))
+        row2.addWidget(self._lbl_lock)
+        row2.addWidget(self._progress)
+        row2.addWidget(self._lbl_status, 1)
+        ctrl_layout.addLayout(row2)
 
         root.addWidget(ctrl_box)
 
-        # --- Vertical splitter: image area (large) / log (small, scrollable) ---
-        v_split = QSplitter(Qt.Orientation.Vertical)
-        v_split.setChildrenCollapsible(False)
-
-        # Upper pane: horizontal splitter — main image | thumbnail history
+        # --- Horizontal splitter: main image | thumbnail history ---
         h_split = QSplitter(Qt.Orientation.Horizontal)
 
         image_widget = QWidget()
@@ -219,7 +274,7 @@ class MeteorTab(QWidget):
         image_layout.setSpacing(3)
         self._image_label = QLabel(_("No image received yet."))
         self._image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._image_label.setMinimumSize(300, 180)
+        self._image_label.setMinimumSize(300, 200)
         self._image_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._image_label.setStyleSheet("border: 1px solid #555; background: #111;")
         image_layout.addWidget(self._image_label, 1)
@@ -246,32 +301,8 @@ class MeteorTab(QWidget):
         hl.addWidget(self._history_list)
         h_split.addWidget(history_widget)
 
-        h_split.setSizes([600, 180])
-        v_split.addWidget(h_split)
-
-        # Lower pane: SatDump log in a scroll area (can be squished small)
-        log_box = QGroupBox(_("SatDump Log"))
-        ll = QVBoxLayout(log_box)
-        ll.setContentsMargins(4, 4, 4, 4)
-        self._log_view = QPlainTextEdit()
-        self._log_view.setReadOnly(True)
-        self._log_view.setMaximumBlockCount(500)
-        self._log_view.setMinimumHeight(60)
-        self._log_view.setStyleSheet("font-family: monospace; font-size: 10px;")
-        ll.addWidget(self._log_view)
-
-        log_scroll = QScrollArea()
-        log_scroll.setWidgetResizable(True)
-        log_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        log_scroll.setWidget(log_box)
-        log_scroll.setMinimumHeight(80)
-        v_split.addWidget(log_scroll)
-
-        # Image area gets 4× the space of the log pane initially
-        v_split.setStretchFactor(0, 4)
-        v_split.setStretchFactor(1, 1)
-
-        root.addWidget(v_split, 1)
+        h_split.setSizes([680, 180])
+        root.addWidget(h_split, 1)
 
     # ------------------------------------------------------------------
     # SatDump availability check
@@ -324,16 +355,46 @@ class MeteorTab(QWidget):
             self._suppress_sync = False
 
     # ------------------------------------------------------------------
+    # SDR Connect (reads Rig Settings SDR config)
+    # ------------------------------------------------------------------
+
+    def _on_sdr_connect(self) -> None:
+        """Check that SDR settings are configured and report to the user."""
+        sdr = _load_sdr_settings()
+        if not sdr or not sdr.get("enabled"):
+            self._lbl_status.setText(
+                _("⚠  No SDR configured.  Open Radio > Rig Settings > SDR Settings.")
+            )
+            return
+        driver = _sdr_source_from_settings(sdr)
+        gain = int(sdr.get("gain_db") or 40)
+        label: str = sdr.get("device_label") or driver
+        self._lbl_status.setText(
+            _("SDR: {label}  gain {gain} dB — ready.").format(label=label, gain=gain)
+        )
+
+    # ------------------------------------------------------------------
     # Start / Stop
     # ------------------------------------------------------------------
 
     def _on_start(self) -> None:
+        # Resolve SDR source and gain from saved settings
+        sdr = _load_sdr_settings()
+        if sdr and sdr.get("enabled"):
+            source = _sdr_source_from_settings(sdr)
+            gain = int(sdr.get("gain_db") or 40)
+        else:
+            # Fallback: try rtlsdr with default gain
+            source = "rtlsdr"
+            gain = 40
+            self._lbl_status.setText(
+                _("⚠  SDR not configured — attempting rtlsdr with gain 40 dB.")
+            )
+
         # Disconnect SDR if active
         self._disconnect_sdr()
 
         pipeline_data: dict[str, Any] = self._combo_sat.currentData()
-        source = self._combo_source.currentText().strip() or "rtlsdr"
-        gain = int(self._combo_gain.currentData())
 
         self._output_dir = _default_output_dir()
 
@@ -360,9 +421,8 @@ class MeteorTab(QWidget):
 
         self._btn_start.setEnabled(False)
         self._btn_stop.setEnabled(True)
+        self._btn_sdr_connect.setEnabled(False)
         self._combo_sat.setEnabled(False)
-        self._combo_source.setEnabled(False)
-        self._combo_gain.setEnabled(False)
         self._progress.setValue(0)
         self._progress.setVisible(True)
         self._lbl_status.setText(_("Receiving…"))
@@ -380,7 +440,6 @@ class MeteorTab(QWidget):
         """Disconnect the SDR and grey out the SDR Control tab."""
         if self._sdr_widget is not None:
             try:
-                # Call disconnect if the SDR is active
                 if hasattr(self._sdr_widget, "disconnect_sdr"):
                     self._sdr_widget.disconnect_sdr()
                 elif hasattr(self._sdr_widget, "_on_disconnect"):
@@ -395,11 +454,25 @@ class MeteorTab(QWidget):
             self._sdr_control_tab.setEnabled(True)
 
     # ------------------------------------------------------------------
+    # Log window
+    # ------------------------------------------------------------------
+
+    def _on_show_log(self) -> None:
+        if self._log_window is None:
+            self._log_window = _LogWindow(self)
+        if self._log_window.isVisible():
+            self._log_window.raise_()
+            self._log_window.activateWindow()
+        else:
+            self._log_window.show()
+
+    # ------------------------------------------------------------------
     # Process signal handlers
     # ------------------------------------------------------------------
 
     def _on_log_line(self, line: str) -> None:
-        self._log_view.appendPlainText(line)
+        if self._log_window is not None:
+            self._log_window.append(line)
 
     def _on_progress(self, pct: int) -> None:
         self._progress.setValue(pct)
@@ -419,7 +492,8 @@ class MeteorTab(QWidget):
 
     def _on_finished_err(self, msg: str) -> None:
         self._lbl_status.setText(_("Error: ") + msg)
-        self._log_view.appendPlainText(_("[ERROR] ") + msg)
+        if self._log_window is not None:
+            self._log_window.append(_("[ERROR] ") + msg)
         self._progress.setVisible(False)
         self._reset_controls()
         self._reenable_sdr_tab()
@@ -427,9 +501,8 @@ class MeteorTab(QWidget):
     def _reset_controls(self) -> None:
         self._btn_start.setEnabled(find_satdump() is not None)
         self._btn_stop.setEnabled(False)
+        self._btn_sdr_connect.setEnabled(True)
         self._combo_sat.setEnabled(True)
-        self._combo_source.setEnabled(True)
-        self._combo_gain.setEnabled(True)
         self._lbl_lock.setText(_("Lock: —"))
 
     # ------------------------------------------------------------------
@@ -444,10 +517,8 @@ class MeteorTab(QWidget):
         if image.isNull():
             return
 
-        # Show in main area (scaled to fit)
         self._show_image(image)
 
-        # Add thumbnail to history
         label = p.name
         item = _ThumbItem(image, label)
         self._history_list.addItem(item)
@@ -495,7 +566,9 @@ class MeteorTab(QWidget):
     # Cleanup on tab close
     # ------------------------------------------------------------------
 
-    def closeEvent(self, event: Any) -> None:
+    def closeEvent(self, event: Any) -> None:  # noqa: N802
         self._on_stop()
         self._reenable_sdr_tab()
+        if self._log_window is not None:
+            self._log_window.destroy()
         super().closeEvent(event)
