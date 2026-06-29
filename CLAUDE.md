@@ -778,7 +778,7 @@ sudo usermod -aG dialout $USER
   - サイレントインストール（`/S` フラグ）対応
 - **実動作確認済みリグ・デバイス**（2026-06-13）
   - FTX-1F（Hamlib 4.7.1 モデル1051、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
-  - FTX-1F（Hamlib 4.7.1 モデル1051、Direct モード）: モード・CTCSS（raw CAT `MD1/MD0/CN1/CT1` via `os.open()`）動作確認済み（2026-06-18）
+  - FTX-1F（Hamlib 4.7.1 モデル1051、Direct モード）: モード・CTCSS（raw CAT `MD1/MD0/CN1/CT1` via `os.open()`）動作確認済み（2026-06-18）。スプリット（`FT1;`/`FT0;`）動作確認済み（2026-06-29）
   - FT-991AM（Hamlib 4.7.1 モデル1036、NET Control）: ドップラー補正・VFO制御・CTCSS 動作確認済み
   - FT-991/FT-991A/FT-991AM（Direct モード、Hamlib model 1035）: スプリット・周波数・モード・CTCSS すべて動作確認済み（2026-06-28）
     - スプリット ON/OFF: `FT3;` / `FT2;`（`ST` コマンドは FT-991A 非対応で `?;` を返す）
@@ -1485,6 +1485,14 @@ S 1 Main / S 1 VFOB は `apply_transponder_state()` 内の `_send_split_init_ind
   ```
 - 書き込みは `os.open(O_WRONLY|O_NOCTTY|O_NONBLOCK)` で行う（ポートが Hamlib に占有されていなければ動作）
 - **注意**: `os.open()` は termios を設定しない。Hamlib が事前にポートを開いてボーレートを設定している場合のみ正しく動作する。ユーザーがボーレートを正しく設定していることが前提（Rig Settings のボーレートテストボタンで確認可能）
+- **スプリット（TX VFO 制御）**: Hamlib `set_split_vfo()` は FTX-1F で `None` を返し VFO-B を TX にできない。raw CAT `FT` コマンドを使う（2026-06-29 実機確認）:
+  ```
+  FT1;  — VFO-B (Sub) を TX に設定（Connect 時・freq preset 時）
+  FT0;  — VFO-A (Main) を TX に戻す（アプリ終了時）
+  ```
+  FT-991A の `FT2;`/`FT3;` は FTX-1F では無視される（非対応）。
+  `_init_split()` と `_send_freq_preset_direct()` で `_FTX1_MODEL_IDS` を独立 `elif` ブランチで処理。
+  アプリ終了時は `_release_rig_split_on_exit()`（main_window.py）が `FT0;` を pyserial で送信。
 
 ### FT-991 / FT-991A (Hamlib models 1035 / 1036)
 
