@@ -1607,9 +1607,35 @@ class MainWindow(QMainWindow):
         """Radio Control selected a METEOR LRPT/HRPT transponder — open/sync METEOR tab."""
         self._on_open_meteor(norad=norad, downlink_hz=downlink_hz)
 
-    def _on_meteor_satellite_requested(self, norad: int, downlink_hz: int) -> None:  # noqa: ARG002
-        """METEOR tab pipeline combo changed — sync satellite list and Radio Control."""
+    def _on_meteor_satellite_requested(self, norad: int, downlink_hz: int) -> None:
+        """METEOR tab pipeline combo changed — sync satellite list and Radio Control.
+
+        Selects the satellite in the list (which triggers _refresh_radio_control),
+        then explicitly selects the closest-frequency LRPT transponder so Radio
+        Control reflects the pipeline even when the satellite was already selected.
+        """
+        # Select satellite — fires _on_sat_selected → _refresh_radio_control if row changes
         self._select_satellite_by_norad(norad)
+
+        # Always explicitly reload transmitters and pick the LRPT transponder closest
+        # to downlink_hz so Radio Control mirrors the METEOR tab selection even when
+        # the satellite was already selected (currentRowChanged does not fire then).
+        self._refresh_radio_control(norad)
+        transmitters = self._radio_control._transmitters  # type: ignore[attr-defined]
+        if not transmitters:
+            return
+        best_idx = 0
+        best_diff = float("inf")
+        for i, t in enumerate(transmitters):
+            mode = (t.get("mode") or "").upper()
+            if mode not in ("LRPT", "HRPT"):
+                continue
+            dl = t.get("downlink_low") or 0
+            diff = abs(dl - downlink_hz)
+            if diff < best_diff:
+                best_diff = diff
+                best_idx = i
+        self._radio_control.set_transmitters(transmitters, default_index=best_idx)
 
     def _on_satdump_help(self) -> None:
         """Open the Help > SatDump… dialog."""
