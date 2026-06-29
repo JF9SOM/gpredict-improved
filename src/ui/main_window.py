@@ -344,6 +344,7 @@ class MainWindow(QMainWindow):
         self._autotrack_enabled: bool = False
         self._autotrack_audio_record: bool = False
         self._autotrack_iq_record: bool = False
+        self._autotrack_meteor_record: bool = False
         self._autotrack_tracking_norad: int | None = None  # NORAD of currently auto-tracked sat
 
         from PySide6.QtWidgets import QApplication
@@ -366,6 +367,7 @@ class MainWindow(QMainWindow):
         self._at_dialog.autotrack_list_changed.connect(self._on_autotrack_list_changed)
         self._at_dialog.audio_record_changed.connect(self._on_autotrack_audio_record_changed)
         self._at_dialog.iq_record_changed.connect(self._on_autotrack_iq_record_changed)
+        self._at_dialog.meteor_record_changed.connect(self._on_autotrack_meteor_record_changed)
         self._at_dialog.lists_modified.connect(self._on_autotrack_lists_modified)
 
         # Connect PassPanel signals
@@ -1426,6 +1428,9 @@ class MainWindow(QMainWindow):
 
     def _on_autotrack_iq_record_changed(self, enabled: bool) -> None:
         self._autotrack_iq_record = enabled
+
+    def _on_autotrack_meteor_record_changed(self, enabled: bool) -> None:
+        self._autotrack_meteor_record = enabled
 
     def _on_autotrack_lists_modified(self) -> None:
         """Called when lists are added/removed in the dialog — refresh radio control combo."""
@@ -4026,8 +4031,9 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 logger.warning("Autotrack IQ record start failed: %s", exc)
 
-        # Notify METEOR tab if open and autotrack checkbox is enabled
-        self._meteor_autotrack_aos(norad)
+        # Open METEOR/HRPT tab and start reception if checkbox is enabled
+        if self._autotrack_meteor_record:
+            self._meteor_autotrack_aos(norad)
 
     def _autotrack_on_los(self) -> None:
         """Called by Autotrack when the current satellite's LOS is detected.
@@ -4065,26 +4071,33 @@ class MainWindow(QMainWindow):
         self._update_rig_label()
         self._autotrack_tracking_norad = None
 
-        # Notify METEOR tab if open and autotrack checkbox is enabled
-        self._meteor_autotrack_los()
+        # Stop METEOR reception at LOS if checkbox is enabled
+        if self._autotrack_meteor_record:
+            self._meteor_autotrack_los()
 
     def _meteor_autotrack_aos(self, norad: int) -> None:
-        """Forward AOS event to the METEOR tab if it is open."""
+        """Open METEOR/HRPT tab (if needed) and start reception at AOS."""
         from comms.meteor.satdump import METEOR_NORAD_IDS
         from ui.meteor_tab import MeteorTab
 
         if norad not in METEOR_NORAD_IDS:
             return
+
+        # Open the tab if not already open (reuses _on_open_meteor which also
+        # syncs the pipeline combo to the arriving satellite's NORAD)
+        self._on_open_meteor(norad=norad, downlink_hz=0)
+
+        # Now find the tab and start
         tab_label = _("METEOR / HRPT")
         for i in range(self._tab_widget.count()):
             if self._tab_widget.tabText(i) == tab_label:
                 w = self._tab_widget.widget(i)
                 if isinstance(w, MeteorTab):
-                    w.auto_start_on_aos(norad)
+                    w.autotrack_start(norad)
                 return
 
     def _meteor_autotrack_los(self) -> None:
-        """Forward LOS event to the METEOR tab if it is open."""
+        """Stop METEOR reception at LOS."""
         from ui.meteor_tab import MeteorTab
 
         tab_label = _("METEOR / HRPT")
@@ -4092,7 +4105,7 @@ class MainWindow(QMainWindow):
             if self._tab_widget.tabText(i) == tab_label:
                 w = self._tab_widget.widget(i)
                 if isinstance(w, MeteorTab):
-                    w.auto_stop_on_los()
+                    w.autotrack_stop()
                 return
 
     def _on_show_qr(self) -> None:

@@ -97,6 +97,7 @@ class AutotrackRecordDialog(QDialog):
     autotrack_list_changed: Signal = Signal(object)
     audio_record_changed: Signal = Signal(bool)
     iq_record_changed: Signal = Signal(bool)
+    meteor_record_changed: Signal = Signal(bool)
     lists_modified: Signal = Signal()
 
     def __init__(self, conn: sqlite3.Connection, parent: QWidget | None = None) -> None:
@@ -140,6 +141,9 @@ class AutotrackRecordDialog(QDialog):
 
     def is_audio_record_enabled(self) -> bool:
         return bool(self._audio_rec_cb.isChecked())
+
+    def is_meteor_record_enabled(self) -> bool:
+        return bool(self._meteor_rec_cb.isChecked())
 
     def is_iq_record_enabled(self) -> bool:
         return bool(self._iq_rec_cb.isChecked())
@@ -282,8 +286,18 @@ class AutotrackRecordDialog(QDialog):
         self._audio_rec_cb.toggled.connect(self.audio_record_changed.emit)
         self._iq_rec_cb = QCheckBox(_("IQ Record"))
         self._iq_rec_cb.toggled.connect(self.iq_record_changed.emit)
+        self._meteor_rec_cb = QCheckBox(_("METEOR / HRPT Reception"))
+        self._meteor_rec_cb.setToolTip(
+            _(
+                "When the tracked satellite supports LRPT or HRPT,\n"
+                "automatically open the METEOR/HRPT tab and start\n"
+                "SatDump reception at AOS.  Stops at LOS."
+            )
+        )
+        self._meteor_rec_cb.toggled.connect(self.meteor_record_changed.emit)
         rec_layout.addWidget(self._audio_rec_cb)
         rec_layout.addWidget(self._iq_rec_cb)
+        rec_layout.addWidget(self._meteor_rec_cb)
         rec_layout.addStretch()
         outer.addWidget(rec_group)
 
