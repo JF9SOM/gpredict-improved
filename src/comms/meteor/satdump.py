@@ -20,12 +20,12 @@ from PySide6.QtCore import QThread, Signal
 # ---------------------------------------------------------------------------
 
 METEOR_PIPELINES: list[dict[str, str | int]] = [
+    # --- LRPT (137 MHz, RTL-SDR compatible) ---
     {
         "label": "METEOR-M N2-3  LRPT  137.9 MHz",
         "pipeline": "meteor_m2-x_lrpt",
         "frequency": 137_900_000,
         "samplerate": 1_200_000,
-        # NORAD ID and transponder keyword for Radio Control sync
         "norad": 57166,
         "xpdr_keyword": "LRPT",
         "xpdr_freq": 137_900_000,
@@ -39,10 +39,67 @@ METEOR_PIPELINES: list[dict[str, str | int]] = [
         "xpdr_keyword": "LRPT",
         "xpdr_freq": 137_100_000,
     },
+    # --- HRPT (1.7 GHz, dish + LNA required) ---
+    {
+        "label": "METEOR-M N2-3  HRPT  1700.0 MHz",
+        "pipeline": "meteor_m2-x_hrpt",
+        "frequency": 1_700_000_000,
+        "samplerate": 3_000_000,
+        "norad": 57166,
+        "xpdr_keyword": "HRPT",
+        "xpdr_freq": 1_700_000_000,
+    },
+    {
+        "label": "METEOR-M N2-4  HRPT  1700.0 MHz",
+        "pipeline": "meteor_m2-x_hrpt",
+        "frequency": 1_700_000_000,
+        "samplerate": 3_000_000,
+        "norad": 59051,
+        "xpdr_keyword": "HRPT",
+        "xpdr_freq": 1_700_000_000,
+    },
+    {
+        "label": "NOAA 18  HRPT  1707.0 MHz",
+        "pipeline": "noaa_hrpt",
+        "frequency": 1_707_000_000,
+        "samplerate": 3_000_000,
+        "norad": 28654,
+        "xpdr_keyword": "HRPT",
+        "xpdr_freq": 1_707_000_000,
+    },
+    {
+        "label": "NOAA 19  HRPT  1698.0 MHz",
+        "pipeline": "noaa_hrpt",
+        "frequency": 1_698_000_000,
+        "samplerate": 3_000_000,
+        "norad": 33591,
+        "xpdr_keyword": "HRPT",
+        "xpdr_freq": 1_698_000_000,
+    },
+    {
+        "label": "Metop-B  HRPT  1701.3 MHz",
+        "pipeline": "metop_hrpt",
+        "frequency": 1_701_300_000,
+        "samplerate": 3_000_000,
+        "norad": 38771,
+        "xpdr_keyword": "HRPT",
+        "xpdr_freq": 1_701_300_000,
+    },
+    {
+        "label": "Metop-C  HRPT  1701.3 MHz",
+        "pipeline": "metop_hrpt",
+        "frequency": 1_701_300_000,
+        "samplerate": 3_000_000,
+        "norad": 43689,
+        "xpdr_keyword": "HRPT",
+        "xpdr_freq": 1_701_300_000,
+    },
 ]
 
-# NORAD IDs of all METEOR satellites (for reverse detection from Radio Control)
-METEOR_NORAD_IDS: frozenset[int] = frozenset({35865, 40069, 44387, 57166, 59051})
+# NORAD IDs of all supported satellites (METEOR LRPT/HRPT + NOAA + Metop)
+METEOR_NORAD_IDS: frozenset[int] = frozenset(
+    {35865, 40069, 44387, 57166, 59051, 28654, 33591, 38771, 43689}
+)
 
 
 # ---------------------------------------------------------------------------

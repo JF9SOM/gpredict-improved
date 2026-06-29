@@ -34,6 +34,7 @@ from typing import Any
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QGroupBox,
@@ -246,9 +247,19 @@ class MeteorTab(QWidget):
 
         ctrl_layout.addLayout(row1)
 
-        # Row 2: status + lock + progress (single line)
+        # Row 2: autotrack checkbox + status + lock + progress
         row2 = QHBoxLayout()
         row2.setSpacing(6)
+        self._chk_autotrack = QCheckBox(_("Auto-start on AOS / stop on LOS"))
+        self._chk_autotrack.setToolTip(
+            _(
+                "When checked, reception starts automatically at AOS and stops at LOS\n"
+                "for the satellite selected in the Pipeline combo.\n"
+                "Requires Autotrack to be enabled in Autotrack/Record dialog."
+            )
+        )
+        row2.addWidget(self._chk_autotrack)
+        row2.addSpacing(8)
         self._lbl_lock = QLabel(_("Lock: —"))
         self._lbl_lock.setMinimumWidth(70)
         self._progress = QProgressBar()
@@ -503,6 +514,51 @@ class MeteorTab(QWidget):
         self._btn_sdr_connect.setEnabled(True)
         self._combo_sat.setEnabled(True)
         self._lbl_lock.setText(_("Lock: —"))
+
+    # ------------------------------------------------------------------
+    # Autotrack integration (called from main_window)
+    # ------------------------------------------------------------------
+
+    @property
+    def autotrack_enabled(self) -> bool:
+        """Return True when the Auto-start on AOS checkbox is checked."""
+        return self._chk_autotrack.isChecked()
+
+    def auto_start_on_aos(self, norad: int) -> None:
+        """Called by main_window at AOS when autotrack_enabled is True.
+
+        Syncs the pipeline combo to *norad* (best-frequency match) and
+        starts reception if not already running.
+        """
+        if not self._chk_autotrack.isChecked():
+            return
+        # Select matching pipeline for the arriving satellite
+        best_idx = -1
+        best_diff = float("inf")
+        for i in range(self._combo_sat.count()):
+            p = self._combo_sat.itemData(i)
+            if p and int(p["norad"]) == norad:
+                diff = 0  # exact match — take first hit
+                if diff < best_diff:
+                    best_diff = diff
+                    best_idx = i
+                    break
+        if best_idx >= 0:
+            self._suppress_sync = True
+            self._combo_sat.setCurrentIndex(best_idx)
+            self._suppress_sync = False
+        # Start only if not already running
+        if self._process is None or not self._process.isRunning():
+            self._on_start()
+            self._lbl_status.setText(_("Autotrack: reception started at AOS."))
+
+    def auto_stop_on_los(self) -> None:
+        """Called by main_window at LOS when autotrack_enabled is True."""
+        if not self._chk_autotrack.isChecked():
+            return
+        if self._process is not None and self._process.isRunning():
+            self._on_stop()
+            self._lbl_status.setText(_("Autotrack: reception stopped at LOS."))
 
     # ------------------------------------------------------------------
     # Image display

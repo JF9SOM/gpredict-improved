@@ -4026,6 +4026,9 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 logger.warning("Autotrack IQ record start failed: %s", exc)
 
+        # Notify METEOR tab if open and autotrack checkbox is enabled
+        self._meteor_autotrack_aos(norad)
+
     def _autotrack_on_los(self) -> None:
         """Called by Autotrack when the current satellite's LOS is detected.
 
@@ -4061,6 +4064,36 @@ class MainWindow(QMainWindow):
         self._radio_control.refresh_status()
         self._update_rig_label()
         self._autotrack_tracking_norad = None
+
+        # Notify METEOR tab if open and autotrack checkbox is enabled
+        self._meteor_autotrack_los()
+
+    def _meteor_autotrack_aos(self, norad: int) -> None:
+        """Forward AOS event to the METEOR tab if it is open."""
+        from comms.meteor.satdump import METEOR_NORAD_IDS
+        from ui.meteor_tab import MeteorTab
+
+        if norad not in METEOR_NORAD_IDS:
+            return
+        tab_label = _("METEOR / HRPT")
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == tab_label:
+                w = self._tab_widget.widget(i)
+                if isinstance(w, MeteorTab):
+                    w.auto_start_on_aos(norad)
+                return
+
+    def _meteor_autotrack_los(self) -> None:
+        """Forward LOS event to the METEOR tab if it is open."""
+        from ui.meteor_tab import MeteorTab
+
+        tab_label = _("METEOR / HRPT")
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == tab_label:
+                w = self._tab_widget.widget(i)
+                if isinstance(w, MeteorTab):
+                    w.auto_stop_on_los()
+                return
 
     def _on_show_qr(self) -> None:
         if not self._web_server_url:
