@@ -88,6 +88,7 @@ class TelemetryTab(QWidget):
         self._ensure_db_table()
         self._setup_ui()
         self._connect_signals()
+        self._detect_already_connected()
         self._refresh_input_combo()
         self._refresh_status()
 
@@ -204,6 +205,19 @@ class TelemetryTab(QWidget):
     # ------------------------------------------------------------------ #
     # Signals from RadioControlWidget
     # ------------------------------------------------------------------ #
+
+    def _detect_already_connected(self) -> None:
+        """Sync connection state for rigs/SDRs that were connected before this tab opened."""
+        rc = self._radio_control
+        for attr in ("_rig1", "_rig2"):
+            rig = getattr(rc, attr, None)
+            if rig is None or not getattr(rig, "is_connected", False):
+                continue
+            if getattr(rig, "is_sdr", False):
+                self._sdr_connected = True
+                self._sdr_pipeline = getattr(rig, "_pipeline", None)
+            else:
+                self._rig_connected = True
 
     def _connect_signals(self) -> None:
         try:
