@@ -367,7 +367,7 @@ SoapySDR is incompatible with WinUSB on Windows; RTL-SDR and HackRF bypass it vi
 #### Digital Modes — Amateur Satellites (SDR)
 - ~~**HRPT / LRPT**~~ — **implemented** (METEOR-M / NOAA 18-19 / Metop-B/C via SatDump, with Autotrack integration)
 - **CW decode** — AI-based decoder (ML inference, no zero-crossing artefacts)
-- **gr-satellites deep integration** — 100+ satellite telemetry formats via gr-satellites subprocess
+- ~~**gr-satellites deep integration**~~ — **implemented** (330+ satellites via gr-satellites subprocess with UDP IQ forwarding, satellite picker, SDR auto-connect, and transponder auto-select in the Telemetry tab)
 
 #### Operational Satellite Reception (SDR) — Planned
 Receivable with HackRF / RTL-SDR + appropriate LNA/filter. Open-source decoders exist for all of these and will be integrated as SDR plugins.

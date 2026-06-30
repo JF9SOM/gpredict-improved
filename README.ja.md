@@ -340,7 +340,7 @@ Windows の SoapySDR は WinUSB との根本的な非互換性があるため、
 ### デジタルモード — アマチュア衛星（SDR）
 - ~~**HRPT / LRPT**~~ — **実装済み**（METEOR-M / NOAA 18-19 / Metop-B/C、SatDump経由、Autotrack連携）
 - **CW解析** — AIベースのデコーダー（機械学習推論）
-- **gr-satellites 深度統合** — gr-satellites サブプロセス経由で100機種以上のテレメトリーフォーマットに対応
+- ~~**gr-satellites 深度統合**~~ — **実装済み**（Telemetry タブで gr-satellites サブプロセスへ UDP IQ 転送・330機以上対応・衛星コンボ・SDR 自動接続・トランスポンダー自動選択）
 
 ### 業務用衛星受信（SDR）— 計画中
 HackRF / RTL-SDR + 適切な LNA・フィルターで受信可能な業務用衛星信号。
