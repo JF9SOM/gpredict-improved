@@ -55,6 +55,29 @@ def list_gr_satellites_norads() -> set[int]:
     return norads
 
 
+def list_gr_satellites_with_names() -> list[tuple[int, str]]:
+    """Return sorted list of (norad, name) for all gr-satellites supported satellites."""
+    if not _SATYAML_DIR.exists():
+        return []
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ImportError:
+        return []
+    result: list[tuple[int, str]] = []
+    for yml in _SATYAML_DIR.glob("*.yml"):
+        try:
+            with open(yml) as fh:
+                data = yaml.safe_load(fh)
+            if isinstance(data, dict) and isinstance(data.get("norad"), int):
+                norad = int(data["norad"])
+                name = str(data.get("name", str(norad)))
+                result.append((norad, name))
+        except Exception:
+            pass
+    result.sort(key=lambda t: t[1].upper())
+    return result
+
+
 def get_satellite_info(norad: int) -> dict[str, object] | None:
     """Return {'name': str, 'transmitters': list} from the YAML, or None."""
     if not _SATYAML_DIR.exists():

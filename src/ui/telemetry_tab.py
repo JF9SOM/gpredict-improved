@@ -45,7 +45,7 @@ from comms.telemetry.gr_satellites_backend import (
     GrSatellitesBackend,
     detect_gr_satellites,
     get_satellite_info,
-    list_gr_satellites_norads,
+    list_gr_satellites_with_names,
 )
 from i18n import _
 
@@ -77,9 +77,9 @@ class TelemetryTab(QWidget):
         self._gr_backend = GrSatellitesBackend(self)
         self._gr_backend.telemetry_received.connect(self._on_gr_telemetry)
         self._gr_backend.status_changed.connect(self._on_gr_status)
-        self._gr_norads: set[int] = set()
+        self._gr_sat_list: list[tuple[int, str]] = []  # (norad, name) sorted by name
 
-        # Selected satellite (updated via set_satellite() from main_window)
+        # Selected satellite from main satellite list (set_satellite from main_window)
         self._selected_norad: int | None = None
         self._selected_name: str = ""
 
@@ -89,7 +89,8 @@ class TelemetryTab(QWidget):
         self._setup_ui()
         self._connect_signals()
         if detect_gr_satellites():
-            self._gr_norads = list_gr_satellites_norads()
+            self._gr_sat_list = list_gr_satellites_with_names()
+            self._populate_gr_combo()
         self._detect_already_connected()
         self._refresh_input_combo()
         self._refresh_status()
@@ -132,6 +133,10 @@ class TelemetryTab(QWidget):
         self._combo_mode.addItem(_MODE_GR)
         self._combo_mode.currentIndexChanged.connect(self._on_mode_changed)
         row1.addWidget(self._combo_mode)
+        self._combo_gr_sat = QComboBox()
+        self._combo_gr_sat.setMinimumWidth(280)
+        self._combo_gr_sat.setVisible(False)
+        row1.addWidget(self._combo_gr_sat)
         row1.addStretch()
         self._lbl_sat = QLabel(_("Satellite: —"))
         self._lbl_sat.setStyleSheet("color: #aaa;")
@@ -277,23 +282,26 @@ class TelemetryTab(QWidget):
     # Input combo helpers
     # ------------------------------------------------------------------ #
 
+    def _populate_gr_combo(self) -> None:
+        """Fill the gr-satellites satellite combo from the loaded list."""
+        self._combo_gr_sat.clear()
+        for norad, name in self._gr_sat_list:
+            self._combo_gr_sat.addItem(f"{name}  ({norad})", userData=norad)
+
     def _refresh_input_combo(self) -> None:
         """Enable/disable gr-satellites option based on availability."""
-        gr_available = (
-            detect_gr_satellites()
-            and self._selected_norad is not None
-            and self._selected_norad in self._gr_norads
-        )
+        gr_available = detect_gr_satellites() and bool(self._gr_sat_list)
         model = self._combo_mode.model()
         if model is not None:
             item = model.item(1)
             if item is not None:
                 item.setEnabled(gr_available)
-
         if not gr_available and self._combo_mode.currentIndex() == 1:
             self._combo_mode.setCurrentIndex(0)
 
     def _on_mode_changed(self, _index: int) -> None:
+        is_gr = self._current_mode() == _MODE_GR
+        self._combo_gr_sat.setVisible(is_gr)
         self._refresh_status()
 
     def _current_mode(self) -> str:
@@ -324,7 +332,7 @@ class TelemetryTab(QWidget):
     # ------------------------------------------------------------------ #
 
     def _start_gr_satellites(self) -> None:
-        norad = self._selected_norad
+        norad = self._combo_gr_sat.currentData()
         if norad is None:
             self._set_error(_("⚠ No satellite selected"))
             return
