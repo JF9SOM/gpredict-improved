@@ -1,7 +1,13 @@
 """Help > CW Model Installation… dialog.
 
-Downloads DeepCW ONNX model files directly from e04's GitHub Pages
-and installs them to the user data directory.
+One-click install of onnxruntime (via pip) and the three DeepCW ONNX
+model files (downloaded from e04's GitHub Pages).
+
+Install order (single background thread):
+  1. pip install onnxruntime   — skipped if already present
+  2. Download model_en.onnx    — from e04.github.io
+  3. Download model_ja.onnx
+  4. Download detect_cw.onnx
 
 Models (e04/web-deep-cw-decoder):
   model_en.onnx   — English CW decoder
@@ -10,6 +16,8 @@ Models (e04/web-deep-cw-decoder):
 """
 
 from __future__ import annotations
+
+import sys
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
@@ -33,50 +41,83 @@ from comms.cw.model_info import (
 )
 from i18n import _
 
+# Total steps: 1 (onnxruntime) + 3 (model files) = 4
+_TOTAL_STEPS = 4
+
+
 # ---------------------------------------------------------------------------
-# Background worker: download models
+# Background worker: install onnxruntime (if needed) then download models
 # ---------------------------------------------------------------------------
 
 
-class _DownloadWorker(QThread):
-    """Downloads all CW model files from e04's GitHub Pages."""
+class _InstallWorker(QThread):
+    """Installs onnxruntime via pip and downloads all CW model files."""
 
     progress = Signal(int)  # 0-100
     status = Signal(str)
-    finished_ok = Signal(str)
-    finished_err = Signal(str)
+    finished_ok = Signal(str)  # install directory
+    finished_err = Signal(str)  # error message
 
-    # Models to download: (key, filename, url)
     _MODELS = [
-        ("en", MODEL_FILES["en"], MODEL_URLS["en"]),
-        ("ja", MODEL_FILES["ja"], MODEL_URLS["ja"]),
-        ("detect", MODEL_FILES["detect"], MODEL_URLS["detect"]),
+        (MODEL_FILES["en"], MODEL_URLS["en"]),
+        (MODEL_FILES["ja"], MODEL_URLS["ja"]),
+        (MODEL_FILES["detect"], MODEL_URLS["detect"]),
     ]
 
     def run(self) -> None:
+        step = 0
+
+        # Step 1: install onnxruntime if missing
+        if not is_onnxruntime_available():
+            self.status.emit(_("Installing onnxruntime…"))
+            try:
+                import subprocess
+
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "onnxruntime"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+                if result.returncode != 0:
+                    self.finished_err.emit(
+                        "pip install onnxruntime failed:\n" + result.stderr[-500:]
+                    )
+                    return
+            except Exception as exc:
+                self.finished_err.emit(f"pip install onnxruntime: {exc}")
+                return
+        step += 1
+        self.progress.emit(step * 100 // _TOTAL_STEPS)
+
+        # Steps 2-4: download model files
         import urllib.request
 
         dest_dir = get_user_cw_model_dir()
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        n = len(self._MODELS)
-        for i, (_key, filename, url) in enumerate(self._MODELS):
+        for filename, url in self._MODELS:
             self.status.emit(_("Downloading {name}…").format(name=filename))
             dest = dest_dir / filename
-            base_progress = i * 100 // n
+            base_pct = step * 100 // _TOTAL_STEPS
 
             def _hook(
-                block: int, block_size: int, total: int, _base: int = base_progress, _n: int = n
+                block: int,
+                block_size: int,
+                total: int,
+                _base: int = base_pct,
             ) -> None:
                 if total > 0:
-                    file_pct = min(block * block_size * 100 // total, 100)
-                    self.progress.emit(_base + file_pct // _n)
+                    within = min(block * block_size * 100 // total, 100)
+                    self.progress.emit(_base + within // _TOTAL_STEPS)
 
             try:
                 urllib.request.urlretrieve(url, dest, reporthook=_hook)
             except Exception as exc:
                 self.finished_err.emit(f"{filename}: {exc}")
                 return
+            step += 1
+            self.progress.emit(step * 100 // _TOTAL_STEPS)
 
         self.progress.emit(100)
         self.finished_ok.emit(str(dest_dir))
@@ -94,7 +135,7 @@ class CwModelDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(_("CW Model Installation"))
         self.setMinimumWidth(520)
-        self._worker: _DownloadWorker | None = None
+        self._worker: _InstallWorker | None = None
         self._setup_ui()
         self._refresh_status()
 
@@ -120,14 +161,15 @@ class CwModelDialog(QDialog):
         about_lbl = QLabel(
             _(
                 "The DeepCW models are provided by "
-                "<a href='https://github.com/e04/web-deep-cw-decoder'>e04/web-deep-cw-decoder</a>.<br><br>"
+                "<a href='https://github.com/e04/web-deep-cw-decoder'>"
+                "e04/web-deep-cw-decoder</a>.<br><br>"
                 "They use a CRNN + CTC architecture trained to decode CW (Morse code) "
                 "from audio spectrograms with near-zero error at −4 dB S/N.<br><br>"
-                "<b>Three files are downloaded (~few MB each):</b><br>"
-                "  • model_en.onnx — English decoder<br>"
-                "  • model_ja.onnx — Japanese (Katakana) decoder<br>"
-                "  • detect_cw.onnx — CW frequency auto-detector<br><br>"
-                "<b>Runtime:</b> <tt>pip install onnxruntime</tt> is required separately."
+                "<b>Clicking Install will automatically:</b><br>"
+                "  1. Install <tt>onnxruntime</tt> (Python ML runtime) via pip<br>"
+                "  2. Download model_en.onnx — English decoder<br>"
+                "  3. Download model_ja.onnx — Japanese (Katakana) decoder<br>"
+                "  4. Download detect_cw.onnx — CW frequency auto-detector"
             )
         )
         about_lbl.setOpenExternalLinks(True)
@@ -135,50 +177,41 @@ class CwModelDialog(QDialog):
         al.addWidget(about_lbl)
         root.addWidget(about_box)
 
-        # Download group
-        dl_box = QGroupBox(_("Install Models"))
-        dl = QVBoxLayout(dl_box)
-        dl.addWidget(
-            QLabel(
-                _(
-                    "Downloads model files from e04.github.io and installs them\n"
-                    "to your user data directory."
-                )
-            )
-        )
+        # Install group
+        inst_box = QGroupBox(_("Install"))
+        il = QVBoxLayout(inst_box)
         self._progress = QProgressBar()
         self._progress.setVisible(False)
         self._lbl_dl = QLabel()
         self._lbl_dl.setVisible(False)
-        dl.addWidget(self._progress)
-        dl.addWidget(self._lbl_dl)
+        il.addWidget(self._progress)
+        il.addWidget(self._lbl_dl)
         btn_row = QHBoxLayout()
-        self._btn_dl = QPushButton(_("Download && Install Models"))
-        self._btn_dl.clicked.connect(self._on_download)
+        self._btn_inst = QPushButton(_("Install / Update"))
+        self._btn_inst.clicked.connect(self._on_install)
         btn_row.addStretch()
-        btn_row.addWidget(self._btn_dl)
-        dl.addLayout(btn_row)
-        root.addWidget(dl_box)
+        btn_row.addWidget(self._btn_inst)
+        il.addLayout(btn_row)
+        root.addWidget(inst_box)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
     def _refresh_status(self) -> None:
-        # onnxruntime
         if is_onnxruntime_available():
             self._lbl_ort.setText(
-                "<b style='color:#27ae60'>&#x2714; onnxruntime " + _("available") + "</b>"
+                "<b style='color:#27ae60'>&#x2714; onnxruntime " + _("installed") + "</b>"
             )
         else:
             self._lbl_ort.setText(
                 "<b style='color:#e74c3c'>&#x2718; onnxruntime "
                 + _("not installed")
                 + "</b>"
-                + "  —  <tt>pip install onnxruntime</tt>"
+                + " — "
+                + _("will be installed automatically")
             )
 
-        # Model files
         lines: list[str] = []
         for name, filename in MODEL_FILES.items():
             path = find_model(name)
@@ -191,14 +224,14 @@ class CwModelDialog(QDialog):
 
     # ------------------------------------------------------------------ #
 
-    def _on_download(self) -> None:
-        self._btn_dl.setEnabled(False)
+    def _on_install(self) -> None:
+        self._btn_inst.setEnabled(False)
         self._progress.setValue(0)
         self._progress.setVisible(True)
         self._lbl_dl.setVisible(True)
         self._lbl_dl.setText(_("Starting…"))
 
-        self._worker = _DownloadWorker(self)
+        self._worker = _InstallWorker(self)
         self._worker.progress.connect(self._progress.setValue)
         self._worker.status.connect(self._lbl_dl.setText)
         self._worker.finished_ok.connect(self._on_ok)
@@ -208,10 +241,10 @@ class CwModelDialog(QDialog):
     def _on_ok(self, path: str) -> None:
         self._progress.setValue(100)
         self._lbl_dl.setText(_("Installed to: ") + path)
-        self._btn_dl.setEnabled(True)
+        self._btn_inst.setEnabled(True)
         self._refresh_status()
 
     def _on_err(self, msg: str) -> None:
         self._lbl_dl.setText(_("Error: ") + msg)
-        self._btn_dl.setEnabled(True)
+        self._btn_inst.setEnabled(True)
         self._progress.setVisible(False)
