@@ -69,6 +69,7 @@ class RadioControlWidget(QWidget):
     aprs_transponder_selected: Signal = Signal()
     ft4_transponder_selected: Signal = Signal()
     meteor_transponder_selected: Signal = Signal(int, int)  # norad, downlink_hz
+    cw_transponder_selected: Signal = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -515,6 +516,10 @@ class RadioControlWidget(QWidget):
             self._pending_comms_tab = "aprs"
         elif "FT4" in desc or "FT8" in desc:
             self._pending_comms_tab = "ft4"
+        elif mode in ("CW", "CW-R"):
+            # CW is RX-only — emit immediately (no rig connection required)
+            self.cw_transponder_selected.emit()
+            self._pending_comms_tab = None
         else:
             self._pending_comms_tab = None
 

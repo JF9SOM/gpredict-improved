@@ -404,6 +404,7 @@ class MainWindow(QMainWindow):
         self._radio_control.meteor_transponder_selected.connect(
             self._on_meteor_transponder_selected
         )
+        self._radio_control.cw_transponder_selected.connect(self._on_cw_transponder_selected)
         self._radio_control.cw_mode_requested.connect(self._on_cw_mode_requested)
         self._restore_satellite_filter()
         # Load bundled community transmitters immediately (no network required).
@@ -582,6 +583,7 @@ class MainWindow(QMainWindow):
             comm_menu.addAction(_("SSTV / SSDV"), self._on_open_sstv)
             comm_menu.addAction(_("FT4"), self._on_open_ft4)
             comm_menu.addAction(_("Q65"), self._on_open_q65)
+            comm_menu.addAction(_("CW Decoder"), self._on_open_cw)
             comm_menu.addSeparator()
             comm_menu.addAction(_("METEOR / HRPT"), self._on_open_meteor)
 
@@ -634,6 +636,7 @@ class MainWindow(QMainWindow):
             help_menu.addAction(_("Direwolf Installation…"), self._on_direwolf_help)
             help_menu.addAction(_("SatDump…"), self._on_satdump_help)
             help_menu.addAction(_("gr-satellites Installation…"), self._on_gr_satellites_help)
+            help_menu.addAction(_("CW Model Installation…"), self._on_cw_model_help)
             help_menu.addSeparator()
             help_menu.addAction(_("About"), self._on_about)
             help_menu.addAction(_("GitHub"), self._on_github)
@@ -1721,6 +1724,31 @@ class MainWindow(QMainWindow):
                 best_diff = diff
                 best_idx = i
         self._radio_control.set_transmitters(transmitters, default_index=best_idx)
+
+    def _on_open_cw(self) -> None:
+        """Open the CW Decoder tab (Communications > CW Decoder)."""
+        tab_label = _("CW Decoder")
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == tab_label:
+                self._tab_widget.setCurrentIndex(i)
+                return
+
+        from ui.cw_tab import CwTab
+
+        tab = CwTab(self._conn, self._radio_control, parent=self)
+        idx = self._tab_widget.addTab(tab, tab_label)
+        self._tab_widget.setCurrentIndex(idx)
+
+    def _on_cw_transponder_selected(self) -> None:
+        """Radio Control selected a CW transponder — auto-open CW Decoder tab."""
+        self._on_open_cw()
+
+    def _on_cw_model_help(self) -> None:
+        """Open the Help > CW Model Installation… dialog."""
+        from ui.cw_model_dialog import CwModelDialog
+
+        dlg = CwModelDialog(self)
+        dlg.exec()
 
     def _on_satdump_help(self) -> None:
         """Open the Help > SatDump… dialog."""
