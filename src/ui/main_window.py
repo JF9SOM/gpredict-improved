@@ -1529,6 +1529,7 @@ class MainWindow(QMainWindow):
         from ui.telemetry_tab import TelemetryTab
 
         tab = TelemetryTab(self._conn, self._radio_control, parent=self)
+        tab.satellite_selected.connect(self._select_satellite_by_norad)
         idx = self._tab_widget.addTab(tab, _("Telemetry"))
         self._tab_widget.setCurrentIndex(idx)
         self._notify_comms_tab_of_rig_state(tab)

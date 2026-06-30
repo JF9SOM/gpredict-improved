@@ -22,7 +22,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -55,6 +55,10 @@ _MODE_GR = "gr-satellites"
 
 class TelemetryTab(QWidget):
     """Non-resident tab opened from Communications > Telemetry."""
+
+    satellite_selected = Signal(
+        int
+    )  # emitted when user picks a satellite in the gr-satellites combo
 
     def __init__(
         self,
@@ -136,6 +140,7 @@ class TelemetryTab(QWidget):
         self._combo_gr_sat = QComboBox()
         self._combo_gr_sat.setMinimumWidth(280)
         self._combo_gr_sat.setVisible(False)
+        self._combo_gr_sat.currentIndexChanged.connect(self._on_gr_sat_changed)
         row1.addWidget(self._combo_gr_sat)
         row1.addStretch()
         self._lbl_sat = QLabel(_("Satellite: —"))
@@ -308,6 +313,11 @@ class TelemetryTab(QWidget):
         is_gr = self._current_mode() == _MODE_GR
         self._combo_gr_sat.setVisible(is_gr)
         self._refresh_status()
+
+    def _on_gr_sat_changed(self, _index: int) -> None:
+        norad = self._combo_gr_sat.currentData()
+        if norad is not None:
+            self.satellite_selected.emit(int(norad))
 
     def _current_mode(self) -> str:
         return self._combo_mode.currentText()
