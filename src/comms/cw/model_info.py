@@ -1,7 +1,7 @@
 """CW decoder model path management and availability checks.
 
-Model source: DeepCW (e04/web-deep-cw-decoder), ONNX format.
-Downloaded directly from e04's GitHub Pages — no CI build required.
+Model source: DeepCW engine (e04/deepcw-engine), ONNX format.
+Downloaded directly from GitHub raw content — no CI build required.
 
 Detection priority:
   1. User-installed  ~/.local/share/fbsat59/cwmodel/  (Linux)
@@ -19,19 +19,10 @@ import platformdirs
 # Model file names (local storage)
 # ---------------------------------------------------------------------------
 
-MODEL_FILES: dict[str, str] = {
-    "en": "model_en.onnx",
-    "ja": "model_ja.onnx",
-    "detect": "detect_cw.onnx",
-}
+MODEL_FILE = "model.onnx"
 
-# Download URLs — ONNX binaries served from e04's GitHub Pages
-_BASE_URL = "https://e04.github.io/web-deep-cw-decoder/dist/models"
-MODEL_URLS: dict[str, str] = {
-    "en": f"{_BASE_URL}/en/39578E22-27CE-4AFB-989F-450345767A53",
-    "ja": f"{_BASE_URL}/ja/A960AA1B-FFD3-4795-A881-484F4EEB0455",
-    "detect": f"{_BASE_URL}/detect_cw/88C0EAD8-52C6-460C-9B9F-EE6CB56221F3",
-}
+# Download URL — raw content from e04/deepcw-engine main branch
+MODEL_URL = "https://raw.githubusercontent.com/e04/deepcw-engine/main/model.onnx"
 
 
 # ---------------------------------------------------------------------------
@@ -44,23 +35,19 @@ def get_user_cw_model_dir() -> Path:
     return Path(platformdirs.user_data_dir("fbsat59")) / "cwmodel"
 
 
-def find_model(name: str) -> Path | None:
-    """Return the path to the named model file, or None if not found.
+def find_model() -> Path | None:
+    """Return the path to model.onnx, or None if not found.
 
     Checks user directory first, then PyInstaller bundle.
     """
-    filename = MODEL_FILES.get(name)
-    if not filename:
-        return None
-
     # 1. User-installed
-    user_path = get_user_cw_model_dir() / filename
+    user_path = get_user_cw_model_dir() / MODEL_FILE
     if user_path.exists():
         return user_path
 
     # 2. PyInstaller bundle
     if getattr(sys, "frozen", False):
-        bundle_path = Path(getattr(sys, "_MEIPASS", "")) / "cwmodel" / filename
+        bundle_path = Path(getattr(sys, "_MEIPASS", "")) / "cwmodel" / MODEL_FILE
         if bundle_path.exists():
             return bundle_path
 
@@ -77,8 +64,6 @@ def is_onnxruntime_available() -> bool:
         return False
 
 
-def all_models_available() -> bool:
-    """Return True if onnxruntime and all required model files are present."""
-    if not is_onnxruntime_available():
-        return False
-    return all(find_model(name) is not None for name in ("en", "detect"))
+def is_ready() -> bool:
+    """Return True if onnxruntime and model.onnx are both present."""
+    return is_onnxruntime_available() and find_model() is not None

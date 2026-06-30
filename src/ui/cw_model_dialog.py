@@ -1,18 +1,11 @@
 """Help > CW Model Installation… dialog.
 
-One-click install of onnxruntime (via pip) and the three DeepCW ONNX
-model files (downloaded from e04's GitHub Pages).
+One-click install: installs onnxruntime via pip (if needed), then
+downloads model.onnx from e04/deepcw-engine on GitHub.
 
-Install order (single background thread):
-  1. pip install onnxruntime   — skipped if already present
-  2. Download model_en.onnx    — from e04.github.io
-  3. Download model_ja.onnx
-  4. Download detect_cw.onnx
-
-Models (e04/web-deep-cw-decoder):
-  model_en.onnx   — English CW decoder
-  model_ja.onnx   — Japanese CW decoder
-  detect_cw.onnx  — CW signal frequency detector
+Install steps (single background thread):
+  1. pip install onnxruntime  — skipped if already present
+  2. Download model.onnx      — from raw.githubusercontent.com
 """
 
 from __future__ import annotations
@@ -33,36 +26,29 @@ from PySide6.QtWidgets import (
 )
 
 from comms.cw.model_info import (
-    MODEL_FILES,
-    MODEL_URLS,
+    MODEL_FILE,
+    MODEL_URL,
     find_model,
     get_user_cw_model_dir,
     is_onnxruntime_available,
 )
 from i18n import _
 
-# Total steps: 1 (onnxruntime) + 3 (model files) = 4
-_TOTAL_STEPS = 4
+_TOTAL_STEPS = 2  # onnxruntime + model.onnx
 
 
 # ---------------------------------------------------------------------------
-# Background worker: install onnxruntime (if needed) then download models
+# Background worker
 # ---------------------------------------------------------------------------
 
 
 class _InstallWorker(QThread):
-    """Installs onnxruntime via pip and downloads all CW model files."""
+    """Installs onnxruntime via pip and downloads model.onnx."""
 
     progress = Signal(int)  # 0-100
     status = Signal(str)
     finished_ok = Signal(str)  # install directory
     finished_err = Signal(str)  # error message
-
-    _MODELS = [
-        (MODEL_FILES["en"], MODEL_URLS["en"]),
-        (MODEL_FILES["ja"], MODEL_URLS["ja"]),
-        (MODEL_FILES["detect"], MODEL_URLS["detect"]),
-    ]
 
     def run(self) -> None:
         step = 0
@@ -90,34 +76,25 @@ class _InstallWorker(QThread):
         step += 1
         self.progress.emit(step * 100 // _TOTAL_STEPS)
 
-        # Steps 2-4: download model files
+        # Step 2: download model.onnx
         import urllib.request
 
         dest_dir = get_user_cw_model_dir()
         dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / MODEL_FILE
+        self.status.emit(_("Downloading {name}…").format(name=MODEL_FILE))
+        base_pct = step * 100 // _TOTAL_STEPS
 
-        for filename, url in self._MODELS:
-            self.status.emit(_("Downloading {name}…").format(name=filename))
-            dest = dest_dir / filename
-            base_pct = step * 100 // _TOTAL_STEPS
+        def _hook(block: int, block_size: int, total: int, _base: int = base_pct) -> None:
+            if total > 0:
+                within = min(block * block_size * 100 // total, 100)
+                self.progress.emit(_base + within // _TOTAL_STEPS)
 
-            def _hook(
-                block: int,
-                block_size: int,
-                total: int,
-                _base: int = base_pct,
-            ) -> None:
-                if total > 0:
-                    within = min(block * block_size * 100 // total, 100)
-                    self.progress.emit(_base + within // _TOTAL_STEPS)
-
-            try:
-                urllib.request.urlretrieve(url, dest, reporthook=_hook)
-            except Exception as exc:
-                self.finished_err.emit(f"{filename}: {exc}")
-                return
-            step += 1
-            self.progress.emit(step * 100 // _TOTAL_STEPS)
+        try:
+            urllib.request.urlretrieve(MODEL_URL, dest, reporthook=_hook)
+        except Exception as exc:
+            self.finished_err.emit(f"{MODEL_FILE}: {exc}")
+            return
 
         self.progress.emit(100)
         self.finished_ok.emit(str(dest_dir))
@@ -139,8 +116,6 @@ class CwModelDialog(QDialog):
         self._setup_ui()
         self._refresh_status()
 
-    # ------------------------------------------------------------------ #
-
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
 
@@ -149,27 +124,24 @@ class CwModelDialog(QDialog):
         sl = QVBoxLayout(status_box)
         self._lbl_ort = QLabel()
         self._lbl_ort.setWordWrap(True)
-        self._lbl_models = QLabel()
-        self._lbl_models.setWordWrap(True)
+        self._lbl_model = QLabel()
+        self._lbl_model.setWordWrap(True)
         sl.addWidget(self._lbl_ort)
-        sl.addWidget(self._lbl_models)
+        sl.addWidget(self._lbl_model)
         root.addWidget(status_box)
 
         # About group
-        about_box = QGroupBox(_("About DeepCW Models"))
+        about_box = QGroupBox(_("About DeepCW"))
         al = QVBoxLayout(about_box)
         about_lbl = QLabel(
             _(
-                "The DeepCW models are provided by "
-                "<a href='https://github.com/e04/web-deep-cw-decoder'>"
-                "e04/web-deep-cw-decoder</a>.<br><br>"
-                "They use a CRNN + CTC architecture trained to decode CW (Morse code) "
+                "The DeepCW model is provided by "
+                "<a href='https://github.com/e04/deepcw-engine'>e04/deepcw-engine</a>.<br><br>"
+                "It uses a CRNN + CTC architecture trained to decode CW (Morse code) "
                 "from audio spectrograms with near-zero error at −4 dB S/N.<br><br>"
                 "<b>Clicking Install will automatically:</b><br>"
                 "  1. Install <tt>onnxruntime</tt> (Python ML runtime) via pip<br>"
-                "  2. Download model_en.onnx — English decoder<br>"
-                "  3. Download model_ja.onnx — Japanese (Katakana) decoder<br>"
-                "  4. Download detect_cw.onnx — CW frequency auto-detector"
+                "  2. Download <tt>model.onnx</tt> (~15 MB) from GitHub"
             )
         )
         about_lbl.setOpenExternalLinks(True)
@@ -212,17 +184,16 @@ class CwModelDialog(QDialog):
                 + _("will be installed automatically")
             )
 
-        lines: list[str] = []
-        for name, filename in MODEL_FILES.items():
-            path = find_model(name)
-            if path:
-                size_kb = path.stat().st_size // 1024
-                lines.append(f"&#x2714; <b>{filename}</b> ({size_kb} KB)")
-            else:
-                lines.append(f"&#x2718; <b>{filename}</b> — {_('not found')}")
-        self._lbl_models.setText("<br>".join(lines))
-
-    # ------------------------------------------------------------------ #
+        path = find_model()
+        if path:
+            size_kb = path.stat().st_size // 1024
+            self._lbl_model.setText(
+                f"<b style='color:#27ae60'>&#x2714; {MODEL_FILE}</b> ({size_kb} KB)"
+            )
+        else:
+            self._lbl_model.setText(
+                f"<b style='color:#e74c3c'>&#x2718; {MODEL_FILE}</b> — {_('not found')}"
+            )
 
     def _on_install(self) -> None:
         self._btn_inst.setEnabled(False)
