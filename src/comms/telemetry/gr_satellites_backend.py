@@ -40,7 +40,7 @@ def list_gr_satellites_norads() -> set[int]:
     if not _SATYAML_DIR.exists():
         return set()
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
     except ImportError:
         return set()
     norads: set[int] = set()
@@ -60,7 +60,7 @@ def list_gr_satellites_with_names() -> list[tuple[int, str]]:
     if not _SATYAML_DIR.exists():
         return []
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
     except ImportError:
         return []
     result: list[tuple[int, str]] = []
@@ -87,7 +87,7 @@ def get_satellite_info(norad: int) -> dict[str, object] | None:
     if not _SATYAML_DIR.exists():
         return None
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
     except ImportError:
         return None
     for yml in _SATYAML_DIR.glob("*.yml"):

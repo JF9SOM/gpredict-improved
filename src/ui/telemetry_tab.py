@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -320,7 +321,7 @@ class TelemetryTab(QWidget):
         """Enable/disable gr-satellites option based on availability."""
         gr_available = detect_gr_satellites() and bool(self._gr_sat_list)
         model = self._combo_mode.model()
-        if model is not None:
+        if isinstance(model, QStandardItemModel):
             item = model.item(1)
             if item is not None:
                 item.setEnabled(gr_available)
@@ -406,7 +407,8 @@ class TelemetryTab(QWidget):
                 if pipeline is not None:
                     self._sdr_connected = True
                     self._sdr_pipeline = pipeline
-                    return pipeline
+                    result: object = pipeline
+                    return result
             # Delegate to Radio Control's connect button handler so the UI
             # stays consistent (button state, status label, signals, etc.)
             self._lbl_status.setText(_("Connecting SDR…"))
