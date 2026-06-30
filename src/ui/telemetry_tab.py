@@ -339,8 +339,9 @@ class TelemetryTab(QWidget):
 
         pipeline = self._sdr_pipeline
         if pipeline is None:
-            self._set_error(_("⚠ SDR not connected"))
-            return
+            pipeline = self._auto_connect_sdr()
+            if pipeline is None:
+                return
 
         try:
             samp_rate = int(pipeline._device.sample_rate)  # type: ignore[attr-defined]
@@ -352,6 +353,35 @@ class TelemetryTab(QWidget):
             self._set_error(f"⚠ {err}")
             self._btn_start.setEnabled(True)
             self._btn_stop.setEnabled(False)
+
+    def _auto_connect_sdr(self) -> object | None:
+        """Connect the first available SDR rig via Radio Control and return its pipeline."""
+        rc = self._radio_control
+        for attr in ("_rig1", "_rig2"):
+            rig = getattr(rc, attr, None)
+            if rig is None or not getattr(rig, "is_sdr", False):
+                continue
+            # Already connected — just grab the pipeline
+            if getattr(rig, "is_connected", False):
+                pipeline = getattr(rig, "_pipeline", None)
+                if pipeline is not None:
+                    self._sdr_connected = True
+                    self._sdr_pipeline = pipeline
+                    return pipeline
+            # Delegate to Radio Control's connect button handler so the UI
+            # stays consistent (button state, status label, signals, etc.)
+            self._lbl_status.setText(_("Connecting SDR…"))
+            connect_fn = getattr(
+                rc, "_on_connect_rig1" if attr == "_rig1" else "_on_connect_rig2", None
+            )
+            if connect_fn is not None:
+                connect_fn()
+            self._set_error(
+                _("SDR connecting via Radio Control — press Start again once connected")
+            )
+            return None
+        self._set_error(_("⚠ No SDR configured in Rig Settings"))
+        return None
 
     def _stop_gr_satellites(self) -> None:
         if self._gr_backend.is_running:
