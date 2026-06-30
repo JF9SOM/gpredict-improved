@@ -88,12 +88,11 @@ class TelemetryTab(QWidget):
         self._ensure_db_table()
         self._setup_ui()
         self._connect_signals()
+        if detect_gr_satellites():
+            self._gr_norads = list_gr_satellites_norads()
         self._detect_already_connected()
         self._refresh_input_combo()
         self._refresh_status()
-
-        if detect_gr_satellites():
-            self._gr_norads = list_gr_satellites_norads()
 
     # ------------------------------------------------------------------ #
     # DB
@@ -282,7 +281,6 @@ class TelemetryTab(QWidget):
         """Enable/disable gr-satellites option based on availability."""
         gr_available = (
             detect_gr_satellites()
-            and self._sdr_connected
             and self._selected_norad is not None
             and self._selected_norad in self._gr_norads
         )
