@@ -1529,13 +1529,22 @@ class MainWindow(QMainWindow):
         from ui.telemetry_tab import TelemetryTab
 
         tab = TelemetryTab(self._conn, self._radio_control, parent=self)
-        tab.satellite_selected.connect(self._select_satellite_by_norad)
+        tab.satellite_selected.connect(self._on_telemetry_satellite_requested)
         idx = self._tab_widget.addTab(tab, _("Telemetry"))
         self._tab_widget.setCurrentIndex(idx)
         self._notify_comms_tab_of_rig_state(tab)
         if self._selected_norad is not None:
             sat_name = self._sat_name_cache.get(self._selected_norad, str(self._selected_norad))
             tab.set_satellite(self._selected_norad, sat_name)
+
+    def _on_telemetry_satellite_requested(self, norad: int) -> None:
+        """Telemetry tab combo changed — switch filter to All and select satellite."""
+        all_text = "All Satellites"
+        if self._filter_combo.currentText() != all_text:
+            idx = self._filter_combo.findText(all_text)
+            if idx >= 0:
+                self._filter_combo.setCurrentIndex(idx)
+        self._select_satellite_by_norad(norad)
 
     def _on_open_sstv(self) -> None:
         """Open the SSTV / SSDV tab (Communications > SSTV / SSDV)."""
