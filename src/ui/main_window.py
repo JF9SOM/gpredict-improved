@@ -1575,23 +1575,32 @@ class MainWindow(QMainWindow):
                     best_score = score
                     best_idx = i
         else:
-            # gr-satellites: pick closest to any YAML frequency
-            from comms.telemetry.gr_satellites_backend import get_satellite_info
+            # gr-satellites: TLM/Telemetry description first, then YAML frequency proximity
+            tlm_idx: int | None = None
+            for i, t in enumerate(transmitters):
+                desc = (t.get("description") or "").upper()
+                if "TLM" in desc or "TELEMETRY" in desc:
+                    tlm_idx = i
+                    break
+            if tlm_idx is not None:
+                best_idx = tlm_idx
+            else:
+                from comms.telemetry.gr_satellites_backend import get_satellite_info
 
-            info = get_satellite_info(norad)
-            freqs: list[int] = (
-                [int(f) for f in info["frequencies"]]  # type: ignore[index]
-                if info and info.get("frequencies")
-                else []
-            )
-            if freqs:
-                best_diff = float("inf")
-                for i, t in enumerate(transmitters):
-                    dl = t.get("downlink_low") or 0
-                    diff = min(abs(dl - f) for f in freqs)
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_idx = i
+                info = get_satellite_info(norad)
+                freqs: list[int] = (
+                    [int(f) for f in info["frequencies"]]  # type: ignore[index]
+                    if info and info.get("frequencies")
+                    else []
+                )
+                if freqs:
+                    best_diff = float("inf")
+                    for i, t in enumerate(transmitters):
+                        dl = t.get("downlink_low") or 0
+                        diff = min(abs(dl - f) for f in freqs)
+                        if diff < best_diff:
+                            best_diff = diff
+                            best_idx = i
 
         self._radio_control.set_transmitters(transmitters, default_index=best_idx)
 
