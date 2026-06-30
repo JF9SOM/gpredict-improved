@@ -1487,6 +1487,15 @@ class MainWindow(QMainWindow):
         ):
             tab._on_rig2_connected()
 
+    def _notify_telemetry_tab_satellite(self, norad: int, name: str) -> None:
+        """Forward satellite selection to the Telemetry tab if it is open."""
+        for i in range(self._tab_widget.count()):
+            if self._tab_widget.tabText(i) == _("Telemetry"):
+                w = self._tab_widget.widget(i)
+                if w is not None and hasattr(w, "set_satellite"):
+                    w.set_satellite(norad, name)
+                break
+
     def _on_open_aprs(self) -> None:
         """Open the APRS tab (Communications > APRS).
 
@@ -1523,6 +1532,9 @@ class MainWindow(QMainWindow):
         idx = self._tab_widget.addTab(tab, _("Telemetry"))
         self._tab_widget.setCurrentIndex(idx)
         self._notify_comms_tab_of_rig_state(tab)
+        if self._selected_norad is not None:
+            sat_name = self._sat_name_cache.get(self._selected_norad, str(self._selected_norad))
+            tab.set_satellite(self._selected_norad, sat_name)
 
     def _on_open_sstv(self) -> None:
         """Open the SSTV / SSDV tab (Communications > SSTV / SSDV)."""
@@ -2390,6 +2402,7 @@ class MainWindow(QMainWindow):
         self._detail_panel.set_satellite(norad, name)
         self._radio_control.set_satellite(norad, name)
         self._dashboard_view.set_satellite(norad, name)
+        self._notify_telemetry_tab_satellite(norad, name)
 
         if norad == MOON_ID:
             self._world_map.clear_footprint()

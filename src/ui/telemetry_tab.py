@@ -1,8 +1,9 @@
 """Telemetry tab widget — Communications > Telemetry.
 
 Receives AX.25 frames from:
-  - Direwolf / KISS (via RigConnect + Sound Card)
-  - [future] Bell 202 AFSK Python demodulator (SDR receive path)
+  - Bell 202 AFSK Python demodulator (SDR receive path)
+  - Direwolf / KISS (via Rig + Sound Card)
+  - gr-satellites subprocess (SDR path, 300+ satellites including 9k6 FSK)
 
 Decodes frames using JSON format definitions in
 src/data/telemetry_formats/{norad}.json.
@@ -14,6 +15,7 @@ and can be exported as CSV.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import datetime
 import json
@@ -22,6 +24,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -38,7 +41,16 @@ from comms.aprs.afsk_demod import AfskDemodulator
 from comms.aprs.direwolf import DirewolfManager, find_direwolf
 from comms.aprs.parser import decode_ax25
 from comms.telemetry.decoder import TelemetryFrame, decode_telemetry, list_formats
+from comms.telemetry.gr_satellites_backend import (
+    GrSatellitesBackend,
+    detect_gr_satellites,
+    get_satellite_info,
+    list_gr_satellites_norads,
+)
 from i18n import _
+
+_MODE_AFSK = "Bell 202 AFSK"
+_MODE_GR = "gr-satellites"
 
 
 class TelemetryTab(QWidget):
@@ -53,17 +65,34 @@ class TelemetryTab(QWidget):
         super().__init__(parent)
         self._conn = conn
         self._radio_control = radio_control
+
+        # AFSK backend state
         self._mgr: DirewolfManager | None = None
         self._demod: AfskDemodulator | None = None
         self._sdr_pipeline: object | None = None
         self._rig_connected = False
         self._sdr_connected = False
+
+        # gr-satellites backend
+        self._gr_backend = GrSatellitesBackend(self)
+        self._gr_backend.telemetry_received.connect(self._on_gr_telemetry)
+        self._gr_backend.status_changed.connect(self._on_gr_status)
+        self._gr_norads: set[int] = set()
+
+        # Selected satellite (updated via set_satellite() from main_window)
+        self._selected_norad: int | None = None
+        self._selected_name: str = ""
+
         self._frame_count = 0
 
         self._ensure_db_table()
         self._setup_ui()
         self._connect_signals()
+        self._refresh_input_combo()
         self._refresh_status()
+
+        if detect_gr_satellites():
+            self._gr_norads = list_gr_satellites_norads()
 
     # ------------------------------------------------------------------ #
     # DB
@@ -92,17 +121,42 @@ class TelemetryTab(QWidget):
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
 
-        # --- Status bar ---
-        status_row = QHBoxLayout()
-        self._lbl_status = QLabel(_("Input: —"))
-        self._lbl_status.setStyleSheet("color: #aaa;")
-        self._lbl_count = QLabel(_("Frames: 0 received"))
-        status_row.addWidget(self._lbl_status)
-        status_row.addStretch()
-        status_row.addWidget(self._lbl_count)
-        root.addLayout(status_row)
+        # --- Input source group ---
+        input_box = QGroupBox(_("Input Source"))
+        input_layout = QVBoxLayout(input_box)
 
-        # --- Supported satellites ---
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel(_("Mode:")))
+        self._combo_mode = QComboBox()
+        self._combo_mode.addItem(_MODE_AFSK)
+        self._combo_mode.addItem(_MODE_GR)
+        self._combo_mode.currentIndexChanged.connect(self._on_mode_changed)
+        row1.addWidget(self._combo_mode)
+        row1.addStretch()
+        self._lbl_sat = QLabel(_("Satellite: —"))
+        self._lbl_sat.setStyleSheet("color: #aaa;")
+        row1.addWidget(self._lbl_sat)
+        input_layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        self._btn_start = QPushButton(_("▶ Start"))
+        self._btn_start.clicked.connect(self._on_start)
+        self._btn_stop = QPushButton(_("■ Stop"))
+        self._btn_stop.clicked.connect(self._on_stop)
+        self._btn_stop.setEnabled(False)
+        self._lbl_status = QLabel(_("—"))
+        self._lbl_status.setStyleSheet("color: #aaa;")
+        row2.addWidget(self._btn_start)
+        row2.addWidget(self._btn_stop)
+        row2.addWidget(self._lbl_status)
+        row2.addStretch()
+        self._lbl_count = QLabel(_("Frames: 0 received"))
+        row2.addWidget(self._lbl_count)
+        input_layout.addLayout(row2)
+
+        root.addWidget(input_box)
+
+        # --- Supported satellites (JSON format definitions) ---
         sat_box = QGroupBox(_("Supported Satellites (format definitions)"))
         sat_layout = QHBoxLayout(sat_box)
         self._lbl_formats = QLabel()
@@ -146,36 +200,43 @@ class TelemetryTab(QWidget):
         self._lbl_formats.setText(names)
 
     # ------------------------------------------------------------------ #
+    # Public API — called by main_window when satellite selection changes
+    # ------------------------------------------------------------------ #
+
+    def set_satellite(self, norad: int | None, name: str) -> None:
+        """Update the currently tracked satellite."""
+        self._selected_norad = norad
+        self._selected_name = name
+        if norad:
+            self._lbl_sat.setText(f"{name} ({norad})")
+            self._lbl_sat.setStyleSheet("color: #ddd;")
+        else:
+            self._lbl_sat.setText(_("Satellite: —"))
+            self._lbl_sat.setStyleSheet("color: #aaa;")
+        self._refresh_input_combo()
+
+    # ------------------------------------------------------------------ #
     # Signals from RadioControlWidget
     # ------------------------------------------------------------------ #
 
     def _connect_signals(self) -> None:
         try:
-            self._radio_control.rig_connected.connect(  # type: ignore[attr-defined]
-                self._on_rig_connected
-            )
-            self._radio_control.rig_disconnected.connect(  # type: ignore[attr-defined]
-                self._on_rig_disconnected
-            )
-            self._radio_control.rig2_connected.connect(  # type: ignore[attr-defined]
-                self._on_rig2_connected
-            )
-            self._radio_control.rig2_disconnected.connect(  # type: ignore[attr-defined]
-                self._on_rig2_disconnected
-            )
+            self._radio_control.rig_connected.connect(self._on_rig_connected)  # type: ignore[attr-defined]
+            self._radio_control.rig_disconnected.connect(self._on_rig_disconnected)  # type: ignore[attr-defined]
+            self._radio_control.rig2_connected.connect(self._on_rig2_connected)  # type: ignore[attr-defined]
+            self._radio_control.rig2_disconnected.connect(self._on_rig2_disconnected)  # type: ignore[attr-defined]
         except AttributeError:
             pass
 
     def _on_rig_connected(self) -> None:
-        """Rig 1 connected — may be a Hamlib rig or an SDR adapter."""
         rc = self._radio_control
         rig1 = getattr(rc, "_rig1", None)
         if rig1 is not None and getattr(rig1, "is_sdr", False):
             self._sdr_connected = True
-            self._try_start_sdr(rig1)
+            self._sdr_pipeline = getattr(rig1, "_pipeline", None)
         else:
             self._rig_connected = True
-            self._try_start()
+        self._refresh_input_combo()
         self._refresh_status()
 
     def _on_rig_disconnected(self) -> None:
@@ -183,22 +244,22 @@ class TelemetryTab(QWidget):
         rig1 = getattr(rc, "_rig1", None)
         if rig1 is not None and getattr(rig1, "is_sdr", False):
             self._sdr_connected = False
-            self._stop_sdr()
+            self._on_stop()
         else:
             self._rig_connected = False
             self._stop_direwolf()
+        self._refresh_input_combo()
         self._refresh_status()
 
     def _on_rig2_connected(self) -> None:
-        """Rig 2 connected — may be a Hamlib rig or an SDR adapter."""
         rc = self._radio_control
         rig2 = getattr(rc, "_rig2", None)
         if rig2 is not None and getattr(rig2, "is_sdr", False):
             self._sdr_connected = True
-            self._try_start_sdr(rig2)
+            self._sdr_pipeline = getattr(rig2, "_pipeline", None)
         else:
             self._rig_connected = True
-            self._try_start()
+        self._refresh_input_combo()
         self._refresh_status()
 
     def _on_rig2_disconnected(self) -> None:
@@ -206,48 +267,150 @@ class TelemetryTab(QWidget):
         rig2 = getattr(rc, "_rig2", None)
         if rig2 is not None and getattr(rig2, "is_sdr", False):
             self._sdr_connected = False
-            self._stop_sdr()
+            self._on_stop()
         else:
             self._rig_connected = False
             self._stop_direwolf()
+        self._refresh_input_combo()
         self._refresh_status()
 
     # ------------------------------------------------------------------ #
-    # Direwolf lifecycle
+    # Input combo helpers
     # ------------------------------------------------------------------ #
 
-    def _try_start(self) -> None:
-        if not self._rig_connected:
-            return
-        if not find_direwolf():
-            self._lbl_status.setText(
-                _("Input: ⚠ Direwolf not found — use Help > Direwolf… to install")
-            )
+    def _refresh_input_combo(self) -> None:
+        """Enable/disable gr-satellites option based on availability."""
+        gr_available = (
+            detect_gr_satellites()
+            and self._sdr_connected
+            and self._selected_norad is not None
+            and self._selected_norad in self._gr_norads
+        )
+        model = self._combo_mode.model()
+        if model is not None:
+            item = model.item(1)
+            if item is not None:
+                item.setEnabled(gr_available)
+
+        if not gr_available and self._combo_mode.currentIndex() == 1:
+            self._combo_mode.setCurrentIndex(0)
+
+    def _on_mode_changed(self, _index: int) -> None:
+        self._refresh_status()
+
+    def _current_mode(self) -> str:
+        return self._combo_mode.currentText()
+
+    # ------------------------------------------------------------------ #
+    # Start / Stop
+    # ------------------------------------------------------------------ #
+
+    def _on_start(self) -> None:
+        if self._current_mode() == _MODE_GR:
+            self._start_gr_satellites()
+        else:
+            self._try_start_afsk()
+        self._btn_start.setEnabled(False)
+        self._btn_stop.setEnabled(True)
+
+    def _on_stop(self) -> None:
+        self._stop_gr_satellites()
+        self._stop_direwolf()
+        self._stop_sdr()
+        self._btn_start.setEnabled(True)
+        self._btn_stop.setEnabled(False)
+        self._refresh_status()
+
+    # ------------------------------------------------------------------ #
+    # gr-satellites lifecycle
+    # ------------------------------------------------------------------ #
+
+    def _start_gr_satellites(self) -> None:
+        norad = self._selected_norad
+        if norad is None:
+            self._set_error(_("⚠ No satellite selected"))
             return
 
+        pipeline = self._sdr_pipeline
+        if pipeline is None:
+            self._set_error(_("⚠ SDR not connected"))
+            return
+
+        try:
+            samp_rate = int(pipeline._device.sample_rate)  # type: ignore[attr-defined]
+        except AttributeError:
+            samp_rate = 2_400_000
+
+        ok, err = self._gr_backend.start(norad, samp_rate, pipeline)
+        if not ok:
+            self._set_error(f"⚠ {err}")
+            self._btn_start.setEnabled(True)
+            self._btn_stop.setEnabled(False)
+
+    def _stop_gr_satellites(self) -> None:
+        if self._gr_backend.is_running:
+            self._gr_backend.stop()
+
+    def _on_gr_status(self, msg: str) -> None:
+        self._lbl_status.setText(msg)
+        color = "#27ae60" if self._gr_backend.is_running else "#aaa"
+        self._lbl_status.setStyleSheet(f"color: {color};")
+
+    def _on_gr_telemetry(self, text: str) -> None:
+        """Parse a gr-satellites stdout block and add it to the table."""
+        callsign = ""
+        data_lines: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if line.startswith("-> Packet from"):
+                callsign = line.replace("-> Packet from", "").strip()
+            elif stripped and stripped != "Container:":
+                data_lines.append(stripped)
+
+        sat_name = self._selected_name
+        if not sat_name and self._selected_norad:
+            info = get_satellite_info(self._selected_norad)
+            sat_name = str(info.get("name", "")) if info else ""
+        data_text = "  |  ".join(data_lines) if data_lines else text[:120]
+
+        self._append_row(
+            callsign=callsign or sat_name or "—",
+            sat_name=sat_name or "—",
+            data=data_text,
+            norad=self._selected_norad,
+        )
+
+    # ------------------------------------------------------------------ #
+    # AFSK lifecycle (Bell 202)
+    # ------------------------------------------------------------------ #
+
+    def _try_start_afsk(self) -> None:
+        if self._sdr_connected and self._sdr_pipeline is not None:
+            self._try_start_sdr(self._sdr_pipeline)
+        elif self._rig_connected:
+            self._try_start_direwolf()
+        else:
+            self._set_error(_("⚠ Connect Rig or SDR first"))
+            self._btn_start.setEnabled(True)
+            self._btn_stop.setEnabled(False)
+
+    def _try_start_direwolf(self) -> None:
+        if not find_direwolf():
+            self._set_error(_("⚠ Direwolf not found — use Help > Direwolf… to install"))
+            return
         in_dev, out_dev = self._load_soundcard_devices()
         if in_dev is None:
-            self._lbl_status.setText(
-                _("Input: ⚠ Sound Card not configured — open Rig Settings > Sound Card")
-            )
+            self._set_error(_("⚠ Sound Card not configured — open Rig Settings > Sound Card"))
             return
-
         self._mgr = DirewolfManager()
-        ok, err = self._mgr.start(
-            callsign="N0CALL",
-            ssid=0,
-            in_device=in_dev,
-            out_device=out_dev,
-        )
+        ok, err = self._mgr.start(callsign="N0CALL", ssid=0, in_device=in_dev, out_device=out_dev)
         if not ok:
-            self._lbl_status.setText(_("Input: ⚠ ") + err)
+            self._set_error(f"⚠ {err}")
             return
-
         kiss = self._mgr.kiss_client
         if kiss:
             kiss.frame_received.connect(self._on_ax25_frame)
             kiss.connection_lost.connect(self._on_kiss_lost)
-
         self._refresh_status()
 
     def _stop_direwolf(self) -> None:
@@ -255,52 +418,49 @@ class TelemetryTab(QWidget):
             self._mgr.stop()
             self._mgr = None
 
-    def _try_start_sdr(self, rig2: object) -> None:
-        """Start Bell 202 AFSK demodulator on the SDR pipeline (receive only)."""
-        pipeline = getattr(rig2, "_pipeline", None)
-        if pipeline is None:
-            self._lbl_status.setText(_("Input: ⚠ SDR pipeline not ready"))
-            return
+    def _try_start_sdr(self, pipeline: object) -> None:
         try:
-            sr = int(pipeline._device.sample_rate)
+            sr = int(pipeline._device.sample_rate)  # type: ignore[attr-defined]
         except AttributeError:
-            self._lbl_status.setText(_("Input: ⚠ Cannot determine SDR sample rate"))
+            self._set_error(_("⚠ Cannot determine SDR sample rate"))
             return
         self._sdr_pipeline = pipeline
         self._demod = AfskDemodulator(sample_rate=sr, parent=self)
         self._demod.frame_received.connect(self._on_ax25_frame)
         self._demod.start()
-        pipeline.subscribe(self._demod.push_samples)
+        pipeline.subscribe(self._demod.push_samples)  # type: ignore[attr-defined]
         self._refresh_status()
 
     def _stop_sdr(self) -> None:
         if self._demod is not None and self._sdr_pipeline is not None:
-            self._sdr_pipeline.unsubscribe(  # type: ignore[attr-defined]
-                self._demod.push_samples
-            )
+            with contextlib.suppress(AttributeError):
+                self._sdr_pipeline.unsubscribe(self._demod.push_samples)  # type: ignore[attr-defined]
             self._demod.stop()
             self._demod = None
-        self._sdr_pipeline = None
 
     def _on_kiss_lost(self) -> None:
-        self._lbl_status.setText(_("Input: ⚠ Direwolf connection lost"))
+        self._set_error(_("⚠ Direwolf connection lost"))
 
     # ------------------------------------------------------------------ #
-    # Frame reception
+    # AX.25 frame handler (Bell 202 path)
     # ------------------------------------------------------------------ #
 
     def _on_ax25_frame(self, raw: bytes) -> None:
         frame = decode_ax25(raw)
         if frame is None:
             return
-
-        # Try to resolve NORAD from callsign via DB
         norad = self._callsign_to_norad(frame.src)
         tf = decode_telemetry(frame.src, frame.payload, norad)
-        self._append_frame(tf)
+        self._append_row(
+            callsign=tf.callsign,
+            sat_name=tf.satellite_name,
+            data=tf.summary(),
+            norad=tf.norad,
+            gray=not tf.has_fields,
+        )
+        self._persist_frame(tf, datetime.datetime.now(datetime.UTC))
 
     def _callsign_to_norad(self, callsign: str) -> int | None:
-        """Look up NORAD by matching callsign in format definitions."""
         call_upper = callsign.upper().split("-")[0]
         for fmt in list_formats():
             if fmt.get("callsign", "").upper() == call_upper:
@@ -313,25 +473,33 @@ class TelemetryTab(QWidget):
         ).fetchone()
         return int(row["norad_cat_id"]) if row else None
 
-    def _append_frame(self, tf: TelemetryFrame) -> None:
+    # ------------------------------------------------------------------ #
+    # Table helpers
+    # ------------------------------------------------------------------ #
+
+    def _append_row(
+        self,
+        *,
+        callsign: str,
+        sat_name: str,
+        data: str,
+        norad: int | None,
+        gray: bool = False,
+    ) -> None:
         now = datetime.datetime.now(datetime.UTC)
         ts = now.strftime("%H:%M:%S")
-
         row = self._table.rowCount()
         self._table.insertRow(row)
         self._table.setItem(row, 0, QTableWidgetItem(ts))
-        self._table.setItem(row, 1, QTableWidgetItem(tf.callsign))
-        self._table.setItem(row, 2, QTableWidgetItem(tf.satellite_name))
-        data_item = QTableWidgetItem(tf.summary())
-        if not tf.has_fields:
+        self._table.setItem(row, 1, QTableWidgetItem(callsign))
+        self._table.setItem(row, 2, QTableWidgetItem(sat_name))
+        data_item = QTableWidgetItem(data)
+        if gray:
             data_item.setForeground(Qt.GlobalColor.gray)
         self._table.setItem(row, 3, data_item)
         self._table.scrollToBottom()
-
         self._frame_count += 1
         self._lbl_count.setText(_("Frames: ") + str(self._frame_count) + _(" received"))
-
-        self._persist_frame(tf, now)
 
     def _persist_frame(self, tf: TelemetryFrame, ts: datetime.datetime) -> None:
         if not hasattr(self._conn, "execute"):
@@ -350,20 +518,24 @@ class TelemetryTab(QWidget):
         self._conn.commit()
 
     # ------------------------------------------------------------------ #
-    # Status
+    # Status helpers
     # ------------------------------------------------------------------ #
 
+    def _set_error(self, msg: str) -> None:
+        self._lbl_status.setText(msg)
+        self._lbl_status.setStyleSheet("color: #e74c3c;")
+
     def _refresh_status(self) -> None:
+        if self._gr_backend.is_running:
+            return  # managed by _on_gr_status
         if self._mgr and self._mgr.is_running:
-            self._lbl_status.setText(_("Input: Rig + Direwolf (receiving)"))
+            self._lbl_status.setText(_("Rig + Direwolf (receiving)"))
             self._lbl_status.setStyleSheet("color: #27ae60;")
         elif self._demod is not None and self._sdr_connected:
-            self._lbl_status.setText(_("Input: SDR (receive only — Bell 202 AFSK)"))
+            self._lbl_status.setText(_("SDR — Bell 202 AFSK (receive only)"))
             self._lbl_status.setStyleSheet("color: #4a9eff;")
-        elif self._rig_connected:
-            pass  # message already set in _try_start
         else:
-            self._lbl_status.setText(_("Input: — (connect Rig or SDR to start)"))
+            self._lbl_status.setText(_("—  (connect Rig or SDR, then click ▶ Start)"))
             self._lbl_status.setStyleSheet("color: #aaa;")
 
     # ------------------------------------------------------------------ #
@@ -410,7 +582,6 @@ class TelemetryTab(QWidget):
         )
         if not path:
             return
-
         rows_count = self._table.rowCount()
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -425,6 +596,5 @@ class TelemetryTab(QWidget):
     # ------------------------------------------------------------------ #
 
     def closeEvent(self, event: Any) -> None:
-        self._stop_direwolf()
-        self._stop_sdr()
+        self._on_stop()
         super().closeEvent(event)
