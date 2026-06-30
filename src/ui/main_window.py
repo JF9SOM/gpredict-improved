@@ -1589,7 +1589,7 @@ class MainWindow(QMainWindow):
 
                 info = get_satellite_info(norad)
                 freqs: list[int] = (
-                    [int(f) for f in info["frequencies"]]  # type: ignore[index]
+                    [int(f) for f in info["frequencies"]]  # type: ignore[index,attr-defined]
                     if info and info.get("frequencies")
                     else []
                 )
