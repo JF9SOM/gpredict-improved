@@ -73,7 +73,10 @@ Radio Control でLRPT/HRPTトランスポンダーを選択すると自動オー
 メニューバーの **Communications**（Radio と Autotrack/Record の間）からアクセス。各機能は × で閉じられる非常駐タブとして開きます。
 
 - **APRS** — Rig + サウンドカード + Direwolf（TCP KISS）または SDR 内蔵の Bell 202 AFSK 復調器でAX.25/APRSパケットを受信・デコード。APRSメッセージ・位置ビーコンの送信にも対応（PTTはCAT制御）。受信した位置パケットはDashboardマップにシアン▲ピンで表示。コールサイン・SSID・Viaパスを保存。ADIF出力対応。
-- **Telemetry** — アマチュア衛星のAX.25テレメトリーフレームをデコード。12衛星分のバイナリフォーマット定義を同梱（ISS、FO-29、SO-50、AO-73、JO-97、RS-44、MO-122 等）。定義のない衛星は生Hex表示。CSV出力対応。
+- **Telemetry** — アマチュア衛星の AX.25 テレメトリーフレームを受信・デコード。2 つの受信モードを搭載:
+  - **Bell 202 AFSK** — 内蔵 1200 baud 復調器（SDR）または Direwolf（リグ + サウンドカード）。衛星コンボにはバイナリフォーマット定義済みの 12 機を表示（ISS・JO-97・RS-44・MO-122 等）。定義のない衛星は生 Hex 表示。Start 押下時 SDR を自動接続。
+  - **gr-satellites** — [gr-satellites](https://github.com/daniestevez/gr-satellites) がインストール済みの場合のみ選択可。SDR の生 IQ を UDP で `gr_satellites` サブプロセスに転送。330 機以上に対応。Start 押下時 SDR を自動接続。
+  - どちらのモードでも衛星コンボで選択するとメインの衛星リストが自動連動し、Radio Control がテレメトリー/ビーコン用トランスポンダー周波数に自動切り替わる。CSV 出力対応。
 - **SSTV / SSDV** — アマチュア衛星（例：ISS 145.800 MHz PD120・437.550 MHz Robot36）のSSTV画像（Robot36、PD120、Martin、Scottie）とSSDVパケットを受信。SDR音声またはリグのサウンドカード入力に対応。トランスポンダー説明に「SSTV」「SSDV」「IMAGING」が含まれると自動オープン。
 - **FT4** — 内蔵 ft8_lib（ctypes）でFT4の送受信が可能（WSJT-X不要）。Rig + PTTで送信。RS-44・JO-97・MO-122 等のFT4運用衛星で自動オープン。ADIF出力対応。
 - **Q65** — EME（地球-月-地球）弱信号デジタルモード。libq65（WSJT-X ソースからビルド）でデコード（**Help → Q65 Library Installation** でバンドル版を自動インストール）。送信（TX）は純 Python 実装のため libq65 なしでも動作。QSOステートマシン（IDLE→CALLING→EXCHANGE→CONFIRM→LOGGED）、PTTはCAT制御・送信中ドップラー凍結。サブモード A〜E、周期 15/30/60 秒。ADIF出力対応。

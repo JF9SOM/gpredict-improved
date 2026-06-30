@@ -877,6 +877,17 @@ src/
 - 定義なし衛星は生 hex + 衛星名表示
 - CSV エクスポート
 - SQLite `telemetry_log` テーブルへ自動永続化
+- **受信モード切り替え**:
+  - **Bell 202 AFSK**: `src/data/telemetry_formats/` にフォーマット定義がある衛星のみコンボで選択可（12機）。Start 押下時 SDR 未接続なら自動接続を試みる
+  - **gr-satellites**: インストール済みの場合のみ選択可。gr-satellites がサポートする全衛星（330機以上）をコンボで選択。Start 押下時 SDR に IQ を UDP 転送して gr_satellites サブプロセスを起動
+- **衛星コンボ → メインリスト自動連動**: コンボで衛星を選択するとフィルタを「All Satellites」に切り替えたうえでメインの衛星リストでも自動選択
+- **トランスポンダー自動選択**: 衛星選択時に description に「TLM」「Telemetry」を含むトランスポンダーを優先選択（なければ AFSK: type=Beacon→mode=AFSK→mode=CW、gr-satellites: YAML 周波数に最近傍）
+- **gr-satellites バックエンド**（`src/comms/telemetry/gr_satellites_backend.py`）:
+  - `detect_gr_satellites()` — gr_satellites CLI の検出
+  - `list_gr_satellites_with_names()` — YAML から (norad, name) リストを返す
+  - `get_satellite_info(norad)` — YAML から name・transmitters・frequencies を返す
+  - `GrSatellitesBackend(QObject)` — サブプロセス管理・IQ UDP 転送・stdout パース
+  - `_UdpIqForwarder` — SDR パイプラインから UDP でサンプルを送信
 
 **メニュー: Communications > SSTV / SSDV**（`src/ui/sstv_tab.py`）
 - SSTV 受信: pySSTV（Robot36/PD120/Martin/Scottie）、SDR audio_ready または sounddevice 入力
@@ -1296,14 +1307,14 @@ QT_LOGGING_RULES="qt.qpa.*=true" ./FBSAT59.AppImage 2>&1 | head -100
 6. ~~**SDR機能の追加（フェーズ1: 初期実装）**~~ **→ v0.1.0 で完了**
 7. ~~**APRS 受信・送信・位置ビーコン実装**~~ **→ feature/communications（v0.2.0）で完了**（APRSEngine・Direwolf統合・Bell 202 AFSK復調・PTT CAT制御・Doppler凍結・地図ピン表示）
 8. ~~**Telemetry タブ実装**~~ **→ feature/communications（v0.2.0）で完了**（AX.25受信・JSON定義デコード・12衛星フォーマット定義）
+8b. ~~**Telemetry タブ gr-satellites 統合**~~ **→ 2026-06-30 で完了**（gr-satellites サブプロセス・UDP IQ 転送・330機以上対応・衛星コンボ・SDR 自動接続・トランスポンダー自動選択・メインリスト連動）
 9. **テレメトリーフォーマット定義の追加・検証** — 実際に受信したパケットでオフセット・スケールの検証。未定義衛星のフォーマット調査
-9b. **Telemetry タブのトランスポンダー選択連動自動オープン（検討中）** — APRS/SSTV/FT4 はトランスポンダー description のキーワードで自動オープンしているが、テレメトリーは衛星ごとに "Beacon" / "Telemetry" / "CW Beacon" / "UHF Downlink" 等とバラバラで統一されたキーワードがない。`type == "Beacon"` や description に "TELEMETRY"/"BEACON" を含むケースを対象にする案があるが、実装前にSATNOGSデータのパターンをさらに調査する必要がある。実装箇所: `src/ui/radio_control_widget.py` の `_check_comms_auto_open()`
 10. ~~**CI: Direwolf バンドルビルド**~~ **→ feature/communications で完了**（Linux/Windows/macOS 3ジョブ、タグ push 時に direwolf-{platform}-{arch}.{tar.gz|zip} を Releases にアップロード）
 11. ~~**FT4 タブ実装**~~ **→ feature/communications（v0.2.0）で完了**（Ft4Codec/ctypes + ft8_lib・Ft4Scheduler・Ft4QsoManager・Ft4Tab UI・ADIF エクスポート。ft8_lib CI バンドルビルドは v0.2.0 タグ時に Direwolf と同時実施）
 11c. ~~**Q65 Phase 1（RX）実装**~~ **→ 2026-06-26 で完了**（Q65Codec/libq65 ctypes・build-q65lib.yml CI・Help > Q65 Library Installation ダイアログ）
 11d. ~~**Q65 Phase 2（TX/QSO）実装**~~ **→ 2026-06-26 で完了**（純 Python encoder.py: GF(64)・CRC-12・65-FSK / Q65QsoManager: QSOステートマシン・q65_log DB・ADIF / q65_tab.py: TX UI・TX Enable・Halt TX・Log QSO・Export ADIF）
 11e. ~~**METEOR / HRPT 受信タブ実装**~~ **→ 2026-06-29 で完了**（SatDump サブプロセス管理・8衛星対応・Autotrack AOS/LOS 連携・SDR Connect・浮動ログウィンドウ・衛星検索ダイアログ）
-11b. **SDR フェーズ2（将来）— アマチュア衛星・デジタルモード** — gr-satellites・AI-CW（HRPT/LRPT は 11e で完了）
+11b. **SDR フェーズ2（将来）— アマチュア衛星・デジタルモード** — AI-CW（HRPT/LRPT は 11e で完了、gr-satellites は 8b で完了）
 12. **SDR フェーズ2（将来）— 業務用衛星受信** — Inmarsat-C (STD-C)・Cospas-Sarsat L帯・Iridium L帯 ACARS・Orbcomm・みちびき（QZSS）データ放送（詳細は「業務用衛星受信」セクション参照）
 13. ~~**SDR Device Installation ダイアログ**~~ **→ v0.1.0 で実装済み**（src/ui/sdr_install_dialog.py — USB VID/PID スキャン・apt/brew/Zadig 誘導）
 14. ~~**Help > gr-satellites… ダイアログ**~~ **→ feature/communications で完了**（src/ui/gr_satellites_dialog.py — 検出ステータス・apt/brew/pip インストール案内）
