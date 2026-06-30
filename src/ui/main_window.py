@@ -1557,13 +1557,20 @@ class MainWindow(QMainWindow):
 
         best_idx = 0
         if mode == "afsk":
-            # Priority: type=Beacon > mode=AFSK > mode=CW > first entry
-            priority = {"Beacon": 0, "AFSK": 1, "CW": 2}
+            # Priority: description contains TLM/Telemetry > type=Beacon > mode=AFSK > mode=CW
             best_score = 999
             for i, t in enumerate(transmitters):
-                score = priority.get(t.get("type") or "", 999)
-                if score > priority.get("Beacon", 999):
-                    score = min(score, priority.get(t.get("mode") or "", 999))
+                desc = (t.get("description") or "").upper()
+                if "TLM" in desc or "TELEMETRY" in desc:
+                    score = 0
+                elif t.get("type") == "Beacon":
+                    score = 1
+                elif (t.get("mode") or "").upper() == "AFSK":
+                    score = 2
+                elif (t.get("mode") or "").upper() == "CW":
+                    score = 3
+                else:
+                    score = 999
                 if score < best_score:
                     best_score = score
                     best_idx = i
