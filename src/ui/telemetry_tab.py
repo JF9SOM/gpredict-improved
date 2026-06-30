@@ -201,6 +201,11 @@ class TelemetryTab(QWidget):
         if norad:
             self._lbl_sat.setText(f"{name} ({norad})")
             self._lbl_sat.setStyleSheet("color: #ddd;")
+            # Auto-select in gr-satellites combo if supported
+            for i in range(self._combo_gr_sat.count()):
+                if self._combo_gr_sat.itemData(i) == norad:
+                    self._combo_gr_sat.setCurrentIndex(i)
+                    break
         else:
             self._lbl_sat.setText(_("Satellite: —"))
             self._lbl_sat.setStyleSheet("color: #aaa;")
