@@ -412,6 +412,7 @@ GPL-2.0-or-later (compatible with GPredict)
 - [ft8_lib](https://github.com/kgoba/ft8_lib) — Kārlis Goba YL3JG — FT4/FT8 codec (C library, GPL-2.0)
 - [pySSTV](https://github.com/dholm/pySSTV) — Dominik Heidler DL2DH — SSTV encoder/decoder
 - [gr-satellites](https://github.com/daniestevez/gr-satellites) — Daniel Estévez EA4GPZ — amateur satellite telemetry decoders
+- [SatDump](https://github.com/SatDump/SatDump) — the SatDump Contributors — weather satellite imagery decoder (METEOR LRPT/HRPT, NOAA HRPT, Metop HRPT). FBSAT59 launches SatDump as a subprocess; it is not bundled.
 - [WSJT-X](https://wsjt.sourceforge.io/) — Joe Taylor K1JT and the WSJT-X Development Group —
   The Q65 protocol, libq65 source code (`lib/qra/q65/`), and the GF(64) encoding algorithm implemented
   in `src/comms/q65/encoder.py` are derived from WSJT-X (GPL-2.0).
