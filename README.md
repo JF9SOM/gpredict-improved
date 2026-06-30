@@ -366,7 +366,7 @@ SoapySDR is incompatible with WinUSB on Windows; RTL-SDR and HackRF bypass it vi
 
 #### Digital Modes — Amateur Satellites (SDR)
 - ~~**HRPT / LRPT**~~ — **implemented** (METEOR-M / NOAA 18-19 / Metop-B/C via SatDump, with Autotrack integration)
-- **CW decode** — AI-based decoder (ML inference, no zero-crossing artefacts)
+- ~~**CW decode**~~ — **implemented** (AI-based CRNN + CTC decoder via [deepcw-engine](https://github.com/e04/deepcw-engine) ONNX model; one-click install via **Help → CW Model Installation…**; SDR or sound card input; auto-opens on CW/CW-R transponder selection)
 - ~~**gr-satellites deep integration**~~ — **implemented** (330+ satellites via gr-satellites subprocess with UDP IQ forwarding, satellite picker, SDR auto-connect, and transponder auto-select in the Telemetry tab)
 
 #### Operational Satellite Reception (SDR) — Planned
@@ -417,3 +417,4 @@ GPL-2.0-or-later (compatible with GPredict)
   The Q65 protocol, libq65 source code (`lib/qra/q65/`), and the GF(64) encoding algorithm implemented
   in `src/comms/q65/encoder.py` are derived from WSJT-X (GPL-2.0).
   FBSAT59 does not bundle WSJT-X; libq65 is compiled separately from the WSJT-X source tree.
+- [deepcw-engine](https://github.com/e04/deepcw-engine) — e04 — CRNN + CTC model for AI-based CW (Morse code) decoding from audio spectrograms. FBSAT59 downloads the pre-trained `model.onnx` from GitHub and runs inference via onnxruntime; the model is not bundled.

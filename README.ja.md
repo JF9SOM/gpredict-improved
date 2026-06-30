@@ -339,7 +339,7 @@ Windows の SoapySDR は WinUSB との根本的な非互換性があるため、
 
 ### デジタルモード — アマチュア衛星（SDR）
 - ~~**HRPT / LRPT**~~ — **実装済み**（METEOR-M / NOAA 18-19 / Metop-B/C、SatDump経由、Autotrack連携）
-- **CW解析** — AIベースのデコーダー（機械学習推論）
+- ~~**CW解析**~~ — **実装済み**（[deepcw-engine](https://github.com/e04/deepcw-engine) ONNX モデルによる CRNN + CTC AIデコーダー。**Help → CW Model Installation…** からワンクリックインストール。SDR またはサウンドカード入力対応。CW/CW-R トランスポンダー選択時に自動オープン）
 - ~~**gr-satellites 深度統合**~~ — **実装済み**（Telemetry タブで gr-satellites サブプロセスへ UDP IQ 転送・330機以上対応・衛星コンボ・SDR 自動接続・トランスポンダー自動選択）
 
 ### 業務用衛星受信（SDR）— 計画中
@@ -401,3 +401,4 @@ GPL-2.0-or-later（GPredict互換）
   Q65 プロトコル、libq65 ソースコード（`lib/qra/q65/`）、および `src/comms/q65/encoder.py` に実装した
   GF(64) 符号化アルゴリズムは WSJT-X（GPL-2.0）から派生しています。
   FBSAT59 は WSJT-X 本体を同梱せず、libq65 のみ WSJT-X ソースツリーから別途コンパイルしています。
+- [deepcw-engine](https://github.com/e04/deepcw-engine) — e04 — CRNN + CTC アーキテクチャによるAIベースのCW（モールス符号）デコードモデル。FBSAT59 は事前学習済みの `model.onnx` を GitHub からダウンロードし、onnxruntime で推論を実行します。モデルは同梱していません。
