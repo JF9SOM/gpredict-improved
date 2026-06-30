@@ -156,15 +156,6 @@ class TelemetryTab(QWidget):
 
         root.addWidget(input_box)
 
-        # --- Supported satellites (JSON format definitions) ---
-        sat_box = QGroupBox(_("Supported Satellites (format definitions)"))
-        sat_layout = QHBoxLayout(sat_box)
-        self._lbl_formats = QLabel()
-        self._lbl_formats.setWordWrap(True)
-        sat_layout.addWidget(self._lbl_formats)
-        root.addWidget(sat_box)
-        self._populate_format_list()
-
         # --- Receive log ---
         log_box = QGroupBox(_("Received Frames"))
         log_layout = QVBoxLayout(log_box)
@@ -193,11 +184,6 @@ class TelemetryTab(QWidget):
         footer.addStretch()
         footer.addWidget(self._btn_export)
         root.addLayout(footer)
-
-    def _populate_format_list(self) -> None:
-        fmts = list_formats()
-        names = ", ".join(f["name"] for f in fmts) if fmts else _("None bundled yet")
-        self._lbl_formats.setText(names)
 
     # ------------------------------------------------------------------ #
     # Public API — called by main_window when satellite selection changes
