@@ -92,6 +92,7 @@ class TelemetryTab(QWidget):
         self._ensure_db_table()
         self._setup_ui()
         self._connect_signals()
+        self._populate_afsk_combo()
         if detect_gr_satellites():
             self._gr_sat_list = list_gr_satellites_with_names()
             self._populate_gr_combo()
@@ -137,6 +138,10 @@ class TelemetryTab(QWidget):
         self._combo_mode.addItem(_MODE_GR)
         self._combo_mode.currentIndexChanged.connect(self._on_mode_changed)
         row1.addWidget(self._combo_mode)
+        self._combo_afsk_sat = QComboBox()
+        self._combo_afsk_sat.setMinimumWidth(280)
+        self._combo_afsk_sat.currentIndexChanged.connect(self._on_afsk_sat_changed)
+        row1.addWidget(self._combo_afsk_sat)
         self._combo_gr_sat = QComboBox()
         self._combo_gr_sat.setMinimumWidth(280)
         self._combo_gr_sat.setVisible(False)
@@ -206,11 +211,14 @@ class TelemetryTab(QWidget):
         if norad:
             self._lbl_sat.setText(f"{name} ({norad})")
             self._lbl_sat.setStyleSheet("color: #ddd;")
-            # Auto-select in gr-satellites combo if supported
-            for i in range(self._combo_gr_sat.count()):
-                if self._combo_gr_sat.itemData(i) == norad:
-                    self._combo_gr_sat.setCurrentIndex(i)
-                    break
+            # Auto-select in the active mode's satellite combo if supported
+            for combo in (self._combo_afsk_sat, self._combo_gr_sat):
+                for i in range(combo.count()):
+                    if combo.itemData(i) == norad:
+                        combo.blockSignals(True)
+                        combo.setCurrentIndex(i)
+                        combo.blockSignals(False)
+                        break
         else:
             self._lbl_sat.setText(_("Satellite: —"))
             self._lbl_sat.setStyleSheet("color: #aaa;")
@@ -292,6 +300,17 @@ class TelemetryTab(QWidget):
     # Input combo helpers
     # ------------------------------------------------------------------ #
 
+    def _populate_afsk_combo(self) -> None:
+        """Fill the AFSK satellite combo with satellites that have format definitions."""
+        self._combo_afsk_sat.blockSignals(True)
+        self._combo_afsk_sat.clear()
+        for fmt in sorted(list_formats(), key=lambda f: str(f.get("name", "")).upper()):
+            norad = fmt.get("norad")
+            name = fmt.get("name") or str(norad)
+            if norad:
+                self._combo_afsk_sat.addItem(f"{name}  ({norad})", userData=int(norad))
+        self._combo_afsk_sat.blockSignals(False)
+
     def _populate_gr_combo(self) -> None:
         """Fill the gr-satellites satellite combo from the loaded list."""
         self._combo_gr_sat.clear()
@@ -311,8 +330,14 @@ class TelemetryTab(QWidget):
 
     def _on_mode_changed(self, _index: int) -> None:
         is_gr = self._current_mode() == _MODE_GR
+        self._combo_afsk_sat.setVisible(not is_gr)
         self._combo_gr_sat.setVisible(is_gr)
         self._refresh_status()
+
+    def _on_afsk_sat_changed(self, _index: int) -> None:
+        norad = self._combo_afsk_sat.currentData()
+        if norad is not None:
+            self.satellite_selected.emit(int(norad))
 
     def _on_gr_sat_changed(self, _index: int) -> None:
         norad = self._combo_gr_sat.currentData()
@@ -441,9 +466,13 @@ class TelemetryTab(QWidget):
         elif self._rig_connected:
             self._try_start_direwolf()
         else:
-            self._set_error(_("⚠ Connect Rig or SDR first"))
-            self._btn_start.setEnabled(True)
-            self._btn_stop.setEnabled(False)
+            # Try auto-connecting an SDR before giving up
+            pipeline = self._auto_connect_sdr()
+            if pipeline is not None:
+                self._try_start_sdr(pipeline)
+            else:
+                self._btn_start.setEnabled(True)
+                self._btn_stop.setEnabled(False)
 
     def _try_start_direwolf(self) -> None:
         if not find_direwolf():
