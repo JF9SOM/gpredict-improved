@@ -79,7 +79,11 @@ def list_gr_satellites_with_names() -> list[tuple[int, str]]:
 
 
 def get_satellite_info(norad: int) -> dict[str, object] | None:
-    """Return {'name': str, 'transmitters': list} from the YAML, or None."""
+    """Return {'name': str, 'transmitters': list, 'frequencies': list[int]} from the YAML.
+
+    'frequencies' is a sorted list of unique downlink frequencies (Hz) found in the YAML.
+    Returns None if the satellite is not found.
+    """
     if not _SATYAML_DIR.exists():
         return None
     try:
@@ -91,8 +95,20 @@ def get_satellite_info(norad: int) -> dict[str, object] | None:
             with open(yml) as fh:
                 data = yaml.safe_load(fh)
             if isinstance(data, dict) and data.get("norad") == norad:
-                txs = list(data.get("transmitters", {}).keys())
-                return {"name": str(data.get("name", "")), "transmitters": txs}
+                txs = data.get("transmitters", {})
+                tx_names = list(txs.keys())
+                freqs: list[int] = sorted(
+                    {
+                        int(v["frequency"])
+                        for v in txs.values()
+                        if isinstance(v, dict) and v.get("frequency")
+                    }
+                )
+                return {
+                    "name": str(data.get("name", "")),
+                    "transmitters": tx_names,
+                    "frequencies": freqs,
+                }
         except Exception:
             pass
     return None

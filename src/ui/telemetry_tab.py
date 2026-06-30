@@ -56,9 +56,8 @@ _MODE_GR = "gr-satellites"
 class TelemetryTab(QWidget):
     """Non-resident tab opened from Communications > Telemetry."""
 
-    satellite_selected = Signal(
-        int
-    )  # emitted when user picks a satellite in the gr-satellites combo
+    # emitted when user picks a satellite in either combo: (norad, mode_str)
+    satellite_selected = Signal(int, str)
 
     def __init__(
         self,
@@ -337,12 +336,12 @@ class TelemetryTab(QWidget):
     def _on_afsk_sat_changed(self, _index: int) -> None:
         norad = self._combo_afsk_sat.currentData()
         if norad is not None:
-            self.satellite_selected.emit(int(norad))
+            self.satellite_selected.emit(int(norad), "afsk")
 
     def _on_gr_sat_changed(self, _index: int) -> None:
         norad = self._combo_gr_sat.currentData()
         if norad is not None:
-            self.satellite_selected.emit(int(norad))
+            self.satellite_selected.emit(int(norad), "gr")
 
     def _current_mode(self) -> str:
         return self._combo_mode.currentText()

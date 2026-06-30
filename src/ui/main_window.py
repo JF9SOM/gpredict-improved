@@ -1537,14 +1537,56 @@ class MainWindow(QMainWindow):
             sat_name = self._sat_name_cache.get(self._selected_norad, str(self._selected_norad))
             tab.set_satellite(self._selected_norad, sat_name)
 
-    def _on_telemetry_satellite_requested(self, norad: int) -> None:
-        """Telemetry tab combo changed — switch filter to All and select satellite."""
+    def _on_telemetry_satellite_requested(self, norad: int, mode: str = "afsk") -> None:
+        """Telemetry tab combo changed — switch filter to All, select satellite, pick transponder.
+
+        For AFSK mode: prefer Beacon / AFSK type transmitters.
+        For gr-satellites mode: pick the transmitter whose downlink_low is closest to
+        the first frequency listed in the gr-satellites YAML definition.
+        """
         all_text = "All Satellites"
         if self._filter_combo.currentText() != all_text:
             idx = self._filter_combo.findText(all_text)
             if idx >= 0:
                 self._filter_combo.setCurrentIndex(idx)
         self._select_satellite_by_norad(norad)
+        self._refresh_radio_control(norad)
+        transmitters = self._radio_control._transmitters
+        if not transmitters:
+            return
+
+        best_idx = 0
+        if mode == "afsk":
+            # Priority: type=Beacon > mode=AFSK > mode=CW > first entry
+            priority = {"Beacon": 0, "AFSK": 1, "CW": 2}
+            best_score = 999
+            for i, t in enumerate(transmitters):
+                score = priority.get(t.get("type") or "", 999)
+                if score > priority.get("Beacon", 999):
+                    score = min(score, priority.get(t.get("mode") or "", 999))
+                if score < best_score:
+                    best_score = score
+                    best_idx = i
+        else:
+            # gr-satellites: pick closest to any YAML frequency
+            from comms.telemetry.gr_satellites_backend import get_satellite_info
+
+            info = get_satellite_info(norad)
+            freqs: list[int] = (
+                [int(f) for f in info["frequencies"]]  # type: ignore[index]
+                if info and info.get("frequencies")
+                else []
+            )
+            if freqs:
+                best_diff = float("inf")
+                for i, t in enumerate(transmitters):
+                    dl = t.get("downlink_low") or 0
+                    diff = min(abs(dl - f) for f in freqs)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_idx = i
+
+        self._radio_control.set_transmitters(transmitters, default_index=best_idx)
 
     def _on_open_sstv(self) -> None:
         """Open the SSTV / SSDV tab (Communications > SSTV / SSDV)."""
