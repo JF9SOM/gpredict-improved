@@ -10,9 +10,14 @@ DirewolfManager
   - Owns the AudioBridge and KissClient instances
 
 AudioBridge (QThread)
-  - Reads PCM from sounddevice (InputStream, 48 kHz, int16, mono)
-  - Writes raw PCM to direwolf's stdin
-  - Reads direwolf's stdout and plays TX audio via sounddevice OutputStream
+  - Subscribes to the shared 48 kHz RX stream via AudioDeviceManager (so other
+    Communications tabs can read the same soundcard input at the same time)
+    and writes the PCM to direwolf's stdin
+  - Reads direwolf's stdout and plays TX audio via sounddevice OutputStream.
+    DirewolfManager.start() claims the output device exclusively through
+    AudioDeviceManager for the lifetime of the bridge, since two tabs
+    transmitting to the same output device at once would just garble the
+    audio on air.
 
 KissClient (QThread)
   - TCP connection to 127.0.0.1:8001
@@ -35,6 +40,10 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QThread, Signal
+
+from comms.audio_device_manager import get_audio_device_manager
+
+_AUDIO_OWNER = "APRS/Direwolf"
 
 # ---------------------------------------------------------------------------
 # KISS protocol constants
@@ -269,46 +278,40 @@ class AudioBridge(QThread):
         except ImportError:
             return
 
-        # RX: soundcard → Direwolf stdin
-        def _rx_callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
+        # RX: soundcard → Direwolf stdin (shared with other Communications tabs)
+        def _rx_callback(chunk: Any) -> None:
             if self._stop_event.is_set():
                 return
             try:
-                pcm = (indata[:, 0] * 32767).astype("int16").tobytes()
+                pcm = (chunk * 32767).astype("int16").tobytes()
                 self._proc.stdin.write(pcm)  # type: ignore[union-attr]
                 self._proc.stdin.flush()  # type: ignore[union-attr]
             except (OSError, BrokenPipeError):
                 self._stop_event.set()
 
-        kwargs: dict[str, Any] = {
-            "samplerate": self._SAMPLE_RATE,
-            "channels": 1,
-            "dtype": "float32",
-            "blocksize": self._BLOCK_SIZE,
-            "callback": _rx_callback,
-        }
-        if self._in_device is not None:
-            kwargs["device"] = self._in_device
+        mgr = get_audio_device_manager()
+        mgr.acquire_input(_AUDIO_OWNER, self._in_device, self._SAMPLE_RATE, _rx_callback)
 
         try:
-            with sd.InputStream(**kwargs):
-                while not self._stop_event.is_set():
-                    # TX: Direwolf stdout → soundcard output (blocking read)
-                    chunk = self._proc.stdout.read(  # type: ignore[union-attr]
-                        self._BLOCK_SIZE * self._BYTES_PER_SAMPLE
+            while not self._stop_event.is_set():
+                # TX: Direwolf stdout → soundcard output (blocking read)
+                chunk = self._proc.stdout.read(  # type: ignore[union-attr]
+                    self._BLOCK_SIZE * self._BYTES_PER_SAMPLE
+                )
+                if not chunk:
+                    break
+                if self._out_device is not None:
+                    pcm = np.frombuffer(chunk, dtype="int16").astype("float32") / 32768.0
+                    sd.play(
+                        pcm,
+                        samplerate=self._SAMPLE_RATE,
+                        device=self._out_device,
+                        blocking=False,
                     )
-                    if not chunk:
-                        break
-                    if self._out_device is not None:
-                        pcm = np.frombuffer(chunk, dtype="int16").astype("float32") / 32768.0
-                        sd.play(
-                            pcm,
-                            samplerate=self._SAMPLE_RATE,
-                            device=self._out_device,
-                            blocking=False,
-                        )
         except Exception:  # noqa: BLE001
             pass
+        finally:
+            mgr.release_input(_AUDIO_OWNER, self._in_device)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -338,6 +341,7 @@ class DirewolfManager:
         self._conf_path: str | None = None
         self._kiss: KissClient | None = None
         self._audio: AudioBridge | None = None
+        self._out_device: int | None = None
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -372,6 +376,11 @@ class DirewolfManager:
         if binary is None:
             return False, "Direwolf not found. Use Help > Direwolf… to install."
 
+        mgr = get_audio_device_manager()
+        if out_device is not None and not mgr.acquire_output(_AUDIO_OWNER, out_device):
+            other = mgr.output_owner(out_device) or "another tab"
+            return False, f"Sound card output is in use by {other}."
+
         conf_path = self._write_config(callsign, ssid)
         try:
             self._proc = subprocess.Popen(
@@ -381,8 +390,11 @@ class DirewolfManager:
                 stderr=subprocess.DEVNULL,
             )
         except OSError as exc:
+            if out_device is not None:
+                mgr.release_output(_AUDIO_OWNER, out_device)
             return False, f"Failed to start Direwolf: {exc}"
 
+        self._out_device = out_device
         self._conf_path = conf_path
 
         # Audio bridge: soundcard ↔ Direwolf stdin/stdout
@@ -405,6 +417,10 @@ class DirewolfManager:
         if self._audio:
             self._audio.stop()
             self._audio = None
+
+        if self._out_device is not None:
+            get_audio_device_manager().release_output(_AUDIO_OWNER, self._out_device)
+            self._out_device = None
 
         if self._proc:
             try:

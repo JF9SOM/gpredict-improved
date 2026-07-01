@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from comms.audio_device_manager import get_audio_device_manager
 from comms.ft4.codec import (
     SAMPLE_RATE,
     Ft4Codec,
@@ -61,6 +62,7 @@ _COL_COUNT = 5
 
 _FT4_SETTINGS_KEY = "ft4_settings"
 _DEFAULT_AUDIO_FREQ = 1000.0  # Hz — base tone within SSB passband
+_AUDIO_OWNER = "FT4"
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +93,12 @@ class _TxWorker(QObject):
         self._rig = rig
 
     def run(self) -> None:
+        mgr = get_audio_device_manager()
+        if not mgr.acquire_output(_AUDIO_OWNER, self._out_device):
+            other = mgr.output_owner(self._out_device) or "another tab"
+            self.error.emit(f"Sound card output is in use by {other}")
+            self.finished.emit()
+            return
         try:
             import sounddevice as sd  # optional dep
 
@@ -109,6 +117,7 @@ class _TxWorker(QObject):
                     self._rig.set_ptt(False)
             self.error.emit(str(exc))
         finally:
+            mgr.release_output(_AUDIO_OWNER, self._out_device)
             self.finished.emit()
 
 
@@ -138,7 +147,7 @@ class Ft4Tab(QWidget):
         self._scheduler = Ft4Scheduler(self)
         self._qso: Ft4QsoManager | None = None  # created when callsign is known
         self._rx_buffer: list[NDArray[np.float32]] = []
-        self._audio_stream: Any = None  # sounddevice.InputStream
+        self._audio_active: bool = False  # soundcard RX subscribed via AudioDeviceManager
         self._tx_thread: threading.Thread | None = None
         self._tx_enabled: bool = False
         self._tx_in_progress: bool = False
@@ -534,11 +543,11 @@ class Ft4Tab(QWidget):
     # ------------------------------------------------------------------ #
 
     def _start_audio_capture(self) -> None:
-        """Open sounddevice InputStream for RX accumulation."""
-        if self._audio_stream is not None:
+        """Subscribe to shared soundcard RX audio for decode accumulation."""
+        if self._audio_active:
             return
         try:
-            import sounddevice as sd
+            import sounddevice as sd  # noqa: F401 — validate availability
         except ImportError:
             self._status_label.setText(_("sounddevice not installed — pip install sounddevice"))
             return
@@ -549,33 +558,21 @@ class Ft4Tab(QWidget):
             return
         self._rx_buffer.clear()
         try:
-            self._audio_stream = sd.InputStream(
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                dtype="float32",
-                device=self._in_device,
-                callback=self._audio_callback,
+            get_audio_device_manager().acquire_input(
+                _AUDIO_OWNER, self._in_device, SAMPLE_RATE, self._audio_callback
             )
-            self._audio_stream.start()
+            self._audio_active = True
         except Exception as exc:
             self._status_label.setText(f"Audio open error: {exc}")
-            self._audio_stream = None
+            self._audio_active = False
 
     def _stop_audio_capture(self) -> None:
-        if self._audio_stream is not None:
-            with contextlib.suppress(Exception):
-                self._audio_stream.stop()
-                self._audio_stream.close()
-            self._audio_stream = None
+        if self._audio_active:
+            get_audio_device_manager().release_input(_AUDIO_OWNER, self._in_device)
+            self._audio_active = False
 
-    def _audio_callback(
-        self,
-        indata: NDArray[np.float32],
-        frames: int,
-        _time: Any,
-        _status: Any,
-    ) -> None:
-        self._rx_buffer.append(indata[:, 0].copy())
+    def _audio_callback(self, chunk: NDArray[np.float32]) -> None:
+        self._rx_buffer.append(chunk)
 
     # ------------------------------------------------------------------ #
     # Scheduler slots                                                      #

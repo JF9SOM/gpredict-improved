@@ -87,7 +87,8 @@ class SstvTab(QWidget):
         self._sdr_connected: bool = False
         self._decoder: Any | None = None  # SstvDecoder instance
         self._ssdv_decoder: Any | None = None  # SsdvDecoder (persistent across reconnects)
-        self._audio_stream: Any | None = None  # sounddevice InputStream (soundcard path)
+        self._audio_active: bool = False  # soundcard RX subscribed via AudioDeviceManager
+        self._audio_device: int | None = None  # device used for the active subscription
         self._current_image: QImage | None = None
         self._current_mode: str = "Robot36"
         self._sat_name: str = ""
@@ -325,43 +326,42 @@ class SstvTab(QWidget):
                 return getattr(rig, "_pipeline", None)
         return None
 
+    _AUDIO_OWNER = "SSTV/SSDV"
+    _SOUNDCARD_SAMPLE_RATE = 44100
+
     def _start_soundcard_capture(self) -> None:
-        """Open a sounddevice InputStream and feed audio to the SSTV decoder."""
-        if self._audio_stream is not None:
+        """Subscribe to shared soundcard RX audio and feed it to the SSTV decoder."""
+        if self._audio_active:
             return
         try:
-            import sounddevice as sd
+            import sounddevice as sd  # noqa: F401 — validate availability
         except ImportError:
             self._status_label.setText(_("sounddevice not installed — pip install sounddevice"))
             return
         in_idx = self._load_soundcard_input_device()
         decoder = self._decoder
 
-        def _callback(indata: Any, frames: int, time: Any, status: Any) -> None:
+        def _callback(chunk: Any) -> None:
             if decoder is not None:
-                import numpy as np
-
-                decoder.push_samples(indata[:, 0].astype(np.float32))
+                decoder.push_samples(chunk)
 
         try:
-            stream = sd.InputStream(
-                device=in_idx,
-                samplerate=44100,
-                channels=1,
-                dtype="float32",
-                callback=_callback,
+            from comms.audio_device_manager import get_audio_device_manager
+
+            get_audio_device_manager().acquire_input(
+                self._AUDIO_OWNER, in_idx, self._SOUNDCARD_SAMPLE_RATE, _callback
             )
-            stream.start()
-            self._audio_stream = stream
+            self._audio_active = True
+            self._audio_device = in_idx
         except Exception as exc:
             self._status_label.setText(_("Sound card error: ") + str(exc))
 
     def _stop_soundcard_capture(self) -> None:
-        if self._audio_stream is not None:
-            with contextlib.suppress(Exception):
-                self._audio_stream.stop()
-                self._audio_stream.close()
-            self._audio_stream = None
+        if self._audio_active:
+            from comms.audio_device_manager import get_audio_device_manager
+
+            get_audio_device_manager().release_input(self._AUDIO_OWNER, self._audio_device)
+            self._audio_active = False
 
     def _load_soundcard_input_device(self) -> int | None:
         """Read the configured soundcard input device index from app_settings."""

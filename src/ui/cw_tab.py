@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from comms.audio_device_manager import get_audio_device_manager
 from comms.cw.codec import MIN_AUDIO_SECONDS, SAMPLE_RATE, CwDecoder
 from comms.cw.model_info import is_onnxruntime_available, is_ready
 from i18n import _
@@ -91,8 +92,8 @@ class CwTab(QWidget):
         self._sdr_pipeline: Any = None
         self._sdr_connected: bool = False
 
-        # Sounddevice
-        self._audio_stream: Any = None
+        # Sounddevice (shared with other Communications tabs via AudioDeviceManager)
+        self._audio_active: bool = False
         self._in_device: int | None = None
 
         # Decode worker
@@ -317,11 +318,13 @@ class CwTab(QWidget):
         except Exception:
             pass
 
+    _AUDIO_OWNER = "CW Decoder"
+
     def _start_audio_capture(self) -> None:
-        if self._audio_stream is not None:
+        if self._audio_active:
             return
         try:
-            import sounddevice as sd
+            import sounddevice as sd  # noqa: F401 — validate availability
         except ImportError:
             self._status_label.setText(_("sounddevice not installed — pip install sounddevice"))
             return
@@ -332,33 +335,21 @@ class CwTab(QWidget):
             return
         self._rx_buffer.clear()
         try:
-            self._audio_stream = sd.InputStream(
-                samplerate=self._rx_sample_rate,
-                channels=1,
-                dtype="float32",
-                device=self._in_device,
-                callback=self._audio_callback,
+            get_audio_device_manager().acquire_input(
+                self._AUDIO_OWNER, self._in_device, self._rx_sample_rate, self._audio_callback
             )
-            self._audio_stream.start()
+            self._audio_active = True
         except Exception as exc:
             self._status_label.setText(f"Audio open error: {exc}")
-            self._audio_stream = None
+            self._audio_active = False
 
     def _stop_audio_capture(self) -> None:
-        if self._audio_stream is not None:
-            with contextlib.suppress(Exception):
-                self._audio_stream.stop()
-                self._audio_stream.close()
-            self._audio_stream = None
+        if self._audio_active:
+            get_audio_device_manager().release_input(self._AUDIO_OWNER, self._in_device)
+            self._audio_active = False
 
-    def _audio_callback(
-        self,
-        indata: NDArray[np.float32],
-        frames: int,
-        _time: Any,
-        _status: Any,
-    ) -> None:
-        self._rx_buffer.append(indata[:, 0].copy())
+    def _audio_callback(self, chunk: NDArray[np.float32]) -> None:
+        self._rx_buffer.append(chunk)
         self._trim_buffer()
 
     # ------------------------------------------------------------------ #

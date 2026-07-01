@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from comms.audio_device_manager import get_audio_device_manager
 from comms.q65.codec import (
     Q65_PERIODS,
     Q65_SUBMODE,
@@ -56,6 +57,7 @@ _COL_DT = 2
 _COL_FREQ = 3
 _COL_MSG = 4
 _COL_COUNT = 5
+_AUDIO_OWNER = "Q65"
 
 _Q65_SETTINGS_KEY = "q65_settings"
 
@@ -715,11 +717,17 @@ class Q65Tab(QWidget):
 
     def _transmit_audio(self, audio: NDArray[np.float32], msg: str) -> None:
         """Play audio via sounddevice with PTT control."""
+        import contextlib
+
+        mgr = get_audio_device_manager()
+        if not mgr.acquire_output(_AUDIO_OWNER, None):
+            other = mgr.output_owner(None) or "another tab"
+            self._status_label.setText(f"Cannot transmit: sound card output is in use by {other}")
+            return
+
         rig = self._get_rig()
 
         # PTT ON (Doppler freeze handled internally by RigController)
-        import contextlib
-
         if rig is not None:
             with contextlib.suppress(Exception):
                 rig.set_ptt(True)
@@ -734,6 +742,7 @@ class Q65Tab(QWidget):
             if rig is not None:
                 with contextlib.suppress(Exception):
                     rig.set_ptt(False)
+            mgr.release_output(_AUDIO_OWNER, None)
 
     def _get_rig(self) -> Any | None:
         """Return RigController for Rig 1 if connected, else None."""
