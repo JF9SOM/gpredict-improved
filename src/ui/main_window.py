@@ -515,6 +515,15 @@ class MainWindow(QMainWindow):
         # Allow tabs to be closed (for non-resident Communications tabs).
         # Hide the close button on all resident tabs so only Communications
         # tabs (APRS, Telemetry) show the × button.
+        self._resident_tab_widgets: set[QWidget] = {
+            self._dashboard_view,
+            self._world_map,
+            self._radar_view,
+            self._pass_chart,
+            self._group_pass_chart,
+            self._radio_control,
+            self._sdr_control,
+        }
         self._tab_widget.setTabsClosable(True)
         self._tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
         self._hide_close_buttons_on_resident_tabs()
@@ -1456,19 +1465,31 @@ class MainWindow(QMainWindow):
         Called once after the tab widget is fully populated.  Any tab added
         later by Communications menu items is a non-resident tab and will
         keep its close button.
+
+        The close button's side (Left vs Right) is style-dependent: Qt's
+        native macOS style places it on the LeftSide, while Linux styles
+        (Fusion, Breeze, etc.) place it on the RightSide. Both sides must
+        be cleared or the button survives on macOS.
         """
         from PySide6.QtWidgets import QTabBar
 
         bar = self._tab_widget.tabBar()
         for i in range(self._tab_widget.count()):
+            bar.setTabButton(i, QTabBar.ButtonPosition.LeftSide, None)
             bar.setTabButton(i, QTabBar.ButtonPosition.RightSide, None)
 
     def _on_tab_close_requested(self, index: int) -> None:
-        """Close a Communications tab and clean up its resources."""
+        """Close a Communications tab and clean up its resources.
+
+        Guards against removing a resident tab even if its × button was
+        somehow left visible (e.g. a future Qt style placing it on a side
+        not cleared by _hide_close_buttons_on_resident_tabs).
+        """
         widget = self._tab_widget.widget(index)
+        if widget is None or widget in self._resident_tab_widgets:
+            return
         self._tab_widget.removeTab(index)
-        if widget is not None:
-            widget.deleteLater()
+        widget.deleteLater()
 
     def _notify_comms_tab_of_rig_state(self, tab: object) -> None:
         """Call _on_rig_connected / _on_rig2_connected on a newly created comms
