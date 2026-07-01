@@ -3105,3 +3105,72 @@ ADIF エクスポート対応（APRS と同形式）:
 | グリッドロケーター | `LocationManager.load_saved()` から自動取得 |
 | Sound Card 設定 | Rig Settings > Sound Card タブ（APRS と共用） |
 | SDR RX | `SDRPipeline.audio_ready` Signal（構成 B の場合） |
+
+### 共有サウンドカードアクセス設計（src/comms/audio_device_manager.py・2026-07-01 実装済み）
+
+#### 背景
+
+CW Decoder・SSTV/SSDV・FT4・Q65・APRS(Direwolf) は同時に複数タブを開ける非常駐タブであり、
+いずれも Rig Settings > Sound Card で設定した **同一の** `input_device_index` /
+`output_device_index` を参照する。各タブが個別に `sounddevice.InputStream()` /
+`sd.play()` を直接呼ぶと、ALSA `hw:` デバイスのように二重オープンを拒否するデバイスでは
+2つ目のタブがエラーになる。`AudioDeviceManager`（プロセス全体で1つのシングルトン）が
+この共有アクセスを仲介する。
+
+#### 設計方針：RXは共有・TXは排他
+
+| 方向 | 方式 | 理由 |
+|---|---|---|
+| RX（入力） | **pub/sub 共有**：実ストリームはデバイス1つにつき1本だけ開き、購読者全員へファンアウト配信 | CW Decoder と SSTV を同時に開いて同じ受信音声を両方で見る、という使い方が正当なユースケースのため |
+| TX（出力） | **排他ロック**：1タブのみが所有権を取得できる | 2タブが同時に送信すると音声が混ざって送信されてしまい、共有する意味がないため |
+
+RX 共有ストリームは常に `_HW_SAMPLE_RATE = 48000` Hz で実デバイスを開き、各購読者が要求した
+サンプルレートへ都度リサンプリングして配信する（`_resample()`）：
+- 整数比（例: 48000→3200, 48000→12000）は単純デシメーション（`chunk[::N]`）
+- 非整数比（例: 48000→44100）は `scipy.signal.resample_poly`（利用不可時は `np.interp` による
+  線形補間フォールバック。CLAUDE.md 記載のオプショナルインポートパターンに準拠し `type: ignore` 不要）
+
+#### API（`AudioDeviceManager` / `get_audio_device_manager()`）
+
+```python
+mgr = get_audio_device_manager()
+
+# RX — 共有（owner文字列は各タブ固有の識別名。再度呼ぶとコールバック/レートを更新するだけ）
+mgr.acquire_input(owner: str, device: int | None, samplerate: int, callback) -> None
+mgr.release_input(owner: str, device: int | None) -> None  # 最後の購読者が抜けたときのみ実ストリームを close
+
+# TX — 排他ロック
+mgr.acquire_output(owner: str, device: int | None) -> bool   # True=取得成功(または既に自分が保持) / False=他タブが使用中
+mgr.release_output(owner: str, device: int | None) -> None
+mgr.output_owner(device: int | None) -> str | None            # エラーメッセージ組み立て用
+```
+
+`device=None`（システムデフォルト出力を使う Q65 の TX など）も有効なキーとして扱う。
+
+#### 各タブでの利用箇所
+
+| タブ / モジュール | owner 文字列 | RX | TX |
+|---|---|---|---|
+| CW Decoder (`src/ui/cw_tab.py`) | `"CW Decoder"` | ✅ soundcard 選択時 | — （受信専用） |
+| SSTV/SSDV (`src/ui/sstv_tab.py`) | `"SSTV/SSDV"` | ✅ soundcard 選択時 | — （受信専用） |
+| FT4 (`src/ui/ft4_tab.py`) | `"FT4"` | ✅ RX期間ごとに購読 | ✅ `_TxWorker` が送信直前に取得・送信後に解放 |
+| Q65 (`src/ui/q65_tab.py`) | `"Q65"` | — （RXはSDRのみ対応） | ✅ `_transmit_audio()` が送信直前に取得・送信後に解放 |
+| APRS/Direwolf (`src/comms/aprs/direwolf.py`) | `"APRS/Direwolf"` | ✅ `AudioBridge` が実行中ずっと購読 | ✅ `DirewolfManager.start()` がブリッジ生存期間全体でロック保持（下記参照） |
+
+**Direwolf が TX ロックをセッション全体で保持する理由**: `ADEVICE stdin stdout` モードの
+Direwolf は実際に送信していない間も継続的に stdout へ PCM を書き込むため（内部タイミング
+維持のため）、`AudioBridge` は個々の送信バーストごとではなく **開始 (`DirewolfManager.start()`)
+から終了 (`stop()`) までロックを保持し続ける**。`out_device` が未設定（`None` 以外の実デバイス
+未指定）の場合はロック取得自体を行わない。TXロックが他タブに握られている場合、
+`DirewolfManager.start()` は `(False, "Sound card output is in use by ...")` を返し、
+`AprsEngine.start_rig()` が既存の `error_occurred` シグナル経由でステータスバーに表示する
+（新規UIは追加していない）。
+
+#### 検証状況
+
+- `tests/test_audio_device_manager.py`（20ケース）: フェイクの `sounddevice.InputStream`
+  を使い、RXのファンアウト・購読者参照カウント・リサンプリング比率、TXの排他制御（同一owner
+  の再取得可・別ownerは拒否・解放後は他ownerが取得可）をハードウェア不要で検証済み
+- **実機での複数タブ同時使用（例: CW Decoder + SSTV 同時オープン）は未確認**。GUI上に
+  「共有中」であることを示す表示は無いため、この機能が正しく動作しているかは目視では
+  確認できない。ユニットテストの正しさを信頼する運用とする（2026-07-01、ユーザー判断）
